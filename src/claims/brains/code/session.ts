@@ -312,7 +312,7 @@ export class ClaimSession {
     const state = this.getOrCreatePage(page);
     if (state.claims.length > 0) {
       throw new ClaimSessionError(
-        `Delete all claims for ${page} with update_claims, then call fetch_claims before deleting the page.`,
+        `Delete all claims for ${page} with update_claims before deleting the page. Its empty authoritative result authorizes immediate deletion.`,
       );
     }
   }

@@ -19,14 +19,12 @@ import {
   type GlobResult,
 } from "deepagents";
 import { createOpenWikiConnectorTools } from "../connectors/tools.js";
-import {
-  createClaimsAuthoringMiddleware,
-  createClaimsCompletionMiddleware,
-} from "../claims/brains/code/middleware.js";
+import { createClaimsAuthoringMiddleware } from "../claims/brains/code/middleware.js";
 import {
   prepareClaimsRuntime,
   type ClaimsRuntime,
 } from "../claims/brains/code/runtime.js";
+import { reconcileClaimsBeforeAgent } from "../claims/brains/code/reconciliation.js";
 import {
   createClaimsDeleteFileTool,
   createClaimsTools,
@@ -380,6 +378,13 @@ export async function createOpenWikiAgent(
     options.cwd,
     openWikiIgnore,
   );
+  if (claimsRuntime?.reconciliation) {
+    await reconcileClaimsBeforeAgent(
+      options.model,
+      claimsRuntime.reconciliation,
+      (message) => options.onEvent?.({ type: "text", text: message }),
+    );
+  }
   const checkpointer = await createCheckpointer(
     resolveCheckpointTarget(options.command),
   );
@@ -497,14 +502,7 @@ function createOpenWikiAgentGraph(
                 ]
               : []),
             ...(options.claimsRuntime
-              ? [
-                  createClaimsAuthoringMiddleware(
-                    options.claimsRuntime.session,
-                  ),
-                  createClaimsCompletionMiddleware(
-                    options.claimsRuntime.session,
-                  ),
-                ]
+              ? [createClaimsAuthoringMiddleware(options.claimsRuntime.session)]
               : []),
             createOpenWikiIndexMiddleware(
               wikiBackend,
@@ -558,6 +556,19 @@ async function runOpenWikiAgentCore(
   );
   emitDebug(options, `model.provider=${provider}`);
   emitDebug(options, "model=initialized");
+  if (claimsRuntime?.reconciliation) {
+    const reconciliation = await inStage("run", () =>
+      reconcileClaimsBeforeAgent(
+        model,
+        claimsRuntime.reconciliation!,
+        (message) => options.onEvent?.({ type: "text", text: message }),
+      ),
+    );
+    emitDebug(
+      options,
+      `claims.reconciled=${reconciliation.claimCount} batches=${reconciliation.batchCount} pages=${reconciliation.pageCount}`,
+    );
+  }
   const threadId = options.threadId ?? createThreadId(cwd, createRunThreadId());
   emitDebug(options, `thread=${threadId}`);
   const checkpointTarget = resolveCheckpointTarget(command);

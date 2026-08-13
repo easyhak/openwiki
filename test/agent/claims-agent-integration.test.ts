@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { FakeListChatModel } from "@langchain/core/utils/testing";
@@ -37,6 +38,7 @@ vi.mock("../../src/setup/onboarding.js", () => ({
 }));
 
 import { createOpenWikiAgent } from "../../src/agent/index.ts";
+import { ClaimsStore } from "../../src/claims/brains/code/store.ts";
 
 /**
  * Captured subset of the DeepAgents graph configuration.
@@ -55,7 +57,10 @@ interface CapturedGraphOptions {
   /**
    * Explicit tools registered alongside filesystem tools.
    */
-  tools: Array<{ name: string }>;
+  tools: Array<{
+    name: string;
+    invoke(input: unknown): Promise<unknown>;
+  }>;
 }
 
 /**
@@ -114,12 +119,77 @@ describe("Claims agent graph integration", () => {
       expect(options.middleware.map((middleware) => middleware.name)).toContain(
         "OpenWikiClaimsAuthoringMiddleware",
       );
-      expect(options.middleware.map((middleware) => middleware.name)).toContain(
-        "OpenWikiClaimsCompletionMiddleware",
-      );
+      expect(
+        options.middleware.map((middleware) => middleware.name),
+      ).not.toContain("OpenWikiClaimsCompletionMiddleware");
       expect(options.subagents).toEqual([]);
     },
   );
+
+  test("reconciles stale persisted claims before creating the agent graph", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "openwiki-claims-agent-"));
+    temporaryDirectories.push(cwd);
+    await mkdir(path.join(cwd, "openwiki"), { recursive: true });
+    await writeFile(path.join(cwd, "README.md"), "# Current repository\n");
+    await writeFile(path.join(cwd, "openwiki/page.md"), "# Page\n");
+    const page = "/openwiki/page.md";
+    const resource = "repo://README.md";
+    const store = new ClaimsStore(cwd);
+    await store.writePage(page, {
+      schemaVersion: 1,
+      pageVersion: await store.hashPage(page),
+      claims: [
+        {
+          id: "claim_readme",
+          statement: "The repository has a README.",
+          evidence: [{ resource, version: "repo-file-v1:sha256:old" }],
+        },
+      ],
+    });
+    const invoke = vi.fn(() =>
+      Promise.resolve({
+        reconciliations: [
+          {
+            page,
+            claimId: "claim_readme",
+            disposition: "reaffirm",
+            statement: "The repository has a README.",
+            evidence: [{ resource }],
+          },
+        ],
+      }),
+    );
+    const model = {
+      withStructuredOutput: () => ({ invoke }),
+    } as unknown as BaseChatModel;
+
+    await createOpenWikiAgent({
+      command: "update",
+      cwd,
+      model,
+      outputMode: "repository",
+    });
+
+    expect(invoke).toHaveBeenCalledOnce();
+    const fetchClaims = latestGraphOptions().tools.find(
+      (tool) => tool.name === "fetch_claims",
+    );
+    if (!fetchClaims) {
+      throw new Error("Missing fetch_claims tool.");
+    }
+    const fetched = JSON.parse(
+      String(await fetchClaims.invoke({ pages: [page] })),
+    ) as {
+      pages: Array<{
+        revision: number;
+        claims: Array<{ evidence: Array<{ version: string }> }>;
+      }>;
+    };
+    expect(fetched.pages[0]?.revision).toBe(1);
+    expect(fetched.pages[0]?.claims[0]?.evidence[0]?.version).not.toContain(
+      "old",
+    );
+  });
 
   test.each([
     ["chat", "repository"],

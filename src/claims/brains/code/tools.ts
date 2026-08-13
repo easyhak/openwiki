@@ -68,7 +68,7 @@ const UpdateClaimsInputSchema = z
  * Runtime validator for `fetch_claims` input.
  */
 const FetchClaimsInputSchema = z
-  .object({ page: CanonicalNonEmptyStringSchema })
+  .object({ pages: z.array(CanonicalNonEmptyStringSchema).min(1) })
   .strict();
 
 /**
@@ -101,7 +101,7 @@ export function createClaimsTools(
     new DynamicStructuredTool({
       name: "update_claims",
       description:
-        "Atomically add, update, or delete material factual claims for one generated wiki page. Page accepts /openwiki/components/task.md, openwiki/components/task.md, or components/task.md. Evidence uses repo://path or repo://path#symbol resources. OpenWiki resolves versions and IDs; never supply them.",
+        "Atomically add, update, or delete material factual claims for one generated wiki page. Returns the complete authoritative claim set and authorizes an immediate page write, so do not call fetch_claims again unless another mutation occurs. Page accepts /openwiki/components/task.md, openwiki/components/task.md, or components/task.md. Evidence uses repo://path or repo://path#symbol resources. OpenWiki resolves versions and IDs; never supply them.",
       schema: {
         type: "object",
         properties: {
@@ -156,36 +156,50 @@ export function createClaimsTools(
       func: async (input) => {
         return runClaimsTool(async () => {
           const parsed = UpdateClaimsInputSchema.parse(input);
-          return session.updateClaims({
+          const updated = await session.updateClaims({
             page: normalizeClaimsToolPagePath(parsed.page),
             operations: parsed.operations,
           });
+          return {
+            page: updated.page,
+            ...session.fetchClaims(updated.page),
+          };
         });
       },
     }),
     new DynamicStructuredTool({
       name: "fetch_claims",
       description:
-        "Fetch the complete current working claim set and revision for one generated wiki page. Page accepts /openwiki/components/task.md, openwiki/components/task.md, or components/task.md. Call this immediately before writing or deleting that page.",
+        "Fetch the complete current working claim sets and revisions for one or more generated wiki pages without mutating them. Consolidate pages needed at the same stage into one call. Use this to inspect existing claims or before writes with no preceding update_claims calls. A successful update_claims result already provides and authorizes its page revision. Each page accepts /openwiki/components/task.md, openwiki/components/task.md, or components/task.md.",
       schema: {
         type: "object",
         properties: {
-          page: {
-            type: "string",
-            minLength: 1,
+          pages: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "string",
+              minLength: 1,
+            },
             description:
-              "Generated Markdown page as an /openwiki path or wiki-relative path, for example /openwiki/components/task.md or components/task.md.",
+              'Generated Markdown pages as /openwiki paths or wiki-relative paths, for example ["/openwiki/components/task.md", "components/worker.md"].',
           },
         },
-        required: ["page"],
+        required: ["pages"],
         additionalProperties: false,
       } as const,
       func: (input) => {
         return runClaimsTool(() => {
           const parsed = FetchClaimsInputSchema.parse(input);
-          return Promise.resolve(
-            session.fetchClaims(normalizeClaimsToolPagePath(parsed.page)),
+          const pages = parsed.pages.map((page) =>
+            normalizeClaimsToolPagePath(page),
           );
+          return Promise.resolve({
+            pages: pages.map((page) => ({
+              page,
+              ...session.fetchClaims(page),
+            })),
+          });
         });
       },
     }),
@@ -210,7 +224,7 @@ export function createClaimsDeleteFileTool(
   return new DynamicStructuredTool({
     name: "delete_file",
     description:
-      "Delete one generated factual wiki page after deleting all of its claims and calling fetch_claims for the empty set. Accepts /openwiki/components/task.md or the wiki-relative components/task.md.",
+      "Delete one generated factual wiki page after deleting all of its claims. A successful update_claims call returning the empty authoritative set authorizes immediate deletion; otherwise call fetch_claims first. Accepts /openwiki/components/task.md or the wiki-relative components/task.md.",
     schema: {
       type: "object",
       properties: {

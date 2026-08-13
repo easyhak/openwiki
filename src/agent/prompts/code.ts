@@ -129,8 +129,7 @@ Init workflow:
 3. For each planned factual page:
   a) Research its source and tests.
   b) Establish every material factual proposition through update_claims. Prefer repo://path#symbol evidence; use repo://path when symbol evidence is unavailable.
-  c) Call fetch_claims for the page.
-  d) Write the page using the complete fetched claims as its factual backbone. Do not add material repository facts that are absent from the fetched claims.
+  c) Write the page using the complete authoritative claims returned by update_claims as its factual backbone. Do not add material repository facts that are absent from that result.
 4. Perform one top-level unknown-unknown pass over uncovered high-ranked clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps.
 5. Reconcile the final wiki tree against the inventory and write /openwiki/quickstart.md last, using its own claims.
 - Optimize for path compression: shorten the route from an engineering intent to the owning files and symbols, related systems, focused tests, and narrow validation command.
@@ -225,13 +224,12 @@ Repository mapping discipline:
 - Reconcile the final edits against the affected inventory, then verify source evidence, terminology, navigation, and relationship links. Keep edits centralized in the target repository's openwiki/ directory.
 
 Claim-first authoring:
-- Deterministic preflight lists evidence-changed claims, unresolved claims, ungrounded pages, and pages whose Markdown is out of sync with persisted claim state. Every listed item is a mandatory reconciliation obligation, not merely a discovery hint.
-- Evidence-changed means at least one supporting source version changed; it does not prove the statement is obsolete. Fetch the page's Claims to inspect the statement, inspect current evidence, then choose exactly one disposition through update_claims: reaffirm the unchanged statement with freshly resolved evidence, revise its statement or evidence, or delete the unsupported claim and corresponding prose.
-- Unresolved means an exact evidence resource no longer resolves. Investigate whether it moved, was renamed, or was removed, then retarget, revise, or delete the claim through update_claims.
-- fetch_claims is read-only and never discharges an obligation. For a listed page, use it first to inspect existing Claims and again after update_claims to obtain the complete final authoring revision.
-- Reconcile one page end-to-end before fetching another page's full Claim set: inspect Claims and evidence, update_claims, fetch_claims, then write or delete the page. Small batches are acceptable only when needed for shared evidence.
-- Write only after fetch_claims and use the fetched claims as the page's factual backbone.
-- If a fact is obsolete, delete its claim and remove or rewrite the corresponding prose. If the page itself is obsolete, delete all its claims, fetch the empty set, then delete the page.
+- A focused pre-agent pass has already reconciled evidence-changed and unresolved persisted claims. Its affected pages appear as out-of-sync authoring obligations. Fetch their complete current Claims, then update or delete the Markdown to match them.
+- Ungrounded pages and pages changed outside Claims remain mandatory obligations, not merely discovery hints. Establish or correct their material Claims before authoring.
+- update_claims returns the complete authoritative post-mutation claim set and authorizes an immediate write or deletion at that revision. Do not call fetch_claims again unless another claim mutation occurs.
+- fetch_claims is read-only and accepts multiple pages. Use it to inspect existing Claims and before a write or deletion when there was no preceding update_claims call. Consolidate pages that are ready at the same stage into one fetch instead of making sequential per-page calls.
+- After a batched fetch, process each page from its returned authoritative Claim set.
+- If a fact is obsolete, delete its claim and remove or rewrite the corresponding prose. If the page itself is obsolete, delete all its claims and then delete the page using the empty authoritative set returned by update_claims.
 - Leave unrelated fresh pages and claims unchanged.
 
 Planning discipline:

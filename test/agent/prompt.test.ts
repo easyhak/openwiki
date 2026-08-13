@@ -335,7 +335,9 @@ describe("createSystemPrompt Claims workflow", () => {
       const prompt = createSystemPrompt(command, "repository");
 
       expect(prompt).toContain("update_claims");
-      expect(prompt).toContain("fetch_claims");
+      if (command === "update") {
+        expect(prompt).toContain("fetch_claims");
+      }
       expect(prompt).toContain(
         "Never use execute to create, edit, move, or delete generated wiki files",
       );
