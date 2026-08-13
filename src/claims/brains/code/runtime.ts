@@ -8,7 +8,6 @@ import { RepositoryEvidenceResolver } from "../../evidence/repository/resolver.j
 import { ClaimSession } from "./session.js";
 import { ClaimsStore } from "./store.js";
 import type { GroundingContext } from "./types.js";
-import type { ClaimsReconciliationInput } from "./reconciliation.js";
 
 /**
  * Prepared repository Claims state for one init or update run.
@@ -33,13 +32,6 @@ export interface ClaimsRuntime {
    * Whether grounding issues or orphan cleanup prevent an update no-op.
    */
   requiresAttention: boolean;
-
-  /**
-   * Prepared immutable inputs for pre-agent semantic reconciliation.
-   *
-   * @default undefined for init, which has no persisted claim issues.
-   */
-  reconciliation?: ClaimsReconciliationInput;
 }
 
 /**
@@ -92,14 +84,6 @@ export async function prepareClaimsRuntime(
     store,
     session,
     context: preflight.context,
-    reconciliation: {
-      context: preflight.context,
-      openWikiIgnore,
-      persisted: preflight.persisted,
-      resolver,
-      rootDir: cwd,
-      session,
-    },
     requiresAttention:
       preflight.context.issues.length > 0 || preflight.orphanPages.length > 0,
   };

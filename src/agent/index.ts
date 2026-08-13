@@ -24,7 +24,6 @@ import {
   prepareClaimsRuntime,
   type ClaimsRuntime,
 } from "../claims/brains/code/runtime.js";
-import { reconcileClaimsBeforeAgent } from "../claims/brains/code/reconciliation.js";
 import {
   createClaimsDeleteFileTool,
   createClaimsTools,
@@ -378,13 +377,6 @@ export async function createOpenWikiAgent(
     options.cwd,
     openWikiIgnore,
   );
-  if (claimsRuntime?.reconciliation) {
-    await reconcileClaimsBeforeAgent(
-      options.model,
-      claimsRuntime.reconciliation,
-      (message) => options.onEvent?.({ type: "text", text: message }),
-    );
-  }
   const checkpointer = await createCheckpointer(
     resolveCheckpointTarget(options.command),
   );
@@ -556,19 +548,6 @@ async function runOpenWikiAgentCore(
   );
   emitDebug(options, `model.provider=${provider}`);
   emitDebug(options, "model=initialized");
-  if (claimsRuntime?.reconciliation) {
-    const reconciliation = await inStage("run", () =>
-      reconcileClaimsBeforeAgent(
-        model,
-        claimsRuntime.reconciliation!,
-        (message) => options.onEvent?.({ type: "text", text: message }),
-      ),
-    );
-    emitDebug(
-      options,
-      `claims.reconciled=${reconciliation.claimCount} batches=${reconciliation.batchCount} pages=${reconciliation.pageCount}`,
-    );
-  }
   const threadId = options.threadId ?? createThreadId(cwd, createRunThreadId());
   emitDebug(options, `thread=${threadId}`);
   const checkpointTarget = resolveCheckpointTarget(command);
@@ -727,7 +706,18 @@ async function runOpenWikiAgentCore(
     metadataWritten = await inStage("finalize", async () => {
       await cleanupTemporaryPlanFile(command, cwd, outputMode, options);
       if (claimsRuntime) {
-        await claimsRuntime.session.finalize(claimsRuntime.store);
+        const outstanding = await claimsRuntime.session.finalize(
+          claimsRuntime.store,
+        );
+        if (outstanding.length > 0) {
+          const pages = outstanding.map((item) => item.page).join(", ");
+          const message = `Claims reconciliation remains unfinished for ${outstanding.length} page${outstanding.length === 1 ? "" : "s"}; completed pages were persisted and unfinished pages will be retried on a future update: ${pages}`;
+          emitDebug(
+            options,
+            `claims.reconciliation=unfinished pages=${outstanding.length}`,
+          );
+          options.onEvent?.({ type: "text", text: message });
+        }
       }
       return persistRunMetadataIfChanged(
         command,

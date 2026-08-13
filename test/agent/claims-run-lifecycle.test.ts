@@ -303,6 +303,49 @@ describe("Claims production run lifecycle", () => {
     );
   });
 
+  test("completes with a warning when Claims work remains unfinished", async () => {
+    const cwd = await createRepository();
+    const completedPage = "/openwiki/completed.md";
+    const unfinishedPage = "/openwiki/unfinished.md";
+    await mkdir(path.join(cwd, "openwiki"));
+    await writeFile(path.join(cwd, "openwiki/completed.md"), "# Ungrounded\n");
+    await writeFile(path.join(cwd, "openwiki/unfinished.md"), "# Ungrounded\n");
+    graphHarness.streamBehavior.mockImplementation(
+      (options: CapturedGraphOptions) =>
+        groundAndWritePage(options, completedPage),
+    );
+    const events: unknown[] = [];
+
+    await expect(
+      runOpenWikiAgent("update", cwd, {
+        onEvent: (event) => events.push(event),
+        outputMode: "repository",
+        userMessage: "Update the wiki.",
+      }),
+    ).resolves.toEqual(expect.objectContaining({ command: "update" }));
+
+    expect(events).toContainEqual({
+      type: "text",
+      text: `Claims reconciliation remains unfinished for 1 page; completed pages were persisted and unfinished pages will be retried on a future update: ${unfinishedPage}`,
+    });
+    const store = new ClaimsStore(cwd);
+    await expect(store.loadPage(completedPage)).resolves.toEqual(
+      expect.objectContaining({
+        claims: [
+          expect.objectContaining({
+            statement: "The repository has a README.",
+          }),
+        ],
+      }),
+    );
+    await expect(store.loadPage(unfinishedPage)).resolves.toBeNull();
+    await expect(
+      readFile(path.join(cwd, "openwiki/.last-update.json"), "utf8").then(
+        JSON.parse,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ status: "complete" }));
+  });
+
   test("stamps interrupted and preserves a Claims finalization error", async () => {
     const cwd = await createRepository();
     graphHarness.streamBehavior.mockImplementation(

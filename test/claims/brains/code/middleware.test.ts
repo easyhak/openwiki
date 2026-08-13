@@ -193,9 +193,9 @@ describe("createClaimsAuthoringMiddleware", () => {
         "/openwiki/page.md",
         () => Promise.resolve(result),
       );
-      await expect(session.finalize(store)).rejects.toThrow(
-        "Claims reconciliation incomplete",
-      );
+      await expect(session.finalize(store)).resolves.toEqual([
+        expect.objectContaining({ page: "/openwiki/page.md" }),
+      ]);
       await expect(store.loadPage("/openwiki/page.md")).resolves.toBeNull();
     }
   });

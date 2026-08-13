@@ -310,6 +310,9 @@ describe("createUserPrompt", () => {
     );
 
     expect(prompt).toContain("Grounding issues that must be reconciled:");
+    expect(
+      prompt.indexOf("Grounding issues that must be reconciled:"),
+    ).toBeLessThan(prompt.indexOf("read /openwiki/.last-update.json"));
     expect(prompt).toContain(
       "- /openwiki/architecture.md: evidence-changed claim=claim_runtime resources=repo://src/agent/index.ts#runOpenWikiAgent",
     );
@@ -337,6 +340,12 @@ describe("createSystemPrompt Claims workflow", () => {
       expect(prompt).toContain("update_claims");
       if (command === "update") {
         expect(prompt).toContain("fetch_claims");
+        expect(prompt).toContain(
+          "Reconcile the supplied grounding worklist before general repository mapping",
+        );
+        expect(prompt).toContain(
+          "calling fetch_claims once with all listed pages",
+        );
       }
       expect(prompt).toContain(
         "Never use execute to create, edit, move, or delete generated wiki files",

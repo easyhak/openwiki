@@ -401,27 +401,27 @@ export class ClaimSession {
   }
 
   /**
-   * Persists pages synchronized during this successful run.
+   * Persists pages synchronized during this run and reports unfinished work.
    *
-   * Unaddressed fresh pages keep their prior state, while any outstanding
-   * reconciliation page blocks the entire persistence pass. Every eligible page
-   * is rechecked against current evidence and finalized Markdown before sidecars
-   * are mutated.
+   * Unfinished pages keep their prior sidecars so deterministic preflight can
+   * surface them again on a future update. Every eligible completed page is
+   * rechecked against current evidence and finalized Markdown before any
+   * sidecars are mutated.
    *
    * @param store - OpenWiki-owned claim persistence.
+   * @returns Stable-order reconciliation work left unfinished by the agent.
    */
-  async finalize(store: ClaimsStore): Promise<void> {
+  async finalize(store: ClaimsStore): Promise<ReconciliationObligation[]> {
     const outstanding = await this.getOutstandingReconciliation();
-    if (outstanding.length > 0) {
-      throw new ClaimSessionError(
-        `Claims reconciliation incomplete for ${outstanding.length} page${outstanding.length === 1 ? "" : "s"}: ${outstanding.map((item) => item.page).join(", ")}`,
-      );
-    }
+    const outstandingPages = new Set(outstanding.map((item) => item.page));
     const ready: FinalizablePage[] = [];
 
     for (const [page, state] of this.pages) {
       await state.pendingMutation;
-      if (state.writtenRevision !== state.revision) {
+      if (
+        outstandingPages.has(page) ||
+        state.writtenRevision !== state.revision
+      ) {
         continue;
       }
       await this.assertEvidenceStillCurrent(page, state.claims);
@@ -452,6 +452,7 @@ export class ClaimSession {
         claims: cloneClaims(item.state.claims),
       });
     }
+    return outstanding;
   }
 
   /**

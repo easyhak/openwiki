@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ClaimSession } from "../../../../src/claims/brains/code/session.ts";
+import { runClaimsPreflight } from "../../../../src/claims/brains/code/preflight.ts";
 import { ClaimsStore } from "../../../../src/claims/brains/code/store.ts";
 import type { PageClaims } from "../../../../src/claims/brains/code/types.ts";
 import { ClaimSessionError } from "../../../../src/claims/core/errors.ts";
@@ -359,7 +360,64 @@ describe("ClaimSession", () => {
     await expect(store.loadPage(page)).resolves.toEqual(persisted);
   });
 
-  test("rejects partial legacy reconciliation without persisting sidecars", async () => {
+  test("keeps an unfinished page stale for the next preflight", async () => {
+    const page = "/openwiki/page.md";
+    await writePage(page, "# Page\n");
+    const store = new ClaimsStore(rootDir);
+    const persisted = persistedClaims(
+      [EXISTING_CLAIM],
+      await store.hashPage(page),
+    );
+    await store.writePage(page, persisted);
+    const resource = "memory://feature";
+    const resolver = createResolver(
+      new Map([[resource, resolved(resource, "revision:2")]]),
+    );
+    const session = new ClaimSession({
+      resolver,
+      persisted: new Map([[page, persisted]]),
+      issues: [
+        {
+          page,
+          kind: "stale",
+          claimId: EXISTING_CLAIM.id,
+          resources: [resource],
+        },
+      ],
+      orphanPages: [],
+    });
+
+    await session.updateClaims({
+      page,
+      operations: [
+        {
+          op: "update",
+          id: EXISTING_CLAIM.id,
+          statement: "The feature changed.",
+          evidence: [{ resource }],
+        },
+      ],
+    });
+
+    await expect(session.finalize(store)).resolves.toEqual([
+      { page, issues: [], requiresPageWrite: true },
+    ]);
+    await expect(store.loadPage(page)).resolves.toEqual(persisted);
+    await expect(runClaimsPreflight(store, resolver)).resolves.toMatchObject({
+      context: {
+        issues: [
+          {
+            page,
+            kind: "stale",
+            claimId: EXISTING_CLAIM.id,
+            resources: [resource],
+          },
+        ],
+      },
+    });
+  });
+
+  test("persists completed pages and reports unfinished reconciliation", async () => {
     const reconciledPage = "/openwiki/reconciled.md";
     const remainingPage = "/openwiki/remaining.md";
     await writePage(reconciledPage, "# Reconciled\n");
@@ -377,10 +435,16 @@ describe("ClaimSession", () => {
     session.fetchClaims(reconciledPage);
     session.recordWrite(reconciledPage);
 
-    await expect(session.finalize(store)).rejects.toThrow(
-      `Claims reconciliation incomplete for 1 page: ${remainingPage}`,
+    await expect(session.finalize(store)).resolves.toEqual([
+      {
+        page: remainingPage,
+        issues: [{ page: remainingPage, kind: "ungrounded-page" }],
+        requiresPageWrite: true,
+      },
+    ]);
+    await expect(store.loadPage(reconciledPage)).resolves.toEqual(
+      expect.objectContaining({ claims: [] }),
     );
-    await expect(store.loadPage(reconciledPage)).resolves.toBeNull();
     await expect(store.loadPage(remainingPage)).resolves.toBeNull();
   });
 
