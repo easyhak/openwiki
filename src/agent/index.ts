@@ -66,9 +66,8 @@ import {
   refreshChatGptTokens,
 } from "./openai-chatgpt-oauth.js";
 import { createSystemPrompt, createUserPrompt } from "./prompt.js";
-import { resolveSkeletonCriticSubagents } from "./skeleton-critic.js";
+import { resolveRepositoryReviewSubagents } from "./review-subagents.js";
 import { syncBundledSkills } from "./skills.js";
-import { resolveWikiQaSubagents } from "./wiki-qa-subagents.js";
 import {
   createVertexAuthFetch,
   resolveVertexSurface,
@@ -506,10 +505,11 @@ function createOpenWikiAgentGraph(
             ),
           ],
     skills: ["/skills/"],
-    subagents: [
-      ...resolveSkeletonCriticSubagents(options.command, options.outputMode),
-      ...resolveWikiQaSubagents(options.command, options.outputMode),
-    ],
+    subagents: resolveRepositoryReviewSubagents(
+      options.command,
+      options.outputMode,
+      backend,
+    ),
     permissions: AGENT_FILESYSTEM_PERMISSIONS,
     systemPrompt: createSystemPrompt(
       options.command,

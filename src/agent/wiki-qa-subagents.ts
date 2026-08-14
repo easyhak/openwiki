@@ -1,10 +1,6 @@
 import type { SubAgent } from "deepagents";
 import type { OpenWikiCommand, OpenWikiOutputMode } from "./types.js";
 
-const READ_ONLY_REVIEWER_PERMISSIONS = [
-  { operations: ["write"] as const, paths: ["/**"], mode: "deny" as const },
-];
-
 const WIKI_QUESTION_FINDER: SubAgent = {
   name: "wiki-question-finder",
   description:
@@ -28,7 +24,6 @@ Source evidence:
 - <path>:<symbol> — <motivation>
 
 Return only the question set.`,
-  permissions: READ_ONLY_REVIEWER_PERMISSIONS,
 };
 
 const WIKI_ANSWER_VERIFIER: SubAgent = {
@@ -58,7 +53,6 @@ Return exactly:
 </results>
 
 Return only the results block, with one result for every supplied question in the original order.`,
-  permissions: READ_ONLY_REVIEWER_PERMISSIONS,
 };
 
 /**
