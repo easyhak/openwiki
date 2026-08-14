@@ -109,7 +109,7 @@ describe("createClaimsTools", () => {
         },
       ],
     });
-    const fetchOutput: unknown = await fetch.invoke({ pages: [page] });
+    const fetchOutput: unknown = await fetch.invoke({ page });
 
     expect(updateOutput).toBe(
       JSON.stringify(
@@ -136,20 +136,16 @@ describe("createClaimsTools", () => {
     expect(fetchOutput).toBe(
       JSON.stringify(
         {
-          pages: [
+          page,
+          revision: 1,
+          claims: [
             {
-              page,
-              revision: 1,
-              claims: [
+              id: "claim_generated",
+              statement: "A generated fact.",
+              evidence: [
                 {
-                  id: "claim_generated",
-                  statement: "A generated fact.",
-                  evidence: [
-                    {
-                      resource: "memory://canonical/fact",
-                      version: "memory-v1:revision:7",
-                    },
-                  ],
+                  resource: "memory://canonical/fact",
+                  version: "memory-v1:revision:7",
                 },
               ],
             },
@@ -196,7 +192,7 @@ describe("createClaimsTools", () => {
       ],
     });
     const fetchOutput: unknown = await fetch.invoke({
-      pages: ["openwiki/components/task.md"],
+      page: "openwiki/components/task.md",
     });
 
     expect(JSON.parse(String(updateOutput))).toMatchObject({
@@ -204,35 +200,28 @@ describe("createClaimsTools", () => {
       revision: 1,
     });
     expect(JSON.parse(String(fetchOutput))).toMatchObject({
-      pages: [
-        {
-          page: "/openwiki/components/task.md",
-          revision: 1,
-          claims: [{ statement: "A task is queued." }],
-        },
-      ],
+      page: "/openwiki/components/task.md",
+      revision: 1,
+      claims: [{ statement: "A task is queued." }],
     });
   });
 
-  test("fetches and authorizes multiple pages in one call", async () => {
+  test("fetches and authorizes one page", async () => {
     const session = createSession();
     const fetch = getTool(createClaimsTools(session), "fetch_claims");
-    const pages = ["/openwiki/overview.md", "components/worker.md"];
+    const page = "components/worker.md";
 
-    const output = JSON.parse(String(await fetch.invoke({ pages }))) as {
-      pages: Array<{ page: string; revision: number }>;
+    const output = JSON.parse(String(await fetch.invoke({ page }))) as {
+      page: string;
+      revision: number;
     };
 
-    expect(output.pages).toEqual([
-      { page: "/openwiki/overview.md", revision: 0, claims: [] },
-      { page: "/openwiki/components/worker.md", revision: 0, claims: [] },
-    ]);
-    expect(() =>
-      session.assertReadyForWrite(output.pages[0].page),
-    ).not.toThrow();
-    expect(() =>
-      session.assertReadyForWrite(output.pages[1].page),
-    ).not.toThrow();
+    expect(output).toEqual({
+      page: "/openwiki/components/worker.md",
+      revision: 0,
+      claims: [],
+    });
+    expect(() => session.assertReadyForWrite(output.page)).not.toThrow();
   });
 
   test("rejects agent-supplied fields through the tool schema", async () => {
@@ -275,11 +264,16 @@ describe("createClaimsTools", () => {
       update.invoke({ page: "/openwiki/page.md", operations: [] }),
     ).rejects.toThrow("did not match expected schema");
     await expect(
-      fetch.invoke({ pages: ["/openwiki/page.md"], unknown: true }),
+      fetch.invoke({ page: "/openwiki/page.md", unknown: true }),
     ).rejects.toThrow("did not match expected schema");
-    await expect(fetch.invoke({ pages: [] })).rejects.toThrow(
+    await expect(fetch.invoke({ page: "" })).rejects.toThrow(
       "did not match expected schema",
     );
+    await expect(
+      fetch.invoke({
+        pages: ["/openwiki/page.md", "/openwiki/other.md"],
+      }),
+    ).rejects.toThrow("did not match expected schema");
   });
 
   test("returns retryable errors for semantically invalid inputs", async () => {
@@ -298,26 +292,11 @@ describe("createClaimsTools", () => {
           },
         ],
       }),
-      fetch.invoke({ pages: ["../outside.md"] }),
+      fetch.invoke({ page: "../outside.md" }),
     ]) {
       const output: unknown = await invocation;
       expectRetryableToolOutput(output);
     }
-  });
-
-  test("does not authorize a partial batch when any page is invalid", async () => {
-    const session = createSession();
-    const fetch = getTool(createClaimsTools(session), "fetch_claims");
-    const validPage = "/openwiki/page.md";
-
-    const output: unknown = await fetch.invoke({
-      pages: [validPage, "../outside.md"],
-    });
-
-    expectRetryableToolOutput(output);
-    expect(() => session.assertReadyForWrite(validPage)).toThrow(
-      "Call fetch_claims",
-    );
   });
 
   test("returns unresolved evidence as a retryable tool error", async () => {

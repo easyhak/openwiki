@@ -68,7 +68,7 @@ const UpdateClaimsInputSchema = z
  * Runtime validator for `fetch_claims` input.
  */
 const FetchClaimsInputSchema = z
-  .object({ pages: z.array(CanonicalNonEmptyStringSchema).min(1) })
+  .object({ page: CanonicalNonEmptyStringSchema })
   .strict();
 
 /**
@@ -170,35 +170,27 @@ export function createClaimsTools(
     new DynamicStructuredTool({
       name: "fetch_claims",
       description:
-        "Fetch the complete current working claim sets and revisions for one or more generated wiki pages without mutating them. Consolidate pages needed at the same stage into one call. Use this to inspect existing claims or before writes with no preceding update_claims calls. A successful update_claims result already provides and authorizes its page revision. Each page accepts /openwiki/components/task.md, openwiki/components/task.md, or components/task.md.",
+        "Fetch the complete current working claim set and revision for one generated wiki page without mutating it. Finish reconciling and writing this page before fetching another page. Use this to inspect existing claims or before a write with no preceding update_claims call. A successful update_claims result already provides and authorizes its page revision. Page accepts /openwiki/components/task.md, openwiki/components/task.md, or components/task.md.",
       schema: {
         type: "object",
         properties: {
-          pages: {
-            type: "array",
-            minItems: 1,
-            items: {
-              type: "string",
-              minLength: 1,
-            },
+          page: {
+            type: "string",
+            minLength: 1,
             description:
-              'Generated Markdown pages as /openwiki paths or wiki-relative paths, for example ["/openwiki/components/task.md", "components/worker.md"].',
+              "Generated Markdown page as an /openwiki path or wiki-relative path, for example /openwiki/components/task.md or components/task.md.",
           },
         },
-        required: ["pages"],
+        required: ["page"],
         additionalProperties: false,
       } as const,
       func: (input) => {
         return runClaimsTool(() => {
           const parsed = FetchClaimsInputSchema.parse(input);
-          const pages = parsed.pages.map((page) =>
-            normalizeClaimsToolPagePath(page),
-          );
+          const page = normalizeClaimsToolPagePath(parsed.page);
           return Promise.resolve({
-            pages: pages.map((page) => ({
-              page,
-              ...session.fetchClaims(page),
-            })),
+            page,
+            ...session.fetchClaims(page),
           });
         });
       },

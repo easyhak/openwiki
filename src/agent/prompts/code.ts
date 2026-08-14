@@ -225,14 +225,13 @@ Repository mapping discipline:
 
 Claim-first authoring:
 - Reconcile the supplied grounding worklist before general repository mapping or unrelated documentation work. Every listed issue is mandatory work for this run; unfinished issues remain detectable for a future update but should not be intentionally deferred.
-- Begin by calling fetch_claims once with all listed pages so you can inspect their complete current Claim sets. Fetching is read-only and never discharges an issue.
+- Process the grounding worklist one page at a time. For each listed page, call fetch_claims for that page, inspect its current Markdown and the current source evidence for every listed issue, reconcile its Claims, then write or delete the page before fetching another page. Fetching is read-only and never discharges an issue.
 - For each evidence-changed Claim, inspect its current source evidence and use update_claims to choose exactly one disposition: reaffirm the exact statement with current evidence, revise it to a supported statement, or delete it and its corresponding prose.
 - For each unresolved Claim, investigate whether its evidence moved, was renamed, or was removed. Retarget, revise, or delete it through update_claims; never invent a resource.
 - Ungrounded pages and pages changed outside Claims are also mandatory. Establish or correct their material Claims through update_claims before authoring.
 - After each page's update_claims call, write or delete that page from the complete authoritative Claim set returned by the tool. Process every listed page before expanding the broader update plan.
 - update_claims returns the complete authoritative post-mutation claim set and authorizes an immediate write or deletion at that revision. Do not call fetch_claims again unless another claim mutation occurs.
-- fetch_claims accepts multiple pages. Outside the initial grounding pass, use it to inspect existing Claims and before a write or deletion when there was no preceding update_claims call. Consolidate pages that are ready at the same stage instead of making sequential per-page calls.
-- After a batched fetch, process each page from its returned authoritative Claim set.
+- fetch_claims accepts exactly one page. Use it to inspect existing Claims and before a write or deletion when there was no preceding update_claims call. Finish that page from its returned authoritative Claim set before fetching another page.
 - If a fact is obsolete, delete its claim and remove or rewrite the corresponding prose. If the page itself is obsolete, delete all its claims and then delete the page using the empty authoritative set returned by update_claims.
 - Leave unrelated fresh pages and claims unchanged.
 
@@ -418,7 +417,7 @@ Wiki brief:
 Grounding issues that must be reconciled:
 {GROUNDING_CONTEXT}
 
-Reconcile the grounding worklist first, beginning with one batched fetch_claims call for its pages. Only after attempting every listed issue should you inspect the target repository's openwiki/ directory, read /openwiki/.last-update.json to find the last documented \`gitHead\`, compare it with the current HEAD, and inspect that Git history and diff yourself. Update every documentation page needed to keep the wiki accurate, complete, and correctly linked. Preserve unrelated accurate content and avoid formatting-only changes. If the wiki is already current, do not edit files. The CLI will update /openwiki/.last-update.json only when OpenWiki content changes.
+Reconcile the grounding worklist first, one page at a time. For each listed page, call fetch_claims for that page, inspect its current Markdown and current source evidence, call update_claims as needed, and write or delete the page before fetching the next page. As part of establishing current evidence, read /openwiki/.last-update.json and inspect the relevant Git history and diff. After every listed page has been attempted, inspect the broader repository change for new or cross-page documentation work. Update every documentation page needed to keep the wiki accurate, complete, and correctly linked. Preserve unrelated accurate content and avoid formatting-only changes. If the wiki is already current, do not edit files. The CLI will update /openwiki/.last-update.json only when OpenWiki content changes.
 
 Wiki brief:
 {WIKI_GOAL}

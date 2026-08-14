@@ -78,6 +78,18 @@ describe("TreeSitterLanguageAdapter", () => {
     expect(resolved.normalized).toContain(simpleSymbol);
   });
 
+  test("resolves symbols in TSX sources larger than Tree-sitter's default input buffer", async () => {
+    const source = `${"// padding to cross the native input buffer\n".repeat(1024)}
+export function LargeView() { return <main />; }`;
+
+    expect(source.length).toBeGreaterThanOrEqual(32 * 1024);
+    await expect(
+      resolveRequired("large-fixture.tsx", source, "LargeView"),
+    ).resolves.toMatchObject({
+      content: "function LargeView() { return <main />; }",
+    });
+  });
+
   test.each([
     ["function", "function load() {}", "load"],
     ["function signature", "declare function load(): void;", "load"],

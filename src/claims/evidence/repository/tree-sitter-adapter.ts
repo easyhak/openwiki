@@ -179,7 +179,13 @@ export class TreeSitterLanguageAdapter implements LanguageEvidenceAdapter {
   }): SymbolResolution | null {
     let tree: Parser.Tree;
     try {
-      tree = this.parser.parse(input.source);
+      // node-tree-sitter reads JavaScript strings as UTF-16 and defaults its
+      // native input buffer to 32 KiB. Its partial-string path throws EINVAL
+      // once a source reaches that boundary, so size the buffer for the full
+      // string plus the terminator instead of relying on the broken default.
+      tree = this.parser.parse(input.source, undefined, {
+        bufferSize: input.source.length + 1,
+      });
     } catch (error) {
       throw new EvidenceResolutionError(
         `Tree-sitter failed to parse ${input.path}: ${toErrorMessage(error)}`,

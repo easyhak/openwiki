@@ -45,9 +45,9 @@ export interface UpdateClaimsInput {
  */
 export interface FetchClaimsInput {
   /**
-   * Virtual generated-page paths below `/openwiki`.
+   * Virtual generated-page path below `/openwiki`.
    */
-  pages: string[];
+  page: string;
 }
 
 /**
@@ -63,26 +63,6 @@ export interface FetchClaimsResult {
    * Complete working claim set for the requested page.
    */
   claims: Claim[];
-}
-
-/**
- * One page returned by the batched code-brain `fetch_claims` tool.
- */
-export interface FetchedClaimsPage extends FetchClaimsResult {
-  /**
-   * Canonical generated-page path below `/openwiki`.
-   */
-  page: string;
-}
-
-/**
- * Result returned by the batched code-brain `fetch_claims` tool.
- */
-export interface FetchClaimsBatchResult {
-  /**
-   * Complete working claim states in requested-page order.
-   */
-  pages: FetchedClaimsPage[];
 }
 
 /**

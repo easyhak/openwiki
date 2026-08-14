@@ -182,7 +182,7 @@ async function groundAndWritePage(
       },
     ],
   });
-  await fetchClaims.invoke({ pages: [page] });
+  await fetchClaims.invoke({ page });
 
   await claimsMiddleware.wrapToolCall(
     {

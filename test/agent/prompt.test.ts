@@ -344,7 +344,7 @@ describe("createSystemPrompt Claims workflow", () => {
           "Reconcile the supplied grounding worklist before general repository mapping",
         );
         expect(prompt).toContain(
-          "calling fetch_claims once with all listed pages",
+          "Process the grounding worklist one page at a time",
         );
       }
       expect(prompt).toContain(
