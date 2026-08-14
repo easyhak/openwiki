@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { runClaimsPreflight } from "../../../../src/claims/brains/code/preflight.ts";
 import { ClaimsStore } from "../../../../src/claims/brains/code/store.ts";
+import { AtomicRepositoryFiles } from "../../../../src/agent/generation/atomic-files.ts";
 import { CODE_CLAIMS_SCHEMA_VERSION } from "../../../../src/claims/brains/code/types.ts";
 import type { PageClaims } from "../../../../src/claims/brains/code/types.ts";
 import type {
@@ -121,6 +122,19 @@ describe("runClaimsPreflight", () => {
     expect(changed.context.issues).toEqual([
       { page, kind: "out-of-sync-page" },
     ]);
+  });
+
+  test("recovers a process-death mismatch after Markdown publishes before its sidecar", async () => {
+    const page = "/openwiki/page.md";
+    await writePage(page, "# Old page\n");
+    const store = new ClaimsStore(rootDir);
+    await store.writePage(page, await pageClaims(store, page, []));
+    const files = new AtomicRepositoryFiles(rootDir);
+
+    await files.replaceText("openwiki/page.md", "# New page\n");
+    const result = await runClaimsPreflight(store, createResolver(new Map()));
+
+    expect(result.context.issues).toEqual([{ page, kind: "out-of-sync-page" }]);
   });
 
   test("classifies stale and unresolved claims with unresolved precedence", async () => {

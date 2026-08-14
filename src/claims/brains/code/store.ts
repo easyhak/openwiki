@@ -64,9 +64,33 @@ const PageClaimsSchema = z
   .strict();
 
 /**
+ * Test seams for Claims sidecar persistence boundaries.
+ */
+export interface ClaimsStoreOptions {
+  /**
+   * Rename implementation publishing a completed sidecar.
+   *
+   * @default node:fs/promises rename.
+   */
+  rename?: typeof rename;
+}
+
+/**
  * OpenWiki-owned claim persistence rooted in one repository.
  */
 export class ClaimsStore {
+  /**
+   * OpenWiki-owned non-page JSON files stored beside page sidecars.
+   */
+  private static readonly NON_PAGE_CLAIMS_FILES = new Set([
+    "pending-work.json",
+  ]);
+
+  /**
+   * Rename implementation publishing a completed sidecar.
+   */
+  private readonly renameFile: typeof rename;
+
   /**
    * Absolute repository root.
    */
@@ -89,7 +113,7 @@ export class ClaimsStore {
    */
   private readonly claimsDir: string;
 
-  constructor(rootDir: string) {
+  constructor(rootDir: string, options: ClaimsStoreOptions = {}) {
     if (!path.isAbsolute(rootDir)) {
       throw new ClaimsPersistenceError(
         "Claims store root must be an absolute path.",
@@ -97,6 +121,7 @@ export class ClaimsStore {
     }
 
     this.rootDir = path.resolve(rootDir);
+    this.renameFile = options.rename ?? rename;
     this.wikiDir = path.join(this.rootDir, "openwiki");
     this.claimsDir = path.join(this.wikiDir, CLAIMS_DIRECTORY);
   }
@@ -131,6 +156,12 @@ export class ClaimsStore {
     const files = await collectRegularFiles(claimsDir, true);
     return files
       .filter((file) => file.endsWith(".json"))
+      .filter(
+        (file) =>
+          !ClaimsStore.NON_PAGE_CLAIMS_FILES.has(
+            file.replace(/\\/gu, "/").toLowerCase(),
+          ),
+      )
       .map(
         (file) =>
           `/openwiki/${file.replace(/\\/gu, "/").replace(/\.json$/u, ".md")}`,
@@ -250,7 +281,7 @@ export class ClaimsStore {
         `${JSON.stringify(validated, null, 2)}\n`,
         "utf8",
       );
-      await rename(temporary, physicalSidecar);
+      await this.renameFile(temporary, physicalSidecar);
     } catch (error) {
       await rm(temporary, { force: true }).catch(() => undefined);
       throw new ClaimsPersistenceError(

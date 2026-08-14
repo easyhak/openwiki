@@ -135,6 +135,32 @@ describe("ClaimsStore", () => {
     ]);
   });
 
+  test("excludes the pending-work ledger from page sidecar discovery", async () => {
+    await writeFixture("openwiki/.claims/pending-work.json", "{}\n");
+    await writeFixture("openwiki/.claims/runtime.json", "{}\n");
+    const store = new ClaimsStore(rootDir);
+
+    await expect(store.discoverSidecarPages()).resolves.toEqual([
+      "/openwiki/runtime.md",
+    ]);
+  });
+
+  test("cleans a temporary sidecar after publication failure", async () => {
+    await writeFixture("openwiki/page.md", "# Page\n");
+    const failure = new Error("rename unavailable");
+    const store = new ClaimsStore(rootDir, {
+      rename: () => Promise.reject(failure),
+    });
+    const pageClaims = await createPageClaims(store, "/openwiki/page.md");
+
+    await expect(
+      store.writePage("/openwiki/page.md", pageClaims),
+    ).rejects.toThrow(ClaimsPersistenceError);
+    await expect(
+      readdir(path.join(rootDir, "openwiki/.claims")),
+    ).resolves.toEqual([]);
+  });
+
   test("deletes sidecars idempotently", async () => {
     await writeFixture("openwiki/page.md", "# Page\n");
     const store = new ClaimsStore(rootDir);
