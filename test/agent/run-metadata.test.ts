@@ -77,6 +77,62 @@ describe("persistRunMetadataIfChanged", () => {
     expect(metadata?.status).toBe("interrupted");
   });
 
+  test("records partial status and pending count when content changed", async () => {
+    const cwd = await createTempRepo();
+    const snapshotBefore = await createOpenWikiContentSnapshot(
+      cwd,
+      "repository",
+    );
+    await mkdir(path.join(cwd, "openwiki"), { recursive: true });
+    await writeFile(path.join(cwd, "openwiki", "index.md"), "# Docs\n");
+
+    await expect(
+      persistRunMetadataIfChanged(
+        "update",
+        cwd,
+        "test-model",
+        "repository",
+        snapshotBefore,
+        "partial",
+        "en",
+        2,
+      ),
+    ).resolves.toBe(true);
+
+    await expect(
+      readMetadata(cwd, "openwiki/.last-update.json"),
+    ).resolves.toMatchObject({
+      status: "partial",
+      pendingCount: 2,
+      language: "en",
+    });
+  });
+
+  test("records partial status even when content is unchanged", async () => {
+    const cwd = await createTempRepo();
+    const snapshotBefore = await createOpenWikiContentSnapshot(
+      cwd,
+      "repository",
+    );
+
+    await expect(
+      persistRunMetadataIfChanged(
+        "update",
+        cwd,
+        "test-model",
+        "repository",
+        snapshotBefore,
+        "partial",
+        "en",
+        1,
+      ),
+    ).resolves.toBe(true);
+
+    await expect(
+      readMetadata(cwd, "openwiki/.last-update.json"),
+    ).resolves.toMatchObject({ status: "partial", pendingCount: 1 });
+  });
+
   test("clears an interrupted status when a completed run changes nothing", async () => {
     const cwd = await createTempRepo();
 
@@ -118,6 +174,38 @@ describe("persistRunMetadataIfChanged", () => {
     expect(written).toBe(true);
     const metadata = await readMetadata(cwd, "openwiki/.last-update.json");
     expect(metadata?.status).toBe("complete");
+  });
+
+  test("clears partial status and pending count when a retry completes unchanged", async () => {
+    const cwd = await createTempRepo();
+    const snapshot = await createOpenWikiContentSnapshot(cwd, "repository");
+    await persistRunMetadataIfChanged(
+      "update",
+      cwd,
+      "test-model",
+      "repository",
+      snapshot,
+      "partial",
+      "en",
+      1,
+    );
+
+    await expect(
+      persistRunMetadataIfChanged(
+        "update",
+        cwd,
+        "test-model",
+        "repository",
+        snapshot,
+        "complete",
+        "en",
+        0,
+      ),
+    ).resolves.toBe(true);
+
+    const metadata = await readMetadata(cwd, "openwiki/.last-update.json");
+    expect(metadata?.status).toBe("complete");
+    expect(metadata).not.toHaveProperty("pendingCount");
   });
 
   test("does not rewrite metadata when nothing changed after a complete run", async () => {

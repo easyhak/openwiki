@@ -567,3 +567,32 @@ function unmappedChangeId(change: GitDelta["changes"][number]): string {
 function isReviewerResolvablePending(item: PendingWorkItem): boolean {
   return item.kind === "review-gap" || item.kind === "unmapped-change";
 }
+
+/**
+ * Runs UpdateGraph from its complete compact initial state.
+ *
+ * @param dependencies - Update graph services.
+ * @param config - Runnable configuration carrying concurrency and tracing.
+ * @returns Terminal generation summary.
+ */
+export async function runUpdateGraph(
+  dependencies: UpdateGraphDependencies,
+  config?: RunnableConfig,
+): Promise<GenerationSummary> {
+  const state = await createUpdateGraph(dependencies).invoke(
+    {
+      delta: null,
+      inheritedPending: [],
+      jobs: [],
+      activeJob: null,
+      results: [],
+      plannedJobIds: [],
+      reviewWave: 0,
+      plannerInvocations: 0,
+      summary: null,
+    },
+    config,
+  );
+  if (!state.summary) throw new Error("UpdateGraph ended without a summary.");
+  return state.summary;
+}

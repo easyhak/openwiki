@@ -148,6 +148,12 @@ import { clearActiveRun, registerActiveRun } from "./crash-guard.js";
 import { inStage, inStageSync, tagErrorStage } from "../telemetry/index.js";
 import type { RunTelemetryContext } from "../telemetry/index.js";
 import { OpenWikiIgnore } from "./openwiki-ignore.js";
+import { resolveGenerationArchitecture } from "./generation/config.js";
+import { PendingWorkStore } from "./generation/pending-work-store.js";
+import {
+  generationClaimsRequireAttention,
+  runGenerationWorkflow,
+} from "./generation/runner.js";
 
 export async function runOpenWikiAgent(
   command: OpenWikiCommand,
@@ -181,11 +187,30 @@ export async function runOpenWikiAgent(
     `openwikiignore.patterns=${openWikiIgnore.patterns.length}`,
   );
 
-  const claimsRuntime = await inStage(
-    "build",
-    () => prepareClaimsRuntime(command, outputMode, runtimeCwd, openWikiIgnore),
-    { errorClass: "build_error", errorDetail: "claims_preflight" },
+  const architecture = resolveGenerationArchitecture(
+    options.generationArchitecture,
   );
+  emitDebug(options, `generation.architecture=${architecture}`);
+  const useGenerationGraph =
+    architecture === "langgraph" &&
+    outputMode === "repository" &&
+    command !== "chat";
+  const claimsRuntime = useGenerationGraph
+    ? undefined
+    : await inStage(
+        "build",
+        () =>
+          prepareClaimsRuntime(command, outputMode, runtimeCwd, openWikiIgnore),
+        { errorClass: "build_error", errorDetail: "claims_preflight" },
+      );
+  const graphClaimsRequireAttention =
+    useGenerationGraph && command === "update"
+      ? await inStage(
+          "build",
+          () => generationClaimsRequireAttention(runtimeCwd, openWikiIgnore),
+          { errorClass: "build_error", errorDetail: "claims_preflight" },
+        )
+      : false;
   emitDebug(
     options,
     claimsRuntime
@@ -193,11 +218,23 @@ export async function runOpenWikiAgent(
       : "claims=disabled",
   );
 
+  let generationWorkPending = false;
+  if (useGenerationGraph && command === "update") {
+    try {
+      generationWorkPending =
+        (await new PendingWorkStore(runtimeCwd).list()).length > 0;
+    } catch {
+      generationWorkPending = true;
+    }
+  }
+
   if (command === "update" && shouldCheckUpdateNoop(options)) {
     const noopStatus = await getUpdateNoopStatus(
       runtimeCwd,
       openWikiIgnore,
-      claimsRuntime?.requiresAttention ?? false,
+      graphClaimsRequireAttention ||
+        (claimsRuntime?.requiresAttention ?? false),
+      generationWorkPending,
     );
 
     if (noopStatus.shouldSkip) {
@@ -234,6 +271,18 @@ export async function runOpenWikiAgent(
       telemetryContext.provider = resolved;
     });
 
+    if (useGenerationGraph) {
+      return runOpenWikiGenerationCore(
+        command,
+        runtimeCwd,
+        options,
+        config.provider,
+        config.modelId,
+        config.providerRetryAttempts,
+        openWikiIgnore,
+      );
+    }
+
     return await runOpenWikiAgentCore(
       command,
       runtimeCwd,
@@ -253,6 +302,80 @@ export async function runOpenWikiAgent(
     throw error;
   } finally {
     debugFetchCapture.restore();
+  }
+}
+
+/**
+ * Runs repository init/update through the explicit LangGraph architecture.
+ *
+ * @param command - Repository generation command.
+ * @param cwd - Absolute repository root.
+ * @param options - Public run options and event sinks.
+ * @param provider - Resolved model provider.
+ * @param modelId - Resolved provider model identifier.
+ * @param providerRetryAttempts - Provider retries after the first request.
+ * @param openWikiIgnore - Active repository read boundary.
+ * @returns Completed OpenWiki run identity.
+ */
+async function runOpenWikiGenerationCore(
+  command: Exclude<OpenWikiCommand, "chat">,
+  cwd: string,
+  options: OpenWikiRunOptions,
+  provider: OpenWikiProvider,
+  modelId: string,
+  providerRetryAttempts: number,
+  openWikiIgnore: OpenWikiIgnore,
+): Promise<OpenWikiRunResult> {
+  const context = await createRunContext(cwd, "repository", options.language);
+  const snapshotBefore = await createOpenWikiContentSnapshot(cwd, "repository");
+  const model = createModel(provider, modelId, providerRetryAttempts);
+  const threadId = options.threadId ?? createThreadId(cwd, createRunThreadId());
+  registerActiveRun({
+    command,
+    cwd,
+    modelId,
+    outputMode: "repository",
+    snapshotBefore,
+    language: context.language,
+  });
+  try {
+    const summary = await runGenerationWorkflow({
+      command,
+      cwd,
+      model,
+      context,
+      openWikiIgnore,
+      options,
+      threadId,
+    });
+    await removeTemporaryPlanFile(cwd, "repository").catch(() => false);
+    await persistRunMetadataIfChanged(
+      command,
+      cwd,
+      modelId,
+      "repository",
+      snapshotBefore,
+      summary.status,
+      context.language,
+      summary.pending,
+    );
+    return { command, model: modelId };
+  } catch (error) {
+    tagErrorStage(error, "run");
+    await removeTemporaryPlanFile(cwd, "repository").catch(() => false);
+    await persistRunMetadataIfChanged(
+      command,
+      cwd,
+      modelId,
+      "repository",
+      snapshotBefore,
+      "interrupted",
+      context.language,
+      1,
+    ).catch(() => false);
+    throw error;
+  } finally {
+    clearActiveRun();
   }
 }
 

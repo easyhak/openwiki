@@ -456,7 +456,7 @@ export function createInitGraph(
         .filter((result) =>
           state.qaBatch.some((question) => question.id === result.id),
         )
-        .map(({ wave: _wave, ...result }) => result);
+        .map(omitQaWave);
       try {
         const output = await dependencies.specialists.verifyQuestions(
           state.qaBatch,
@@ -700,6 +700,22 @@ function mergeQaResults(
 }
 
 /**
+ * Removes graph-owned wave metadata from verifier retry context.
+ *
+ * @param result - Persisted graph QA result.
+ * @returns Verifier-facing result without its graph wave.
+ */
+function omitQaWave(result: QaResult): Omit<QaResult, "wave"> {
+  return {
+    id: result.id,
+    status: result.status,
+    reason: result.reason,
+    ...(result.page ? { page: result.page } : {}),
+    sourceHints: result.sourceHints,
+  };
+}
+
+/**
  * Converts an unknown failure to bounded diagnostic text.
  *
  * @param error - Unknown failure.
@@ -710,4 +726,41 @@ function messageOf(error: unknown): string {
     0,
     1_000,
   );
+}
+
+/**
+ * Runs InitGraph from its complete compact initial state.
+ *
+ * @param dependencies - Init graph services.
+ * @param config - Runnable configuration carrying concurrency and tracing.
+ * @returns Terminal generation summary.
+ */
+export async function runInitGraph(
+  dependencies: InitGraphDependencies,
+  config?: RunnableConfig,
+): Promise<GenerationSummary> {
+  const state = await createInitGraph(dependencies).invoke(
+    {
+      inventory: null,
+      partitions: [],
+      activePartition: null,
+      discoveries: [],
+      jobs: [],
+      activeJob: null,
+      results: [],
+      plannedJobIds: [],
+      criticPass: 0,
+      criticGaps: [],
+      unknownPass: 0,
+      qaWave: 0,
+      questions: [],
+      activeQuestions: [],
+      qaBatch: [],
+      qaResults: [],
+      summary: null,
+    },
+    config,
+  );
+  if (!state.summary) throw new Error("InitGraph ended without a summary.");
+  return state.summary;
 }

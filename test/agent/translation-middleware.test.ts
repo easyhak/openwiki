@@ -8,6 +8,7 @@ import { OpenWikiLocalShellBackend } from "../../src/agent/docs-only-backend.ts"
 import {
   createWikiTranslationMiddleware,
   resolveTranslationPlan,
+  translateWikiForGeneration,
   type TranslationPlan,
 } from "../../src/agent/translation-middleware.ts";
 import { ClaimSession } from "../../src/claims/brains/code/session.ts";
@@ -195,6 +196,120 @@ describe("resolveTranslationPlan", () => {
       target: "@@bad",
       source: "en",
       translateAll: true,
+    });
+  });
+});
+
+describe("translateWikiForGeneration", () => {
+  test("reports only pages whose Markdown bytes changed", async () => {
+    const { backend, rootDir } = await setup();
+    const changedPage = "/openwiki/changed.md";
+    const unchangedPage = "/openwiki/unchanged.md";
+    await backend.write(changedPage, "# Changed\n");
+    await backend.write(unchangedPage, "# Unchanged\n");
+    const { model } = fakeModel((content) =>
+      content.includes("Changed") && !content.includes("Unchanged")
+        ? `TRANSLATED\n${content}`
+        : content,
+    );
+
+    const report = await translateWikiForGeneration(
+      backend,
+      model,
+      switchTo("zh-CN"),
+      new ClaimsStore(rootDir),
+      () => {},
+      () => {},
+    );
+
+    expect(report).toEqual({
+      mutatedPages: [changedPage],
+      settledPages: [changedPage, unchangedPage],
+      pendingPages: [],
+    });
+  });
+
+  test("turns a request timeout into changed, durable translation work", async () => {
+    const { backend, rootDir } = await setup();
+    const page = "/openwiki/page.md";
+    await backend.write(page, "# Page\n");
+    const timeout = new AbortController();
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(timeout.signal);
+    let invocationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      invocationStarted = resolve;
+    });
+    const model = {
+      invoke: (
+        _messages: BaseMessage[],
+        options?: { signal?: AbortSignal },
+      ) => {
+        invocationStarted();
+        return new Promise<AIMessage>((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => {
+              const reason: unknown = options.signal?.reason;
+              reject(
+                reason instanceof Error
+                  ? reason
+                  : new Error("translation timed out"),
+              );
+            },
+            { once: true },
+          );
+        });
+      },
+    } as unknown as BaseChatModel;
+
+    const translation = translateWikiForGeneration(
+      backend,
+      model,
+      switchTo("zh-CN"),
+      new ClaimsStore(rootDir),
+      () => {},
+      () => {},
+    );
+    await started;
+    timeout.abort(new DOMException("timed out", "TimeoutError"));
+
+    await expect(translation).resolves.toEqual({
+      mutatedPages: [page],
+      settledPages: [],
+      pendingPages: [page],
+    });
+    expect(timeoutSpy).toHaveBeenCalledWith(300_000);
+    await expect(
+      readFile(path.join(rootDir, "openwiki/page.md"), "utf8"),
+    ).resolves.toContain("openwiki_translation_pending");
+  });
+
+  test("does not report an unchanged retry marker as a mutation", async () => {
+    const { backend, rootDir } = await setup();
+    const page = "/openwiki/page.md";
+    await backend.write(
+      page,
+      '---\nopenwiki_translation_pending: "zh-CN"\n---\n\n# Page\n',
+    );
+    const model = {
+      invoke: () => Promise.reject(new Error("translator unavailable")),
+    } as unknown as BaseChatModel;
+
+    await expect(
+      translateWikiForGeneration(
+        backend,
+        model,
+        sweep("zh-CN"),
+        new ClaimsStore(rootDir),
+        () => {},
+        () => {},
+      ),
+    ).resolves.toEqual({
+      mutatedPages: [],
+      settledPages: [],
+      pendingPages: [page],
     });
   });
 });

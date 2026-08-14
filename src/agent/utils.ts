@@ -85,13 +85,21 @@ async function readRunWikiGoal(
  * @param cwd - Absolute repository root.
  * @param openWikiIgnore - Active repository read boundary.
  * @param claimsRequireAttention - Whether deterministic Claims state needs work.
+ * @param generationWorkPending - Whether the durable generation ledger has work.
  * @returns Skip decision and diagnostic reason.
  */
 export async function getUpdateNoopStatus(
   cwd: string,
   openWikiIgnore = new OpenWikiIgnore([]),
   claimsRequireAttention = false,
+  generationWorkPending = false,
 ): Promise<UpdateNoopStatus> {
+  if (generationWorkPending) {
+    return {
+      shouldSkip: false,
+      reason: "generation work remains pending",
+    };
+  }
   if (claimsRequireAttention) {
     return {
       shouldSkip: false,
@@ -105,8 +113,14 @@ export async function getUpdateNoopStatus(
     return { shouldSkip: false, reason: "missing previous update git head" };
   }
 
-  if (lastUpdate.status === "interrupted") {
-    return { shouldSkip: false, reason: "previous update was interrupted" };
+  if (lastUpdate.status === "interrupted" || lastUpdate.status === "partial") {
+    return {
+      shouldSkip: false,
+      reason: `previous update was ${lastUpdate.status}`,
+    };
+  }
+  if ((lastUpdate.pendingCount ?? 0) > 0) {
+    return { shouldSkip: false, reason: "generation work remains pending" };
   }
 
   const head = await getGitHead(cwd);
@@ -171,6 +185,7 @@ export async function writeLastUpdateMetadata(
   outputMode: OpenWikiOutputMode = "repository",
   status: UpdateRunStatus = "complete",
   language?: string,
+  pendingCount = 0,
 ): Promise<void> {
   const metadataFile = getMetadataFilePath(cwd, outputMode);
   const metadata: UpdateMetadata = {
@@ -179,6 +194,7 @@ export async function writeLastUpdateMetadata(
     gitHead: outputMode === "repository" ? await getGitHead(cwd) : undefined,
     model: modelId,
     status,
+    ...(pendingCount > 0 ? { pendingCount } : {}),
     ...(language ? { language } : {}),
   };
 
@@ -203,6 +219,7 @@ export async function persistRunMetadataIfChanged(
   snapshotBefore: OpenWikiContentSnapshot | null,
   status: UpdateRunStatus = "complete",
   language?: string,
+  pendingCount = 0,
 ): Promise<boolean> {
   if (command === "chat" || snapshotBefore === null) {
     return false;
@@ -214,7 +231,12 @@ export async function persistRunMetadataIfChanged(
     // A completed run clears a previous interrupted status even when the
     // content did not change, so the update no-op check can skip again.
     const lastUpdate = await readLastUpdate(cwd, outputMode);
-    if (status !== "complete" || lastUpdate?.status !== "interrupted") {
+    if (
+      status === "complete" &&
+      lastUpdate?.status !== "interrupted" &&
+      lastUpdate?.status !== "partial" &&
+      (lastUpdate?.pendingCount ?? 0) === pendingCount
+    ) {
       return false;
     }
   }
@@ -226,6 +248,7 @@ export async function persistRunMetadataIfChanged(
     outputMode,
     status,
     language,
+    pendingCount,
   );
 
   return true;
@@ -296,7 +319,17 @@ async function readLastUpdate(
         // Metadata written before the status field existed is treated as
         // complete so upgrades do not force a spurious re-run.
         status:
-          parsedMetadata.status === "interrupted" ? "interrupted" : "complete",
+          parsedMetadata.status === "interrupted"
+            ? "interrupted"
+            : parsedMetadata.status === "partial"
+              ? "partial"
+              : "complete",
+        pendingCount:
+          typeof parsedMetadata.pendingCount === "number" &&
+          Number.isInteger(parsedMetadata.pendingCount) &&
+          parsedMetadata.pendingCount >= 0
+            ? parsedMetadata.pendingCount
+            : undefined,
         language:
           typeof parsedMetadata.language === "string"
             ? parsedMetadata.language

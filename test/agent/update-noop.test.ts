@@ -64,6 +64,17 @@ describe("getUpdateNoopStatus", () => {
     });
   });
 
+  test("does not skip before Git checks when the durable ledger has work", async () => {
+    const repo = await createRepoWithOpenWiki();
+
+    await expect(
+      getUpdateNoopStatus(repo, new OpenWikiIgnore([]), false, true),
+    ).resolves.toEqual({
+      shouldSkip: false,
+      reason: "generation work remains pending",
+    });
+  });
+
   test("detects a clean update with unchanged HEAD as a no-op", async () => {
     const repo = await createRepoWithOpenWiki();
     const head = await git(repo, ["rev-parse", "HEAD"]);
@@ -150,6 +161,28 @@ describe("getUpdateNoopStatus", () => {
     expect(status).toEqual({
       shouldSkip: false,
       reason: "previous update was interrupted",
+    });
+  });
+
+  test("does not skip update when the previous run was partial", async () => {
+    const repo = await createRepoWithOpenWiki();
+    const head = await git(repo, ["rev-parse", "HEAD"]);
+    await writeLastUpdate(repo, head, { status: "partial", pendingCount: 1 });
+
+    await expect(getUpdateNoopStatus(repo)).resolves.toEqual({
+      shouldSkip: false,
+      reason: "previous update was partial",
+    });
+  });
+
+  test("does not skip when legacy-complete metadata still records pending work", async () => {
+    const repo = await createRepoWithOpenWiki();
+    const head = await git(repo, ["rev-parse", "HEAD"]);
+    await writeLastUpdate(repo, head, { status: "complete", pendingCount: 2 });
+
+    await expect(getUpdateNoopStatus(repo)).resolves.toEqual({
+      shouldSkip: false,
+      reason: "generation work remains pending",
     });
   });
 

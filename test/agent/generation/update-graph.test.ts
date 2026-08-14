@@ -20,10 +20,7 @@ import type {
 import type { PageGraphRunner } from "../../../src/agent/generation/page-graph.ts";
 import { PendingWorkStore } from "../../../src/agent/generation/pending-work-store.ts";
 import type { GenerationSpecialists } from "../../../src/agent/generation/specialists.ts";
-import {
-  createUpdateGraph,
-  type UpdateGraphInitialState,
-} from "../../../src/agent/generation/update-graph.ts";
+import { runUpdateGraph } from "../../../src/agent/generation/update-graph.ts";
 import { OpenWikiIgnore } from "../../../src/agent/openwiki-ignore.ts";
 
 const execFileAsync = promisify(execFile);
@@ -577,30 +574,27 @@ describe("UpdateGraph", () => {
     pages: PageGraphRunner,
     config: RunnableConfig = {},
   ): Promise<GenerationSummary> {
-    const graph = createUpdateGraph({
-      rootDir,
-      context: {
-        lastUpdate: {
-          updatedAt: "2026-08-14T00:00:00Z",
-          command: "update",
-          gitHead: previousHead,
-          model: "scripted",
-          status: "complete",
+    return runUpdateGraph(
+      {
+        rootDir,
+        context: {
+          lastUpdate: {
+            updatedAt: "2026-08-14T00:00:00Z",
+            command: "update",
+            gitHead: previousHead,
+            model: "scripted",
+            status: "complete",
+          },
         },
+        openWikiIgnore: new OpenWikiIgnore([]),
+        claimsStore,
+        resolver,
+        pending,
+        pages,
+        specialists,
       },
-      openWikiIgnore: new OpenWikiIgnore([]),
-      claimsStore,
-      resolver,
-      pending,
-      pages,
-      specialists,
-    });
-    const output = await graph.invoke(initialState(), {
-      maxConcurrency: 4,
-      ...config,
-    });
-    if (!output.summary) throw new Error("UpdateGraph returned no summary.");
-    return output.summary;
+      { maxConcurrency: 4, ...config },
+    );
   }
 
   /**
@@ -665,23 +659,6 @@ describe("UpdateGraph", () => {
     await git("commit", "--quiet", "-m", message);
   }
 });
-
-/**
- * Creates complete empty UpdateGraph parent state.
- */
-function initialState(): UpdateGraphInitialState {
-  return {
-    delta: null,
-    inheritedPending: [],
-    jobs: [],
-    activeJob: null,
-    results: [],
-    plannedJobIds: [],
-    reviewWave: 0,
-    plannerInvocations: 0,
-    summary: null,
-  };
-}
 
 /**
  * Creates an empty successful reviewer output.

@@ -4,7 +4,9 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { BackendProtocolV2, FileInfo } from "deepagents";
 import { createMiddleware } from "langchain";
 import path from "node:path";
+import { isGroundedWikiPage } from "../claims/brains/code/paths.js";
 import type { ClaimSession } from "../claims/brains/code/session.js";
+import { ClaimsStore } from "../claims/brains/code/store.js";
 import type { Claim } from "../claims/core/types.js";
 import { getErrorMessage } from "../platform/diagnostics.js";
 import {
@@ -43,6 +45,31 @@ const NOSTREAM_TAG = "langsmith:nostream";
  * of the suppressed per-token translation output.
  */
 const TRANSLATION_STATUS_MESSAGE = "Translating wiki docs...";
+
+/**
+ * Maximum wall time for one page translation model invocation.
+ */
+const TRANSLATION_INVOCATION_TIMEOUT_MS = 5 * 60 * 1_000;
+
+/**
+ * Page-level translation outcomes consumed by generation finalization.
+ */
+export interface GenerationTranslationReport {
+  /**
+   * Pages whose Markdown bytes changed and therefore need Claims re-sealing.
+   */
+  mutatedPages: string[];
+
+  /**
+   * Pages whose translation obligation is currently settled.
+   */
+  settledPages: string[];
+
+  /**
+   * Pages that must remain durable translation work.
+   */
+  pendingPages: string[];
+}
 
 /**
  * What an `update` run should do about the wiki's language before the agent
@@ -189,6 +216,105 @@ export function createWikiTranslationMiddleware(
 }
 
 /**
+ * Runs the existing page-isolated translation sweep for LangGraph generation.
+ *
+ * Unlike middleware translation, this entrypoint loads Claims directly from
+ * persistence and returns the exact pages it changed so finalization can re-seal
+ * only known OpenWiki-owned mutations. Page failures remain marked pending and
+ * do not abort sibling translations.
+ *
+ * @param backend - Sandboxed docs-only backend.
+ * @param model - Configured run model.
+ * @param plan - Resolved language transition.
+ * @param claimsStore - OpenWiki-owned Claims persistence.
+ * @param onWarning - Sanitized warning sink.
+ * @param onStatus - User-visible status sink.
+ * @returns Stable page-level mutation, success, and retry outcomes.
+ */
+export async function translateWikiForGeneration(
+  backend: BackendProtocolV2,
+  model: BaseChatModel,
+  plan: TranslationPlan,
+  claimsStore: ClaimsStore,
+  onWarning: (message: string) => void,
+  onStatus: (message: string) => void,
+): Promise<GenerationTranslationReport> {
+  const mutated = new Set<string>();
+  const settled = new Set<string>();
+  const pendingPages = new Set<string>();
+  const failures: string[] = [];
+  let announced = false;
+  for (const filePath of await collectMarkdownFiles(backend, "/openwiki")) {
+    let content: string;
+    try {
+      content = await readText(backend, filePath);
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      failures.push(`- ${filePath}: ${getErrorMessage(error)}`);
+      pendingPages.add(filePath);
+      continue;
+    }
+    const pending =
+      readFrontmatterField(content, OPENWIKI_TRANSLATION_PENDING_FIELD) !==
+      undefined;
+    if (!plan.translateAll && !pending) {
+      settled.add(filePath);
+      continue;
+    }
+    const pageClaims = isGroundedWikiPage(filePath)
+      ? await claimsStore.loadPage(filePath)
+      : null;
+    if (!announced) {
+      onStatus(TRANSLATION_STATUS_MESSAGE);
+      announced = true;
+    }
+    try {
+      const changed = await translatePage(
+        backend,
+        model,
+        filePath,
+        content,
+        plan,
+        pageClaims?.claims ?? [],
+      );
+      if (changed) mutated.add(filePath);
+      settled.add(filePath);
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      const reasons = [getErrorMessage(error)];
+      const markerChanged =
+        setFrontmatterField(
+          content,
+          OPENWIKI_TRANSLATION_PENDING_FIELD,
+          plan.target,
+        ) !== content;
+      const stampError = await markPending(
+        backend,
+        filePath,
+        content,
+        plan.target,
+      );
+      if (stampError)
+        reasons.push(`could not mark it for retry: ${stampError}`);
+      else if (markerChanged) mutated.add(filePath);
+      pendingPages.add(filePath);
+      failures.push(`- ${filePath}: ${reasons.join("; ")}`);
+    }
+  }
+  if (failures.length > 0) {
+    onWarning(
+      `OpenWiki could not translate ${failures.length} page(s) into ` +
+        `${describeLanguage(plan.target)}; they will be retried:\n${failures.join("\n")}`,
+    );
+  }
+  return {
+    mutatedPages: [...mutated].sort(),
+    settledPages: [...settled].sort(),
+    pendingPages: [...pendingPages].sort(),
+  };
+}
+
+/**
  * Brings each concept page into the plan's target language.
  *
  * Each page is handled independently: a plain update skips pages that are not
@@ -301,6 +427,7 @@ async function translateWiki(
  * @param original - Current Markdown.
  * @param plan - Resolved language transition.
  * @param claims - Complete claims the translation must preserve.
+ * @returns Whether the page bytes changed.
  */
 async function translatePage(
   backend: BackendProtocolV2,
@@ -309,8 +436,8 @@ async function translatePage(
   original: string,
   plan: TranslationPlan,
   claims: readonly Claim[],
-): Promise<void> {
-  if (!original.trim()) return;
+): Promise<boolean> {
+  if (!original.trim()) return false;
 
   const translated = await translateMarkdown(
     model,
@@ -327,12 +454,13 @@ async function translatePage(
     translated,
     OPENWIKI_TRANSLATION_PENDING_FIELD,
   );
-  if (finalized === original) return;
+  if (finalized === original) return false;
 
   const result = await backend.edit(filePath, original, finalized);
   if (result.error) {
     throw new Error(`could not write the translation: ${result.error}`);
   }
+  return true;
 }
 
 /**
@@ -387,7 +515,10 @@ async function translateMarkdown(
       new SystemMessage(buildTranslationPrompt(from, to, claims)),
       new HumanMessage(content),
     ],
-    { tags: [NOSTREAM_TAG] },
+    {
+      tags: [NOSTREAM_TAG],
+      signal: AbortSignal.timeout(TRANSLATION_INVOCATION_TIMEOUT_MS),
+    },
   );
   return extractText(response.content);
 }

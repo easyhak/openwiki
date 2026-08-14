@@ -56,7 +56,7 @@ export type OpenWikiRunOptions = {
   generationConcurrency?: number;
 };
 
-export type UpdateRunStatus = "complete" | "interrupted";
+export type UpdateRunStatus = "complete" | "partial" | "interrupted";
 
 export type UpdateMetadata = {
   updatedAt: string;
@@ -64,6 +64,12 @@ export type UpdateMetadata = {
   gitHead?: string;
   model: string;
   status?: UpdateRunStatus;
+  /**
+   * Number of durable workflow obligations remaining.
+   *
+   * @default 0 for older metadata.
+   */
+  pendingCount?: number;
   language?: string;
 };
 
