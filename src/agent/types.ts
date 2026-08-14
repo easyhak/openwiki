@@ -1,3 +1,5 @@
+import type { GenerationArchitecture } from "./generation/config.js";
+
 export type OpenWikiCommand = "chat" | "init" | "update";
 export type OpenWikiOutputMode = "local-wiki" | "repository";
 
@@ -40,6 +42,18 @@ export type OpenWikiRunOptions = {
   threadId?: string;
   userMessage?: string | null;
   telemetryFile?: string;
+  /**
+   * Temporary repository-generation implementation override.
+   *
+   * @default resolved from OPENWIKI_GENERATION_ARCHITECTURE, then legacy.
+   */
+  generationArchitecture?: GenerationArchitecture;
+  /**
+   * Maximum concurrent generation graph tasks.
+   *
+   * @default 4.
+   */
+  generationConcurrency?: number;
 };
 
 export type UpdateRunStatus = "complete" | "interrupted";
