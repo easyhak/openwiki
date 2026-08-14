@@ -120,7 +120,18 @@ describe("Claims agent graph integration", () => {
       expect(
         options.middleware.map((middleware) => middleware.name),
       ).not.toContain("OpenWikiClaimsCompletionMiddleware");
-      expect(options.subagents).toEqual([]);
+      expect(options.subagents).toHaveLength(command === "init" ? 3 : 0);
+      if (command === "init") {
+        expect(
+          options.subagents.map(
+            (subagent) => (subagent as { name: string }).name,
+          ),
+        ).toEqual([
+          "skeleton-critic",
+          "wiki-question-finder",
+          "wiki-answer-verifier",
+        ]);
+      }
     },
   );
 

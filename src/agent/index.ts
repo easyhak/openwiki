@@ -66,7 +66,9 @@ import {
   refreshChatGptTokens,
 } from "./openai-chatgpt-oauth.js";
 import { createSystemPrompt, createUserPrompt } from "./prompt.js";
+import { resolveSkeletonCriticSubagents } from "./skeleton-critic.js";
 import { syncBundledSkills } from "./skills.js";
+import { resolveWikiQaSubagents } from "./wiki-qa-subagents.js";
 import {
   createVertexAuthFetch,
   resolveVertexSurface,
@@ -504,7 +506,10 @@ function createOpenWikiAgentGraph(
             ),
           ],
     skills: ["/skills/"],
-    subagents: [],
+    subagents: [
+      ...resolveSkeletonCriticSubagents(options.command, options.outputMode),
+      ...resolveWikiQaSubagents(options.command, options.outputMode),
+    ],
     permissions: AGENT_FILESYSTEM_PERMISSIONS,
     systemPrompt: createSystemPrompt(
       options.command,
@@ -596,7 +601,7 @@ async function runOpenWikiAgentCore(
     ],
   };
 
-  emitDebug(options, "stream=opening modes=messages,tools subgraphs=false");
+  emitDebug(options, "stream=opening modes=messages,tools subgraphs=true");
   const stream = await inStage(
     "build",
     () =>
@@ -605,11 +610,11 @@ async function runOpenWikiAgentCore(
           thread_id: threadId,
         },
         streamMode: ["messages", "tools"],
-        subgraphs: false,
+        subgraphs: true,
       }),
     { errorClass: "build_error", errorDetail: "stream_open" },
   );
-  emitDebug(options, "stream=started modes=messages,tools subgraphs=false");
+  emitDebug(options, "stream=started modes=messages,tools subgraphs=true");
 
   // Register with the crash guard for exactly the stream-consumption window so
   // escaped runtime failures become interrupted-stamped runs instead of silent

@@ -299,7 +299,7 @@ describe("Claims production run lifecycle", () => {
     expect(graphHarness.streamBehavior).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ subgraphs: false }),
+      expect.objectContaining({ subgraphs: true }),
     );
   });
 

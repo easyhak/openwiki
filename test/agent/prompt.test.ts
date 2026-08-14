@@ -333,7 +333,7 @@ describe("createUserPrompt", () => {
 });
 
 describe("createSystemPrompt Claims workflow", () => {
-  test("uses claim-first init/update authoring without legacy verifier choreography", () => {
+  test("combines Claims authoring with init-only breadth and QA reviewers", () => {
     for (const command of ["init", "update"] as const) {
       const prompt = createSystemPrompt(command, "repository");
 
@@ -351,9 +351,19 @@ describe("createSystemPrompt Claims workflow", () => {
         "Never use execute to create, edit, move, or delete generated wiki files",
       );
       expect(prompt).not.toContain("_skeleton.md");
-      expect(prompt).not.toContain("skeleton_critic");
-      expect(prompt).not.toContain("wiki_question_finder");
-      expect(prompt).not.toContain("wiki_answer_verifier");
+      if (command === "init") {
+        expect(prompt).toContain("skeleton-critic");
+        expect(prompt).toContain("wiki-question-finder");
+        expect(prompt).toContain("wiki-answer-verifier");
+        expect(prompt).toContain(
+          "Update the canonical page's complete Claim set",
+        );
+        expect(prompt).toContain("subagents never mutate Claims or Markdown");
+      } else {
+        expect(prompt).not.toContain("skeleton-critic");
+        expect(prompt).not.toContain("wiki-question-finder");
+        expect(prompt).not.toContain("wiki-answer-verifier");
+      }
     }
   });
 });

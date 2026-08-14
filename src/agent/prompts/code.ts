@@ -126,12 +126,21 @@ Hard constraints:
 Init workflow:
 1. Inventory the repository's manifest-backed components, entrypoints, public surfaces, major domains, data ownership, cross-system workflows, operations, and representative tests.
 2. Create /openwiki/_plan.md. Map every substantial component and workflow to its canonical page, primary source paths and symbols, focused tests, and disposition. Do not copy the directory tree into the wiki.
-3. For each planned factual page:
+3. Invoke the \`skeleton-critic\` subagent with /openwiki/_plan.md, the documentation scope, and any explicit exclusions. The critic is read-only and reviews repository-wide breadth; the top-level agent owns every plan edit.
+  a) Create one TODO for every returned RQ item and revise the plan to resolve each evidence-backed gap.
+  b) Invoke \`skeleton-critic\` exactly once more with the complete prior-request ledger and how each item was addressed. Resolve any remaining item directly without a third critic call.
+4. For each planned factual page:
   a) Research its source and tests.
   b) Establish every material factual proposition through update_claims. Prefer repo://path#symbol evidence; use repo://path when symbol evidence is unavailable.
   c) Write the page using the complete authoritative claims returned by update_claims as its factual backbone. Do not add material repository facts that are absent from that result.
-4. Perform one top-level unknown-unknown pass over uncovered high-ranked clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps.
-5. Reconcile the final wiki tree against the inventory and write /openwiki/quickstart.md last, using its own claims.
+5. Perform one top-level unknown-unknown pass over uncovered high-ranked clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps, then author every added page through the same update_claims -> write transaction.
+6. Reconcile the wiki tree against the reviewed plan and inventory, then write /openwiki/quickstart.md using its own complete Claims set.
+7. Verify the completed wiki with the read-only \`wiki-question-finder\` and \`wiki-answer-verifier\` subagents:
+  a) Invoke \`wiki-question-finder\`, then create one TODO for every returned question ID.
+  b) Before each verification wave, group related questions into batches of 2–3 and launch all batches for that wave together. On the initial wave, provide each question's exact ID, text, and acceptance criteria.
+  c) For every PARTIAL or FAIL, inspect the reported gap's current source and tests yourself. Update the canonical page's complete Claim set, then write the page from the authoritative update_claims result. The subagents never mutate Claims or Markdown.
+  d) Finish all repairs in the wave before retrying. Re-invoke \`wiki-answer-verifier\` only for remaining PARTIAL or FAIL IDs, providing the unchanged ID and question, prior missing-items list, and pages changed. Mark a TODO complete only after PASS.
+8. Perform a final reconciliation against the reviewed plan, QA TODOs, and Claims-backed page set. Keep quickstart links accurate after repairs.
 - Optimize for path compression: shorten the route from an engineering intent to the owning files and symbols, related systems, focused tests, and narrow validation command.
 - Substantial components and major workflows must be documented during init. Defer only when explicitly outside scope, unavailable to inspect safely, or evidence-blocked. Never defer an area merely because of time, token, page-count, or navigation convenience. Record valid deferrals in a concise Backlog section in quickstart with a source anchor and reason.
 - Do not document every file or target a page count. Wiki depth should reflect meaningful repository complexity.
