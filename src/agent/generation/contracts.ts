@@ -311,3 +311,70 @@ export const GenerationSummarySchema = z
  * Terminal summary returned by a generation graph.
  */
 export type GenerationSummary = z.infer<typeof GenerationSummarySchema>;
+
+/**
+ * One stable repository-wide QA question.
+ */
+export const QaQuestionSchema = z
+  .object({
+    id: StableIdSchema,
+    question: z.string().trim().min(1).max(2_000),
+    acceptanceCriteria: z
+      .array(z.string().trim().min(1).max(1_000))
+      .min(1)
+      .max(20),
+  })
+  .strict();
+
+/**
+ * One stable repository-wide QA question.
+ */
+export type QaQuestion = z.infer<typeof QaQuestionSchema>;
+
+/**
+ * Structured output of the one-time question finder.
+ */
+export const QaQuestionSetSchema = z
+  .object({ questions: z.array(QaQuestionSchema).max(12) })
+  .strict();
+
+/**
+ * Structured output of the one-time question finder.
+ */
+export type QaQuestionSet = z.infer<typeof QaQuestionSetSchema>;
+
+/**
+ * One bounded QA verification result.
+ */
+export const QaResultSchema = z
+  .object({
+    id: StableIdSchema,
+    status: z.enum(["pass", "partial", "fail"]),
+    reason: DiagnosticSchema,
+    page: CanonicalPageSchema.optional(),
+    sourceHints: z.array(z.string().trim().min(1).max(500)).max(100),
+    wave: z.number().int().nonnegative(),
+  })
+  .strict();
+
+/**
+ * One bounded QA verification result.
+ */
+export type QaResult = z.infer<typeof QaResultSchema>;
+
+/**
+ * Structured output for one verifier batch.
+ */
+export const QaBatchResultSchema = z
+  .object({
+    results: z
+      .array(QaResultSchema.omit({ wave: true }))
+      .min(1)
+      .max(3),
+  })
+  .strict();
+
+/**
+ * Structured output for one verifier batch.
+ */
+export type QaBatchResult = z.infer<typeof QaBatchResultSchema>;

@@ -52,14 +52,14 @@ describe("generation specialists", () => {
     vi.restoreAllMocks();
     mocks.createAgent.mockReset();
     mocks.createFilesystemMiddleware.mockClear();
-    agents = Array.from({ length: 4 }, () => scriptedAgent());
+    agents = Array.from({ length: 6 }, () => scriptedAgent());
     mocks.createAgent.mockImplementation(() => agents.shift());
   });
 
   test("gives research specialists only read-only filesystem tools", () => {
     createGenerationSpecialists(model, backend);
 
-    expect(mocks.createFilesystemMiddleware).toHaveBeenCalledTimes(3);
+    expect(mocks.createFilesystemMiddleware).toHaveBeenCalledTimes(5);
     for (const [options] of mocks.createFilesystemMiddleware.mock.calls) {
       expect(options).toMatchObject({
         backend,
@@ -73,7 +73,7 @@ describe("generation specialists", () => {
     const createOptions = mocks.createAgent.mock.calls.map(
       ([options]) => options as { middleware?: unknown[]; tools: unknown[] },
     );
-    expect(createOptions).toHaveLength(4);
+    expect(createOptions).toHaveLength(6);
     expect(createOptions[1].middleware).toBeUndefined();
     expect(createOptions.every(({ tools }) => tools.length === 0)).toBe(true);
   });
@@ -84,7 +84,14 @@ describe("generation specialists", () => {
       timeoutMs.push(milliseconds);
       return new AbortController().signal;
     });
-    const [reconciler, author, discovery, reviewer] = agents;
+    const [
+      reconciler,
+      author,
+      discovery,
+      reviewer,
+      questionFinder,
+      questionVerifier,
+    ] = agents;
     reconciler.invoke.mockResolvedValue({
       structuredResponse: {
         disposition: "defer",
@@ -108,6 +115,21 @@ describe("generation specialists", () => {
     reviewer.invoke.mockResolvedValue({
       structuredResponse: { jobs: [], gaps: [], resolvedPendingIds: [] },
     });
+    questionFinder.invoke.mockResolvedValue({
+      structuredResponse: { questions: [] },
+    });
+    questionVerifier.invoke.mockResolvedValue({
+      structuredResponse: {
+        results: [
+          {
+            id: "runtime_ownership",
+            status: "pass",
+            reason: "The runtime page establishes ownership.",
+            sourceHints: ["src/runtime.ts"],
+          },
+        ],
+      },
+    });
     const specialists = createGenerationSpecialists(model, backend);
 
     await specialists.reconcilePage({
@@ -125,8 +147,93 @@ describe("generation specialists", () => {
       undefined,
     );
     await specialists.review("Review one thing", {});
+    await specialists.findQuestions(["/openwiki/architecture/runtime.md"]);
+    await specialists.verifyQuestions(
+      [
+        {
+          id: "runtime_ownership",
+          question: "Which module owns the runtime?",
+          acceptanceCriteria: ["Names the owning module."],
+        },
+      ],
+      [],
+    );
 
-    expect(timeoutMs).toEqual([300_000, 180_000, 300_000, 300_000]);
+    expect(timeoutMs).toEqual([
+      300_000, 180_000, 300_000, 300_000, 300_000, 300_000,
+    ]);
+  });
+
+  test("passes structured QA payloads and validates their outputs", async () => {
+    const questionFinder = agents[4];
+    const questionVerifier = agents[5];
+    const questions = [
+      {
+        id: "runtime_ownership",
+        question: "Which module owns the runtime?",
+        acceptanceCriteria: ["Names the owning module."],
+      },
+    ];
+    const prior = [
+      {
+        id: "runtime_ownership",
+        status: "partial" as const,
+        reason: "The owning module is not named.",
+        page: "/openwiki/architecture/runtime.md",
+        sourceHints: ["src/runtime.ts"],
+      },
+    ];
+    questionFinder.invoke.mockResolvedValue({
+      structuredResponse: { questions },
+    });
+    questionVerifier.invoke.mockResolvedValue({
+      structuredResponse: {
+        results: [
+          {
+            id: "runtime_ownership",
+            status: "pass",
+            reason: "The owning module is documented and source-grounded.",
+            page: "/openwiki/architecture/runtime.md",
+            sourceHints: ["src/runtime.ts"],
+          },
+        ],
+      },
+    });
+    const specialists = createGenerationSpecialists(model, backend);
+
+    await expect(
+      specialists.findQuestions(["/openwiki/architecture/runtime.md"]),
+    ).resolves.toEqual({ questions });
+    await expect(
+      specialists.verifyQuestions(questions, prior),
+    ).resolves.toMatchObject({
+      results: [{ id: "runtime_ownership", status: "pass" }],
+    });
+
+    expect(questionFinder.invoke).toHaveBeenCalledWith(
+      {
+        messages: [
+          {
+            role: "user",
+            content: JSON.stringify({
+              generatedPages: ["/openwiki/architecture/runtime.md"],
+            }),
+          },
+        ],
+      },
+      expect.any(Object),
+    );
+    expect(questionVerifier.invoke).toHaveBeenCalledWith(
+      {
+        messages: [
+          {
+            role: "user",
+            content: JSON.stringify({ questions, prior }),
+          },
+        ],
+      },
+      expect.any(Object),
+    );
   });
 
   test("composes a parent cancellation signal with the specialist timeout", async () => {

@@ -8,12 +8,17 @@ import {
   ClaimProposalSchema,
   DiscoveryResultSchema,
   PageAuthorOutputSchema,
+  QaBatchResultSchema,
+  QaQuestionSetSchema,
   ReviewOutputSchema,
   type ClaimProposal,
   type DiscoveryPartition,
   type DiscoveryResult,
   type PageAuthorOutput,
   type PageJob,
+  type QaBatchResult,
+  type QaQuestion,
+  type QaQuestionSet,
   type ReviewOutput,
 } from "./contracts.js";
 import {
@@ -113,6 +118,23 @@ export interface GenerationSpecialists {
     evidence: unknown,
     config?: RunnableConfig,
   ): Promise<ReviewOutput>;
+
+  /**
+   * Finds stable repository-wide questions after the first complete wiki.
+   */
+  findQuestions(
+    pages: readonly string[],
+    config?: RunnableConfig,
+  ): Promise<QaQuestionSet>;
+
+  /**
+   * Verifies one stable batch of two or three questions.
+   */
+  verifyQuestions(
+    questions: readonly QaQuestion[],
+    prior: readonly QaBatchResult["results"][number][],
+    config?: RunnableConfig,
+  ): Promise<QaBatchResult>;
 }
 
 /**
@@ -230,6 +252,30 @@ Inspect source and tests read-only. Return concrete canonical page jobs for repa
     runName: "generation_reviewer",
   }) as unknown as StructuredAgent;
 
+  const questionFinder = createAgent({
+    model,
+    tools: [],
+    middleware: [filesystem()],
+    responseFormat: QaQuestionSetSchema,
+    systemPrompt: `Find high-value repository engineering questions that a complete OpenWiki should answer.
+Inspect source and tests, not just the generated wiki. Return at most 12 questions covering architecture, ownership, workflows, lifecycle ordering, public/extension surfaces, state/persistence, operations, and focused validation. Give every question a stable descriptive id and explicit acceptance criteria. Do not answer or repair the questions.`,
+  }).withConfig({
+    recursionLimit: GENERATION_RECURSION_LIMIT,
+    runName: "wiki_question_finder",
+  }) as unknown as StructuredAgent;
+
+  const questionVerifier = createAgent({
+    model,
+    tools: [],
+    middleware: [filesystem()],
+    responseFormat: QaBatchResultSchema,
+    systemPrompt: `Verify whether the generated OpenWiki answers exactly the supplied questions accurately and with source grounding.
+Read relevant wiki pages, then inspect current source and tests. Return one result for every unchanged question id. PASS requires all acceptance criteria; PARTIAL and FAIL must identify the canonical page and precise missing or incorrect material when known. Never edit files.`,
+  }).withConfig({
+    recursionLimit: GENERATION_RECURSION_LIMIT,
+    runName: "wiki_answer_verifier",
+  }) as unknown as StructuredAgent;
+
   return {
     async reconcilePage(input, config) {
       return invoke(
@@ -263,6 +309,24 @@ Inspect source and tests read-only. Return concrete canonical page jobs for repa
         reviewer,
         ReviewOutputSchema,
         JSON.stringify({ task, evidence }),
+        SOURCE_RESEARCH_TIMEOUT_MS,
+        config,
+      );
+    },
+    async findQuestions(pages, config) {
+      return invoke(
+        questionFinder,
+        QaQuestionSetSchema,
+        JSON.stringify({ generatedPages: pages }),
+        SOURCE_RESEARCH_TIMEOUT_MS,
+        config,
+      );
+    },
+    async verifyQuestions(questions, prior, config) {
+      return invoke(
+        questionVerifier,
+        QaBatchResultSchema,
+        JSON.stringify({ questions, prior }),
         SOURCE_RESEARCH_TIMEOUT_MS,
         config,
       );
