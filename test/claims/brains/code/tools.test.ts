@@ -92,6 +92,7 @@ describe("createClaimsTools", () => {
     expect(getTool(tools, "inspect_claims").description).toContain(
       "Pass pages only as a fallback",
     );
+    expect(getTool(tools, "inspect_claims").schema).not.toHaveProperty("oneOf");
   });
 
   test("returns only compact operation results and allocated IDs", async () => {
@@ -195,14 +196,15 @@ describe("createClaimsTools", () => {
   test.each([
     ["neither selector", {}],
     ["both selectors", { ids: ["claim_existing"], pages: ["page.md"] }],
-  ])("rejects %s", async (_case, input) => {
+  ])("returns retry guidance for %s", async (_case, input) => {
     const inspect = getTool(
       createClaimsTools(createSession()),
       "inspect_claims",
     );
-    await expect(inspect.invoke(input)).rejects.toThrow(
-      "did not match expected schema",
-    );
+    expect(parse(await inspect.invoke(input))).toEqual({
+      error: "input: Pass exactly one of ids or pages",
+      retryable: true,
+    });
   });
 
   test("supports statement-only partial updates", async () => {

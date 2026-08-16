@@ -210,7 +210,6 @@ export function createClaimsTools(
             items: { type: "string", minLength: 1 },
           },
         },
-        oneOf: [{ required: ["ids"] }, { required: ["pages"] }],
         additionalProperties: false,
       } as const,
       func: (input) =>
