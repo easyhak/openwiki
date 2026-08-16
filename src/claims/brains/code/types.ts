@@ -41,16 +41,6 @@ export interface UpdateClaimsInput {
 }
 
 /**
- * Input accepted by the code-brain `fetch_claims` tool.
- */
-export interface FetchClaimsInput {
-  /**
-   * Virtual generated-page path below `/openwiki`.
-   */
-  page: string;
-}
-
-/**
  * Result returned by the code-brain `fetch_claims` tool.
  */
 export interface FetchClaimsResult {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ClaimSessionError } from "./errors.js";
+import { cacheEvidenceResolver } from "./resolver-cache.js";
 import type {
   Claim,
   ClaimOperation,
@@ -56,6 +57,7 @@ export async function applyClaimOperations(
   const reservedIds = new Set(input.claims.map((claim) => claim.id));
   const targetedIds = new Set<string>();
   const resolvedByOperation = new Map<number, Evidence[]>();
+  const resolver = cacheEvidenceResolver(input.resolver);
 
   for (const operation of input.operations) {
     validateOperation(operation);
@@ -84,7 +86,7 @@ export async function applyClaimOperations(
           );
         }
         resources.add(proposed.resource);
-        const resolved = await input.resolver.resolve(proposed.resource);
+        const resolved = await resolver.resolve(proposed.resource);
         if (!resolved) {
           throw new ClaimSessionError(
             `Evidence does not resolve: ${proposed.resource}`,

@@ -19,15 +19,11 @@ import {
   type GlobResult,
 } from "deepagents";
 import { createOpenWikiConnectorTools } from "../connectors/tools.js";
-import { createClaimsAuthoringMiddleware } from "../claims/brains/code/middleware.js";
+import { createClaimsIntegration } from "../claims/brains/code/integration.js";
 import {
   prepareClaimsRuntime,
   type ClaimsRuntime,
 } from "../claims/brains/code/runtime.js";
-import {
-  createClaimsDeleteFileTool,
-  createClaimsTools,
-} from "../claims/brains/code/tools.js";
 import {
   DEBUG_ENV_KEYS,
   loadOpenWikiEnv,
@@ -428,6 +424,9 @@ function createOpenWikiAgentGraph(
     virtualMode: true,
   });
   const backend = createAgentBackend(wikiBackend);
+  const claimsIntegration = options.claimsRuntime
+    ? createClaimsIntegration(options.claimsRuntime, wikiBackend)
+    : undefined;
   // An update inherits the wiki's persisted language unless --language requests a
   // different one. The plan drives a beforeAgent pass that, on a switch,
   // retranslates every page so the incremental update does not leave a mix of the
@@ -448,15 +447,7 @@ function createOpenWikiAgentGraph(
     model: options.model,
     tools: [
       ...createOpenWikiConnectorTools(options.outputMode),
-      ...(options.claimsRuntime
-        ? [
-            createClaimsDeleteFileTool(
-              options.claimsRuntime.session,
-              wikiBackend,
-            ),
-            ...createClaimsTools(options.claimsRuntime.session),
-          ]
-        : []),
+      ...(claimsIntegration?.tools ?? []),
     ],
     checkpointer: options.checkpointer,
     backend,
@@ -494,9 +485,7 @@ function createOpenWikiAgentGraph(
                   ),
                 ]
               : []),
-            ...(options.claimsRuntime
-              ? [createClaimsAuthoringMiddleware(options.claimsRuntime.session)]
-              : []),
+            ...(claimsIntegration?.middleware ?? []),
             createOpenWikiIndexMiddleware(
               wikiBackend,
               options.outputMode,
@@ -711,9 +700,7 @@ async function runOpenWikiAgentCore(
     metadataWritten = await inStage("finalize", async () => {
       await cleanupTemporaryPlanFile(command, cwd, outputMode, options);
       if (claimsRuntime) {
-        const outstanding = await claimsRuntime.session.finalize(
-          claimsRuntime.store,
-        );
+        const outstanding = await claimsRuntime.finalize();
         if (outstanding.length > 0) {
           const pages = outstanding.map((item) => item.page).join(", ");
           const message = `Claims reconciliation remains unfinished for ${outstanding.length} page${outstanding.length === 1 ? "" : "s"}; completed pages were persisted and unfinished pages will be retried on a future update: ${pages}`;

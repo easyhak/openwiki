@@ -1,4 +1,5 @@
-import type { EvidenceResolver, ResolvedEvidence } from "../../core/types.js";
+import { cacheEvidenceResolver } from "../../core/resolver-cache.js";
+import type { EvidenceResolver } from "../../core/types.js";
 import type { GroundingContext, GroundingIssue, PageClaims } from "./types.js";
 import { ClaimsStore } from "./store.js";
 
@@ -44,23 +45,7 @@ export async function runClaimsPreflight(
     (page) => !pageSet.has(page),
   );
   const issues: GroundingIssue[] = [];
-  const resolutionCache = new Map<string, Promise<ResolvedEvidence | null>>();
-
-  /**
-   * Resolves one resource through the run-local deduplication cache.
-   *
-   * @param resource - Stable evidence resource.
-   * @returns Current resolved evidence or `null`.
-   */
-  function resolveOnce(resource: string): Promise<ResolvedEvidence | null> {
-    const cached = resolutionCache.get(resource);
-    if (cached) {
-      return cached;
-    }
-    const pending = resolver.resolve(resource);
-    resolutionCache.set(resource, pending);
-    return pending;
-  }
+  const cachedResolver = cacheEvidenceResolver(resolver);
 
   for (const page of pages) {
     const pageClaims = persisted.get(page);
@@ -78,7 +63,7 @@ export async function runClaimsPreflight(
       const unresolvedResources: string[] = [];
 
       for (const evidence of claim.evidence) {
-        const current = await resolveOnce(evidence.resource);
+        const current = await cachedResolver.resolve(evidence.resource);
         if (!current) {
           unresolvedResources.push(evidence.resource);
         } else if (current.evidence.version !== evidence.version) {

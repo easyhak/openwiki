@@ -81,7 +81,7 @@ const DeleteFileInputSchema = z
 /**
  * Guarded backend capability required by the Claims page-deletion tool.
  */
-interface ClaimsDeletionBackend {
+export interface ClaimsDeletionBackend {
   /**
    * Deletes one canonical generated page.
    */
@@ -201,9 +201,8 @@ export function createClaimsTools(
 /**
  * Creates the repository page-deletion tool missing from DeepAgents 1.12.
  *
- * The tool owns successful deletion recording because the upstream filesystem
- * middleware does not expose `delete_file`. The Claims authoring middleware
- * still performs the recoverable pre-call ordering check.
+ * The tool owns the complete deletion lifecycle because the upstream filesystem
+ * middleware does not expose `delete_file`.
  *
  * @param session - Run-scoped authoritative claim state.
  * @param backend - Guarded OpenWiki filesystem backend.

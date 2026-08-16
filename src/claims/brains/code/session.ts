@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ClaimSessionError } from "../../core/errors.js";
 import { applyClaimOperations, cloneClaims } from "../../core/mutations.js";
+import { cacheEvidenceResolver } from "../../core/resolver-cache.js";
 import { normalizeWikiPagePath } from "./paths.js";
 import { ClaimsStore } from "./store.js";
 import type { Claim, EvidenceResolver } from "../../core/types.js";
@@ -194,7 +195,7 @@ export class ClaimSession {
    * Validates, resolves, and atomically applies a claim mutation batch.
    *
    * @param input - Page and ordered claim operations.
-   * @returns Canonical page, new revision, and complete claim identifiers.
+   * @returns Canonical page and new run-scoped claim revision.
    */
   async updateClaims(input: UpdateClaimsInput): Promise<{
     /**
@@ -206,11 +207,6 @@ export class ClaimSession {
      * New run-scoped claim revision.
      */
     revision: number;
-
-    /**
-     * Complete stable claim identifiers after the mutation.
-     */
-    claimIds: string[];
   }> {
     const page = normalizeWikiPagePath(input.page);
     const current = this.getOrCreatePage(page);
@@ -242,11 +238,7 @@ export class ClaimSession {
         (issue) =>
           issue.claimId === undefined || !targetedClaimIds.has(issue.claimId),
       );
-      return {
-        page,
-        revision: current.revision,
-        claimIds: current.claims.map((claim) => claim.id),
-      };
+      return { page, revision: current.revision };
     } finally {
       releaseMutation();
     }
@@ -415,6 +407,7 @@ export class ClaimSession {
     const outstanding = await this.getOutstandingReconciliation();
     const outstandingPages = new Set(outstanding.map((item) => item.page));
     const ready: FinalizablePage[] = [];
+    const resolver = cacheEvidenceResolver(this.resolver);
 
     for (const [page, state] of this.pages) {
       await state.pendingMutation;
@@ -424,7 +417,7 @@ export class ClaimSession {
       ) {
         continue;
       }
-      await this.assertEvidenceStillCurrent(page, state.claims);
+      await this.assertEvidenceStillCurrent(page, state.claims, resolver);
       ready.push({
         page,
         state,
@@ -460,14 +453,16 @@ export class ClaimSession {
    *
    * @param page - Canonical virtual generated-page path.
    * @param claims - Complete claims about to be persisted.
+   * @param resolver - Current finalization-pass cached evidence resolver.
    */
   private async assertEvidenceStillCurrent(
     page: string,
     claims: readonly Claim[],
+    resolver: EvidenceResolver,
   ): Promise<void> {
     for (const claim of claims) {
       for (const evidence of claim.evidence) {
-        const current = await this.resolver.resolve(evidence.resource);
+        const current = await resolver.resolve(evidence.resource);
         if (!current) {
           throw new ClaimSessionError(
             `Evidence disappeared before finalizing ${page}: ${evidence.resource}`,

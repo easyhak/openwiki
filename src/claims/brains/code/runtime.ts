@@ -7,17 +7,12 @@ import { runClaimsPreflight } from "./preflight.js";
 import { RepositoryEvidenceResolver } from "../../evidence/repository/resolver.js";
 import { ClaimSession } from "./session.js";
 import { ClaimsStore } from "./store.js";
-import type { GroundingContext } from "./types.js";
+import type { GroundingContext, ReconciliationObligation } from "./types.js";
 
 /**
  * Prepared repository Claims state for one init or update run.
  */
 export interface ClaimsRuntime {
-  /**
-   * OpenWiki-owned sidecar persistence.
-   */
-  store: ClaimsStore;
-
   /**
    * Run-scoped working state used by tools and finalization.
    */
@@ -32,6 +27,11 @@ export interface ClaimsRuntime {
    * Whether grounding issues or orphan cleanup prevent an update no-op.
    */
   requiresAttention: boolean;
+
+  /**
+   * Finalizes synchronized pages and reports unfinished reconciliation.
+   */
+  finalize(): Promise<ReconciliationObligation[]>;
 }
 
 /**
@@ -60,16 +60,17 @@ export async function prepareClaimsRuntime(
   });
 
   if (command === "init") {
+    const session = new ClaimSession({
+      resolver,
+      persisted: new Map(),
+      issues: [],
+      orphanPages: await store.discoverSidecarPages(),
+    });
     return {
-      store,
-      session: new ClaimSession({
-        resolver,
-        persisted: new Map(),
-        issues: [],
-        orphanPages: await store.discoverSidecarPages(),
-      }),
+      session,
       context: { issues: [] },
       requiresAttention: true,
+      finalize: () => session.finalize(store),
     };
   }
 
@@ -81,10 +82,10 @@ export async function prepareClaimsRuntime(
     orphanPages: preflight.orphanPages,
   });
   return {
-    store,
     session,
     context: preflight.context,
     requiresAttention:
       preflight.context.issues.length > 0 || preflight.orphanPages.length > 0,
+    finalize: () => session.finalize(store),
   };
 }

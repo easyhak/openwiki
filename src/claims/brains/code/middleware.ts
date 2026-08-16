@@ -11,11 +11,6 @@ import { ClaimSession } from "./session.js";
 const PAGE_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
 
 /**
- * Filesystem tools that delete generated Markdown.
- */
-const PAGE_DELETE_TOOLS = new Set(["delete_file"]);
-
-/**
  * Enforces claim-fetch ordering around generated-page mutations.
  *
  * @param session - Run-scoped authoritative claim state.
@@ -29,16 +24,11 @@ export function createClaimsAuthoringMiddleware(session: ClaimSession) {
       const isPageMutation =
         requestedPath !== undefined &&
         isGroundedWikiPage(requestedPath) &&
-        (PAGE_WRITE_TOOLS.has(request.toolCall.name) ||
-          PAGE_DELETE_TOOLS.has(request.toolCall.name));
+        PAGE_WRITE_TOOLS.has(request.toolCall.name);
 
       if (isPageMutation) {
         try {
-          if (PAGE_DELETE_TOOLS.has(request.toolCall.name)) {
-            session.assertReadyForDeletion(requestedPath);
-          } else {
-            session.assertReadyForWrite(requestedPath);
-          }
+          session.assertReadyForWrite(requestedPath);
         } catch (error) {
           return toAuthoringErrorMessage(
             error,
@@ -54,11 +44,7 @@ export function createClaimsAuthoringMiddleware(session: ClaimSession) {
       }
 
       try {
-        if (PAGE_DELETE_TOOLS.has(request.toolCall.name)) {
-          session.recordDeletion(requestedPath);
-        } else {
-          session.recordWrite(requestedPath);
-        }
+        session.recordWrite(requestedPath);
       } catch (error) {
         return toAuthoringErrorMessage(
           error,
