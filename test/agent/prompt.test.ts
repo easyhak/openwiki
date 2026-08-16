@@ -337,10 +337,14 @@ describe("createSystemPrompt Claims workflow", () => {
           "Inspect and resolve only IDs relevant to the current task",
         );
         expect(prompt).toContain("one concise, atomic proposition");
+        expect(prompt).toContain("at most 240 characters");
         expect(prompt).toContain(
           "note IDs from every affected page together in one inspect_claims call",
         );
         expect(prompt).toContain("Use the pages selector only as a fallback");
+        expect(prompt).toContain(
+          "every page and its operations into one resolve_claims call",
+        );
       }
       expect(prompt).toContain(
         "Never use execute to create, edit, move, or delete generated wiki files",

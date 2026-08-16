@@ -22,9 +22,17 @@ const CanonicalNonEmptyStringSchema = z
     message: "Must not contain surrounding whitespace",
   });
 /**
- * Runtime validator for trimmed non-empty claim prose.
+ * Maximum model-authored claim statement length.
  */
-const ClaimStatementSchema = z.string().trim().min(1);
+const MAX_CLAIM_STATEMENT_LENGTH = 240;
+/**
+ * Runtime validator for concise, trimmed, non-empty claim prose.
+ */
+const ClaimStatementSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_CLAIM_STATEMENT_LENGTH);
 
 /**
  * Runtime validator for an agent-proposed evidence identity.
@@ -70,13 +78,19 @@ const ClaimOperationSchema = z.discriminatedUnion("op", [
 ]);
 
 /**
- * Runtime validator for `resolve_claims` input.
+ * Runtime validator for one page-local `resolve_claims` mutation batch.
  */
-const ResolveClaimsInputSchema = z
+const ResolveClaimsPageSchema = z
   .object({
     page: CanonicalNonEmptyStringSchema,
     operations: z.array(ClaimOperationSchema).min(1),
   })
+  .strict();
+/**
+ * Runtime validator for one cross-page `resolve_claims` call.
+ */
+const ResolveClaimsInputSchema = z
+  .object({ pages: z.array(ResolveClaimsPageSchema).min(1) })
   .strict();
 /**
  * Runtime validator for `inspect_claims` input.
@@ -111,7 +125,7 @@ export interface ClaimsDeletionBackend {
 }
 
 /**
- * Creates the compact, page-local Claims tools for one run.
+ * Creates compact batched Claims tools for one run.
  *
  * @param session - Run-scoped authoritative claim state.
  * @returns Mutation and inspection tools bound to the session.
@@ -123,73 +137,108 @@ export function createClaimsTools(
     new DynamicStructuredTool({
       name: "resolve_claims",
       description:
-        "Atomically maintain material factual propositions for one wiki page. Each statement must be one concise, atomic proposition, not an excerpt, list, or paragraph summary. Use confirm when a claim remains true, update to change its statement or evidence, retract when it is obsolete, and add for a new material fact. Normal Markdown edits need no Claims call. Evidence uses repo://path or repo://path#symbol resources.",
+        "Maintain material factual propositions for one or more wiki pages in one call. Put every affected page in pages; each page's operations are applied atomically. Keep each statement at most 240 characters and make it one concise, atomic proposition—not an excerpt, list, compound summary, or paragraph. Split compound facts into separate claims. Use confirm when a claim remains true, update to change its statement or evidence, retract when it is obsolete, and add for a new material fact. Normal Markdown edits need no Claims call. Evidence uses repo://path or repo://path#symbol resources.",
       schema: {
         type: "object",
         properties: {
-          page: { type: "string", minLength: 1 },
-          operations: {
+          pages: {
             type: "array",
             minItems: 1,
             items: {
-              oneOf: [
-                {
-                  type: "object",
-                  properties: {
-                    op: { const: "add" },
-                    statement: { type: "string", minLength: 1 },
-                    evidence: evidenceArraySchema(),
+              type: "object",
+              properties: {
+                page: { type: "string", minLength: 1 },
+                operations: {
+                  type: "array",
+                  minItems: 1,
+                  items: {
+                    oneOf: [
+                      {
+                        type: "object",
+                        properties: {
+                          op: { const: "add" },
+                          statement: {
+                            type: "string",
+                            minLength: 1,
+                            maxLength: MAX_CLAIM_STATEMENT_LENGTH,
+                          },
+                          evidence: evidenceArraySchema(),
+                        },
+                        required: ["op", "statement", "evidence"],
+                        additionalProperties: false,
+                      },
+                      {
+                        type: "object",
+                        properties: {
+                          op: { const: "confirm" },
+                          id: { type: "string", minLength: 1 },
+                        },
+                        required: ["op", "id"],
+                        additionalProperties: false,
+                      },
+                      {
+                        type: "object",
+                        properties: {
+                          op: { const: "update" },
+                          id: { type: "string", minLength: 1 },
+                          statement: {
+                            type: "string",
+                            minLength: 1,
+                            maxLength: MAX_CLAIM_STATEMENT_LENGTH,
+                          },
+                          evidence: evidenceArraySchema(),
+                        },
+                        required: ["op", "id"],
+                        anyOf: [
+                          { required: ["statement"] },
+                          { required: ["evidence"] },
+                        ],
+                        additionalProperties: false,
+                      },
+                      {
+                        type: "object",
+                        properties: {
+                          op: { const: "retract" },
+                          id: { type: "string", minLength: 1 },
+                        },
+                        required: ["op", "id"],
+                        additionalProperties: false,
+                      },
+                    ],
                   },
-                  required: ["op", "statement", "evidence"],
-                  additionalProperties: false,
                 },
-                {
-                  type: "object",
-                  properties: {
-                    op: { const: "confirm" },
-                    id: { type: "string", minLength: 1 },
-                  },
-                  required: ["op", "id"],
-                  additionalProperties: false,
-                },
-                {
-                  type: "object",
-                  properties: {
-                    op: { const: "update" },
-                    id: { type: "string", minLength: 1 },
-                    statement: { type: "string", minLength: 1 },
-                    evidence: evidenceArraySchema(),
-                  },
-                  required: ["op", "id"],
-                  anyOf: [
-                    { required: ["statement"] },
-                    { required: ["evidence"] },
-                  ],
-                  additionalProperties: false,
-                },
-                {
-                  type: "object",
-                  properties: {
-                    op: { const: "retract" },
-                    id: { type: "string", minLength: 1 },
-                  },
-                  required: ["op", "id"],
-                  additionalProperties: false,
-                },
-              ],
+              },
+              required: ["page", "operations"],
+              additionalProperties: false,
             },
           },
         },
-        required: ["page", "operations"],
+        required: ["pages"],
         additionalProperties: false,
       } as const,
       func: (input) =>
         runClaimsTool(async () => {
           const parsed = ResolveClaimsInputSchema.parse(input);
-          return session.resolveClaims({
-            page: normalizeClaimsToolPagePath(parsed.page),
-            operations: parsed.operations,
-          });
+          const operationsByPage = new Map<
+            string,
+            (typeof parsed.pages)[number]["operations"]
+          >();
+          for (const pageInput of parsed.pages) {
+            const page = normalizeClaimsToolPagePath(pageInput.page);
+            const operations = operationsByPage.get(page);
+            if (operations) {
+              operations.push(...pageInput.operations);
+            } else {
+              operationsByPage.set(page, [...pageInput.operations]);
+            }
+          }
+          return {
+            pages: await Promise.all(
+              [...operationsByPage].map(([page, operations]) =>
+                session.resolveClaims({ page, operations }),
+              ),
+            ),
+          };
         }),
     }),
     new DynamicStructuredTool({

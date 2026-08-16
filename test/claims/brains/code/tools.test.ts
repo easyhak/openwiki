@@ -85,6 +85,9 @@ describe("createClaimsTools", () => {
     expect(getTool(tools, "resolve_claims").description).toContain(
       "one concise, atomic proposition",
     );
+    expect(getTool(tools, "resolve_claims").description).toContain(
+      "at most 240 characters",
+    );
     expect(getTool(tools, "inspect_claims").description).toContain(
       "without creating a write obligation",
     );
@@ -102,23 +105,70 @@ describe("createClaimsTools", () => {
     );
     const output = parse(
       await resolve.invoke({
-        page: "page.md",
-        operations: [
+        pages: [
           {
-            op: "add",
-            statement: "The feature is configurable.",
-            evidence: [{ resource: RESOURCE }],
+            page: "page.md",
+            operations: [
+              {
+                op: "add",
+                statement: "The feature is configurable.",
+                evidence: [{ resource: RESOURCE }],
+              },
+            ],
           },
         ],
       }),
     );
 
     expect(output).toEqual({
-      page: PAGE,
-      results: [{ op: "add", id: "claim_new" }],
+      pages: [
+        {
+          page: PAGE,
+          results: [{ op: "add", id: "claim_new" }],
+        },
+      ],
     });
     expect(JSON.stringify(output)).not.toContain("revision:2");
     expect(output).not.toHaveProperty("claims");
+  });
+
+  test("resolves independent pages in one call", async () => {
+    const session = createSession({ createClaimId: () => "claim_new" });
+    const resolve = getTool(createClaimsTools(session), "resolve_claims");
+
+    expect(
+      parse(
+        await resolve.invoke({
+          pages: [
+            {
+              page: PAGE,
+              operations: [{ op: "confirm", id: "claim_existing" }],
+            },
+            {
+              page: "other.md",
+              operations: [
+                {
+                  op: "add",
+                  statement: "The other feature exists.",
+                  evidence: [{ resource: RESOURCE }],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).toEqual({
+      pages: [
+        {
+          page: PAGE,
+          results: [{ op: "confirm", id: "claim_existing" }],
+        },
+        {
+          page: "/openwiki/other.md",
+          results: [{ op: "add", id: "claim_new" }],
+        },
+      ],
+    });
   });
 
   test("inspects selected claims without exposing opaque versions", async () => {
@@ -159,13 +209,21 @@ describe("createClaimsTools", () => {
     expect(
       parse(
         await resolve.invoke({
-          page: PAGE,
-          operations: [{ op: "confirm", id: "claim_existing" }],
+          pages: [
+            {
+              page: PAGE,
+              operations: [{ op: "confirm", id: "claim_existing" }],
+            },
+          ],
         }),
       ),
     ).toEqual({
-      page: PAGE,
-      results: [{ op: "confirm", id: "claim_existing" }],
+      pages: [
+        {
+          page: PAGE,
+          results: [{ op: "confirm", id: "claim_existing" }],
+        },
+      ],
     });
     const inspected = parse(await inspect.invoke({ ids: ["claim_existing"] }));
     expect(JSON.stringify(inspected)).not.toContain("issue");
@@ -211,12 +269,16 @@ describe("createClaimsTools", () => {
     const session = createSession();
     const resolve = getTool(createClaimsTools(session), "resolve_claims");
     await resolve.invoke({
-      page: PAGE,
-      operations: [
+      pages: [
         {
-          op: "update",
-          id: "claim_existing",
-          statement: "The feature remains available.",
+          page: PAGE,
+          operations: [
+            {
+              op: "update",
+              id: "claim_existing",
+              statement: "The feature remains available.",
+            },
+          ],
         },
       ],
     });
@@ -228,13 +290,24 @@ describe("createClaimsTools", () => {
   test.each([
     [
       "unknown claim",
-      { page: PAGE, operations: [{ op: "retract", id: "claim_missing" }] },
+      {
+        pages: [
+          {
+            page: PAGE,
+            operations: [{ op: "retract", id: "claim_missing" }],
+          },
+        ],
+      },
     ],
     [
       "invalid page",
       {
-        page: "../outside.md",
-        operations: [{ op: "confirm", id: "claim_existing" }],
+        pages: [
+          {
+            page: "../outside.md",
+            operations: [{ op: "confirm", id: "claim_existing" }],
+          },
+        ],
       },
     ],
   ])("returns retryable errors for %s", async (_case, input) => {
@@ -254,8 +327,35 @@ describe("createClaimsTools", () => {
     );
     await expect(
       resolve.invoke({
-        page: PAGE,
-        operations: [{ op: "update", id: "claim_existing" }],
+        pages: [
+          {
+            page: PAGE,
+            operations: [{ op: "update", id: "claim_existing" }],
+          },
+        ],
+      }),
+    ).rejects.toThrow("did not match expected schema");
+  });
+
+  test("rejects statements longer than the concise claim limit", async () => {
+    const resolve = getTool(
+      createClaimsTools(createSession()),
+      "resolve_claims",
+    );
+    await expect(
+      resolve.invoke({
+        pages: [
+          {
+            page: PAGE,
+            operations: [
+              {
+                op: "add",
+                statement: "x".repeat(241),
+                evidence: [{ resource: RESOURCE }],
+              },
+            ],
+          },
+        ],
       }),
     ).rejects.toThrow("did not match expected schema");
   });
@@ -269,8 +369,12 @@ describe("createClaimsTools", () => {
     );
     const output = parse(
       await resolve.invoke({
-        page: PAGE,
-        operations: [{ op: "confirm", id: "claim_existing" }],
+        pages: [
+          {
+            page: PAGE,
+            operations: [{ op: "confirm", id: "claim_existing" }],
+          },
+        ],
       }),
     );
     expect(output).toMatchObject({ retryable: true });
@@ -287,8 +391,12 @@ describe("createClaimsTools", () => {
     );
     await expect(
       resolve.invoke({
-        page: PAGE,
-        operations: [{ op: "confirm", id: "claim_existing" }],
+        pages: [
+          {
+            page: PAGE,
+            operations: [{ op: "confirm", id: "claim_existing" }],
+          },
+        ],
       }),
     ).rejects.toBe(failure);
   });

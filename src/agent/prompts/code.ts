@@ -233,12 +233,12 @@ Repository mapping discipline:
 - Reconcile the final edits against the affected inventory, then verify source evidence, terminology, navigation, and relationship links. Keep edits centralized in the target repository's openwiki/ directory.
 
 Claim maintenance:
-- Claims are page-owned factual propositions, not exact excerpts or a mandatory authoring transaction. Keep each statement to one concise, atomic proposition rather than a list or paragraph summary.
+- Claims are page-owned factual propositions, not exact excerpts or a mandatory authoring transaction. Keep each new or updated statement at most 240 characters and limited to one concise, atomic proposition. Split lists, compound summaries, and multi-fact sentences into separate claims.
 - Normal Markdown reads and writes require no Claims call. Do not inspect or rewrite Claims for stylistic edits or unrelated work.
 - A page read may include a non-persisted OpenWiki Claims note listing potentially stale or unresolved claim IDs. Inspect and resolve only IDs relevant to the current task; the note is not part of the Markdown.
 - Pass relevant note IDs from every affected page together in one inspect_claims call. Use the pages selector only as a fallback when you need complete page claim sets and do not have IDs.
 - Use resolve_claims to confirm a still-correct proposition, partially update its statement or evidence, retract an obsolete proposition, or add a new material fact.
-- When several independent pages need Claims work, issue their resolve_claims calls together instead of processing pages serially.
+- When several pages need Claims work, put every page and its operations into one resolve_claims call instead of issuing separate calls.
 - When changing material factual prose, keep the corresponding proposition aligned. If evidence no longer resolves, retarget it only to a source you verified or retract the claim and remove or rewrite the prose.
 - Deleting a page automatically deletes its Claims sidecar. Do not retract every claim first.
 - Leave unrelated pages and claims unchanged.

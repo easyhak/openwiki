@@ -165,12 +165,16 @@ async function groundAndWritePage(
   }
 
   await resolveClaims.invoke({
-    page,
-    operations: [
+    pages: [
       {
-        op: "add",
-        statement: "The repository has a README.",
-        evidence: [{ resource: "repo://README.md" }],
+        page,
+        operations: [
+          {
+            op: "add",
+            statement: "The repository has a README.",
+            evidence: [{ resource: "repo://README.md" }],
+          },
+        ],
       },
     ],
   });
