@@ -337,7 +337,7 @@ describe("createSystemPrompt Claims workflow", () => {
           "Inspect and resolve only IDs relevant to the current task",
         );
         expect(prompt).toContain("one concise, atomic proposition");
-        expect(prompt).toContain("at most 240 characters");
+        expect(prompt).toContain("Split lists, compound summaries");
         expect(prompt).toContain(
           "note IDs from every affected page together in one inspect_claims call",
         );

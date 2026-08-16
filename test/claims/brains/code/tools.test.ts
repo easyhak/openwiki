@@ -85,9 +85,7 @@ describe("createClaimsTools", () => {
     expect(getTool(tools, "resolve_claims").description).toContain(
       "one concise, atomic proposition",
     );
-    expect(getTool(tools, "resolve_claims").description).toContain(
-      "at most 240 characters",
-    );
+    expect(getTool(tools, "resolve_claims").description).toContain("concise");
     expect(getTool(tools, "inspect_claims").description).toContain(
       "without creating a write obligation",
     );
@@ -331,29 +329,6 @@ describe("createClaimsTools", () => {
           {
             page: PAGE,
             operations: [{ op: "update", id: "claim_existing" }],
-          },
-        ],
-      }),
-    ).rejects.toThrow("did not match expected schema");
-  });
-
-  test("rejects statements longer than the concise claim limit", async () => {
-    const resolve = getTool(
-      createClaimsTools(createSession()),
-      "resolve_claims",
-    );
-    await expect(
-      resolve.invoke({
-        pages: [
-          {
-            page: PAGE,
-            operations: [
-              {
-                op: "add",
-                statement: "x".repeat(241),
-                evidence: [{ resource: RESOURCE }],
-              },
-            ],
           },
         ],
       }),

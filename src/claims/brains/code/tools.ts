@@ -22,17 +22,9 @@ const CanonicalNonEmptyStringSchema = z
     message: "Must not contain surrounding whitespace",
   });
 /**
- * Maximum model-authored claim statement length.
- */
-const MAX_CLAIM_STATEMENT_LENGTH = 240;
-/**
  * Runtime validator for concise, trimmed, non-empty claim prose.
  */
-const ClaimStatementSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(MAX_CLAIM_STATEMENT_LENGTH);
+const ClaimStatementSchema = z.string().trim().min(1);
 
 /**
  * Runtime validator for an agent-proposed evidence identity.
@@ -137,7 +129,7 @@ export function createClaimsTools(
     new DynamicStructuredTool({
       name: "resolve_claims",
       description:
-        "Maintain material factual propositions for one or more wiki pages in one call. Put every affected page in pages; each page's operations are applied atomically. Keep each statement at most 240 characters and make it one concise, atomic proposition—not an excerpt, list, compound summary, or paragraph. Split compound facts into separate claims. Use confirm when a claim remains true, update to change its statement or evidence, retract when it is obsolete, and add for a new material fact. Normal Markdown edits need no Claims call. Evidence uses repo://path or repo://path#symbol resources.",
+        "Maintain material factual propositions for one or more wiki pages in one call. Put every affected page in pages; each page's operations are applied atomically. Keep each statement to one concise, atomic proposition—not an excerpt, list, compound summary, or paragraph. Split compound facts into separate claims. Use confirm when a claim remains true, update to change its statement or evidence, retract when it is obsolete, and add for a new material fact. Normal Markdown edits need no Claims call. Evidence uses repo://path or repo://path#symbol resources.",
       schema: {
         type: "object",
         properties: {
@@ -160,7 +152,6 @@ export function createClaimsTools(
                           statement: {
                             type: "string",
                             minLength: 1,
-                            maxLength: MAX_CLAIM_STATEMENT_LENGTH,
                           },
                           evidence: evidenceArraySchema(),
                         },
@@ -184,7 +175,6 @@ export function createClaimsTools(
                           statement: {
                             type: "string",
                             minLength: 1,
-                            maxLength: MAX_CLAIM_STATEMENT_LENGTH,
                           },
                           evidence: evidenceArraySchema(),
                         },
