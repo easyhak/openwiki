@@ -112,16 +112,31 @@ describe("RepositoryEvidenceResolver", () => {
   });
 
   test("falls back to whole-file evidence for unsupported languages", async () => {
-    await writeFixture("fixture.py", "class Service:\n    pass\n");
+    await writeFixture("fixture.h", "struct Service { int value; };\n");
     const resolver = new RepositoryEvidenceResolver({ rootDir });
 
-    const resolved = await resolver.resolve("repo://fixture.py#Service");
+    const resolved = await resolver.resolve("repo://fixture.h#Service");
 
-    expect(resolved?.evidence.resource).toBe("repo://fixture.py#Service");
+    expect(resolved?.evidence.resource).toBe("repo://fixture.h#Service");
     expect(resolved?.evidence.version).toMatch(
       /^repo-file-v1:sha256:[a-f0-9]{64}$/u,
     );
-    expect(resolved?.content).toBe("class Service:\n    pass\n");
+    expect(resolved?.content).toBe("struct Service { int value; };\n");
+  });
+
+  test("resolves symbols with a newly registered built-in grammar", async () => {
+    await writeFixture(
+      "fixture.py",
+      "class Service:\n    def run(self):\n        return 1\n",
+    );
+    const resolver = new RepositoryEvidenceResolver({ rootDir });
+
+    const resolved = await resolver.resolve("repo://fixture.py#Service.run");
+
+    expect(resolved?.evidence.version).toMatch(
+      /^tree-sitter-python-v1:sha256:[a-f0-9]{64}$/u,
+    );
+    expect(resolved?.content).toContain("def run");
   });
 
   test("rejects malformed supported source", async () => {

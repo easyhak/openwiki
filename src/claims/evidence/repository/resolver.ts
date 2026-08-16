@@ -33,7 +33,7 @@ export interface RepositoryEvidenceResolverOptions {
   /**
    * Language adapters used for symbol evidence.
    *
-   * @default the built-in JavaScript, TypeScript, and TSX adapters.
+   * @default the built-in supported-language adapters.
    */
   adapters?: LanguageEvidenceAdapter[];
 }

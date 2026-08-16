@@ -78,6 +78,116 @@ describe("TreeSitterLanguageAdapter", () => {
     expect(resolved.normalized).toContain(simpleSymbol);
   });
 
+  test.each([
+    [
+      "fixture.py",
+      "class Service:\n    def run(self):\n        return 1\n",
+      "Service.run",
+    ],
+    ["fixture.go", "package fixture\nfunc run() int { return 1 }\n", "run"],
+    ["fixture.rs", "pub struct Service { pub value: i32 }\n", "Service.value"],
+    [
+      "Fixture.java",
+      "class Service { int run() { return 1; } }",
+      "Service.run",
+    ],
+    ["Fixture.cs", "class Service { int Run() => 1; }", "Service.Run"],
+    ["fixture.c", "int run(void) { return 1; }", "run"],
+    [
+      "fixture.cpp",
+      "class Service { public: int run() { return 1; } };",
+      "Service.run",
+    ],
+    [
+      "fixture.rb",
+      "class Service\n  def run\n    1\n  end\nend\n",
+      "Service.run",
+    ],
+    ["fixture.sh", "run() { printf '%s\\n' ok; }\n", "run"],
+    [
+      "fixture.php",
+      "<?php class Service { public function run(): int { return 1; } }",
+      "Service.run",
+    ],
+    ["fixture.scala", "class Service { def run(): Int = 1 }", "Service.run"],
+  ])(
+    "resolves representative declarations in %s",
+    async (sourcePath, source, symbol) => {
+      const resolved = await resolveRequired(sourcePath, source, symbol);
+      const simpleSymbol = symbol.slice(symbol.lastIndexOf(".") + 1);
+
+      expect(resolved.content).toContain(simpleSymbol);
+      expect(resolved.normalized).toContain(simpleSymbol);
+    },
+  );
+
+  test("registers the intended built-in source extensions", () => {
+    const extensions = new Set(
+      BUILT_IN_ADAPTERS.flatMap((adapter) => adapter.extensions),
+    );
+
+    expect(extensions).toEqual(
+      new Set([
+        ".bash",
+        ".c",
+        ".cc",
+        ".cjs",
+        ".cpp",
+        ".cs",
+        ".cts",
+        ".cxx",
+        ".go",
+        ".hh",
+        ".hpp",
+        ".hxx",
+        ".java",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".mts",
+        ".php",
+        ".py",
+        ".pyi",
+        ".rake",
+        ".rb",
+        ".rs",
+        ".sc",
+        ".scala",
+        ".sh",
+        ".ts",
+        ".tsx",
+      ]),
+    );
+    expect(extensions.has(".h")).toBe(false);
+    expect(extensions.has(".kt")).toBe(false);
+  });
+
+  test("loads a deferred grammar once on first use", async () => {
+    let loads = 0;
+    const adapter = new TreeSitterLanguageAdapter({
+      id: "lazy-javascript-v1",
+      extensions: [".lazy"],
+      loadLanguage: () => {
+        loads += 1;
+        return JavaScript;
+      },
+    });
+
+    expect(loads).toBe(0);
+    await adapter.resolveSymbol({
+      path: "fixture.lazy",
+      source: "function first() {}",
+      symbol: "first",
+    });
+    await adapter.resolveSymbol({
+      path: "fixture.lazy",
+      source: "function second() {}",
+      symbol: "second",
+    });
+
+    expect(loads).toBe(1);
+  });
+
   test("resolves symbols in TSX sources larger than Tree-sitter's default input buffer", async () => {
     const source = `${"// padding to cross the native input buffer\n".repeat(1024)}
 export function LargeView() { return <main />; }`;
@@ -241,6 +351,25 @@ export function LargeView() { return <main />; }`;
         new TreeSitterLanguageAdapter({
           ...options,
           language: JavaScript,
+        }),
+    ).toThrow(EvidenceResourceError);
+  });
+
+  test("rejects missing and conflicting grammar sources", () => {
+    expect(
+      () =>
+        new TreeSitterLanguageAdapter({
+          id: "missing-language-v1",
+          extensions: [".missing"],
+        }),
+    ).toThrow(EvidenceResourceError);
+    expect(
+      () =>
+        new TreeSitterLanguageAdapter({
+          id: "conflicting-language-v1",
+          extensions: [".conflict"],
+          language: JavaScript,
+          loadLanguage: () => JavaScript,
         }),
     ).toThrow(EvidenceResourceError);
   });
