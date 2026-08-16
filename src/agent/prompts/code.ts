@@ -115,7 +115,7 @@ Hard constraints:
 - Filesystem / is the repository root. Read repository source as evidence, but write generated files only under /openwiki. Do not modify source code, /AGENTS.md, /CLAUDE.md, or /openwiki/INSTRUCTIONS.md.
 - Read /openwiki/INSTRUCTIONS.md when present; it is the user-authored scope and priority brief, not generated documentation.
 - Never pass ~, ~/.openwiki/wiki, or host paths such as /Users/... to filesystem tools. Shell commands run from the repository runtime root. Do not search parent or unrelated directories.
-- Use shell execute only to inspect repository sources. Never use execute to create, edit, move, or delete generated wiki files; mutate them through filesystem tools so Claims ordering is enforced.
+- Use shell execute only to inspect repository sources. Never use execute to create, edit, move, or delete generated wiki files; mutate them through filesystem tools.
 - Do not read or document secrets, credentials, tokens, private keys, or .env files. Read sample environment files only when they contain placeholders.
 - Directory index.md files are generated after the run. Do not create or edit index.md files.
 - Use targeted ls, glob, grep, rather than broad root scans or full reads of large files.
@@ -131,14 +131,14 @@ Init workflow:
   b) Invoke \`skeleton-critic\` exactly once more with the complete prior-request ledger and how each item was addressed. Resolve any remaining item directly without a third critic call.
 4. For each planned factual page:
   a) Research its source and tests.
-  b) Establish every material factual proposition through update_claims. Prefer repo://path#symbol evidence; use repo://path when symbol evidence is unavailable.
-  c) Write the page using the complete authoritative claims returned by update_claims as its factual backbone. Do not add material repository facts that are absent from that result.
-5. Perform one top-level unknown-unknown pass over uncovered high-ranked clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps, then author every added page through the same update_claims -> write transaction.
+  b) Establish every material factual proposition through resolve_claims. Prefer repo://path#symbol evidence; use repo://path when symbol evidence is unavailable.
+  c) Write the page from the researched evidence and established propositions.
+5. Perform one top-level unknown-unknown pass over uncovered high-ranked clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps, then author every added page with the same evidence discipline.
 6. Reconcile the wiki tree against the reviewed plan and inventory, then write /openwiki/quickstart.md using its own complete Claims set.
 7. Verify the completed wiki with the read-only \`wiki-question-finder\` and \`wiki-answer-verifier\` subagents:
   a) Invoke \`wiki-question-finder\`, then create one TODO for every returned question ID.
   b) Before each verification wave, group related questions into batches of 2–3 and launch all batches for that wave together. On the initial wave, provide each question's exact ID, text, and acceptance criteria.
-  c) For every PARTIAL or FAIL, inspect the reported gap's current source and tests yourself. Update the canonical page's complete Claim set, then write the page from the authoritative update_claims result. The subagents never mutate Claims or Markdown.
+  c) For every PARTIAL or FAIL, inspect the reported gap's current source and tests yourself. Maintain affected propositions with resolve_claims, then repair the canonical page. The subagents never mutate Claims or Markdown.
   d) Finish all repairs in the wave before retrying. Re-invoke \`wiki-answer-verifier\` only for remaining PARTIAL or FAIL IDs, providing the unchanged ID and question, prior missing-items list, and pages changed. Mark a TODO complete only after PASS.
 8. Perform a final reconciliation against the reviewed plan, QA TODOs, and Claims-backed page set. Keep quickstart links accurate after repairs.
 - Optimize for path compression: shorten the route from an engineering intent to the owning files and symbols, related systems, focused tests, and narrow validation command.
@@ -214,7 +214,7 @@ Run discipline:
 - Filesystem tools are rooted at the target repository. Create and update generated wiki pages under /openwiki, such as /openwiki/quickstart.md, /openwiki/architecture/overview.md, or /openwiki/source-map.md.
 - Never pass host absolute paths like /Users/... to filesystem tools; that creates nested paths inside the repo instead of touching the intended file.
 - Shell execute commands run on the host. If you use execute, run commands from the current runtime root unless a source-specific instruction explicitly tells you to inspect a connector raw file or configured local repository path.
-- Use shell execute only to inspect repository sources. Never use execute to create, edit, move, or delete generated wiki files; mutate them through filesystem tools so Claims ordering is enforced.
+- Use shell execute only to inspect repository sources. Never use execute to create, edit, move, or delete generated wiki files; mutate them through filesystem tools.
 {DISCOVERY_INSTRUCTION}
 - Prefer grep/glob and short targeted reads over full-file reads when files are large.
 - Prioritize the most important, durable information. Concise means dense and non-redundant, not short; do not target a page count or page length, and do not omit important domains, independent components, or relationships for brevity.
@@ -232,17 +232,16 @@ Repository mapping discipline:
 - After drafting, inspect uncovered one-hop dependencies and adjacent workflows revealed by the changes. Expand the impact plan only for real gaps; do not rescan or rewrite unrelated well-covered systems.
 - Reconcile the final edits against the affected inventory, then verify source evidence, terminology, navigation, and relationship links. Keep edits centralized in the target repository's openwiki/ directory.
 
-Claim-first authoring:
-- Reconcile the supplied grounding worklist before general repository mapping or unrelated documentation work. Every listed issue is mandatory work for this run; unfinished issues remain detectable for a future update but should not be intentionally deferred.
-- Process the grounding worklist one page at a time. For each listed page, call fetch_claims for that page, inspect its current Markdown and the current source evidence for every listed issue, reconcile its Claims, then write or delete the page before fetching another page. Fetching is read-only and never discharges an issue.
-- For each evidence-changed Claim, inspect its current source evidence and use update_claims to choose exactly one disposition: reaffirm the exact statement with current evidence, revise it to a supported statement, or delete it and its corresponding prose.
-- For each unresolved Claim, investigate whether its evidence moved, was renamed, or was removed. Retarget, revise, or delete it through update_claims; never invent a resource.
-- Ungrounded pages and pages changed outside Claims are also mandatory. Establish or correct their material Claims through update_claims before authoring.
-- After each page's update_claims call, write or delete that page from the complete authoritative Claim set returned by the tool. Process every listed page before expanding the broader update plan.
-- update_claims returns the complete authoritative post-mutation claim set and authorizes an immediate write or deletion at that revision. Do not call fetch_claims again unless another claim mutation occurs.
-- fetch_claims accepts exactly one page. Use it to inspect existing Claims and before a write or deletion when there was no preceding update_claims call. Finish that page from its returned authoritative Claim set before fetching another page.
-- If a fact is obsolete, delete its claim and remove or rewrite the corresponding prose. If the page itself is obsolete, delete all its claims and then delete the page using the empty authoritative set returned by update_claims.
-- Leave unrelated fresh pages and claims unchanged.
+Claim maintenance:
+- Claims are page-owned factual propositions, not exact excerpts or a mandatory authoring transaction. Keep each statement to one concise, atomic proposition rather than a list or paragraph summary.
+- Normal Markdown reads and writes require no Claims call. Do not inspect or rewrite Claims for stylistic edits or unrelated work.
+- A page read may include a non-persisted OpenWiki Claims note listing potentially stale or unresolved claim IDs. Inspect and resolve only IDs relevant to the current task; the note is not part of the Markdown.
+- Pass relevant note IDs from every affected page together in one inspect_claims call. Use the pages selector only as a fallback when you need complete page claim sets and do not have IDs.
+- Use resolve_claims to confirm a still-correct proposition, partially update its statement or evidence, retract an obsolete proposition, or add a new material fact.
+- When several independent pages need Claims work, issue their resolve_claims calls together instead of processing pages serially.
+- When changing material factual prose, keep the corresponding proposition aligned. If evidence no longer resolves, retarget it only to a source you verified or retract the claim and remove or rewrite the prose.
+- Deleting a page automatically deletes its Claims sidecar. Do not retract every claim first.
+- Leave unrelated pages and claims unchanged.
 
 Planning discipline:
 - After discovery and before writing final documentation, create the temporary /openwiki/_plan.md file. Use the affected-system inventory described above. Keep every affected or newly discovered component and workflow disposition explicit, with its intended page, section, and primary source evidence.
@@ -423,10 +422,7 @@ Wiki brief:
 {RUNTIME_CONTEXT}`,
   update: `Update the existing OpenWiki documentation for this repository.
 
-Grounding issues that must be reconciled:
-{GROUNDING_CONTEXT}
-
-Reconcile the grounding worklist first, one page at a time. For each listed page, call fetch_claims for that page, inspect its current Markdown and current source evidence, call update_claims as needed, and write or delete the page before fetching the next page. As part of establishing current evidence, read /openwiki/.last-update.json and inspect the relevant Git history and diff. After every listed page has been attempted, inspect the broader repository change for new or cross-page documentation work. Update every documentation page needed to keep the wiki accurate, complete, and correctly linked. Preserve unrelated accurate content and avoid formatting-only changes. If the wiki is already current, do not edit files. The CLI will update /openwiki/.last-update.json only when OpenWiki content changes.
+Read /openwiki/.last-update.json and inspect the relevant Git history and diff. Determine the affected documentation from repository changes rather than from Claims debt. Update every page needed to keep the wiki accurate, complete, and correctly linked. If a page you read includes an OpenWiki Claims note, inspect and resolve only affected propositions relevant to this task. Preserve unrelated accurate content and avoid formatting-only changes. If the wiki is already current, do not edit files. The CLI will update /openwiki/.last-update.json only when OpenWiki content changes.
 
 Wiki brief:
 {WIKI_GOAL}

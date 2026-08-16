@@ -59,18 +59,12 @@ describe("prepareClaimsRuntime", () => {
       new OpenWikiIgnore([]),
     );
 
-    expect(runtime?.context).toEqual({ issues: [] });
-    expect(runtime?.requiresAttention).toBe(true);
-    expect(runtime?.session.fetchClaims(orphanPage)).toEqual({
-      revision: 0,
-      claims: [],
-    });
-    runtime?.session.recordDeletion(orphanPage);
+    expect(runtime?.issueCount).toBe(0);
     await runtime?.finalize();
     await expect(store.loadPage(orphanPage)).resolves.toBeNull();
   });
 
-  test("runs update preflight and seeds ungrounded pages", async () => {
+  test("does not seed mandatory work for pages without sidecars", async () => {
     const page = "/openwiki/page.md";
     await writePage(page, "# Page\n");
 
@@ -81,14 +75,8 @@ describe("prepareClaimsRuntime", () => {
       new OpenWikiIgnore([]),
     );
 
-    expect(runtime?.context.issues).toEqual([
-      { page, kind: "ungrounded-page" },
-    ]);
-    expect(runtime?.requiresAttention).toBe(true);
-    expect(runtime?.session.fetchClaims(page)).toEqual({
-      revision: 0,
-      claims: [],
-    });
+    expect(runtime?.issueCount).toBe(0);
+    expect(runtime?.session.inspectClaims(page)).toEqual([]);
   });
 
   test("loads synchronized persisted claims into update working state", async () => {
@@ -120,21 +108,21 @@ describe("prepareClaimsRuntime", () => {
       new OpenWikiIgnore([]),
     );
 
-    expect(runtime?.context.issues).toEqual([
+    expect(runtime?.issueCount).toBe(1);
+    expect(runtime?.session.inspectClaims(page)).toEqual([
       {
-        page,
-        kind: "unresolved",
-        claimId: "claim_existing",
-        resources: ["repo://package.json"],
+        id: "claim_existing",
+        statement: "The page exists.",
+        evidence: ["repo://package.json"],
+        issue: {
+          kind: "unresolved",
+          resources: ["repo://package.json"],
+        },
       },
     ]);
-    expect(runtime?.requiresAttention).toBe(true);
-    expect(runtime?.session.fetchClaims(page).claims).toEqual(
-      pageClaims.claims,
-    );
   });
 
-  test("allows update no-op only when persisted Claims state is fresh", async () => {
+  test("reports zero lazy issues for fresh persisted Claims", async () => {
     const page = "/openwiki/page.md";
     await writePage(page, "# Page\n");
     const store = new ClaimsStore(rootDir);
@@ -151,7 +139,6 @@ describe("prepareClaimsRuntime", () => {
       new OpenWikiIgnore([]),
     );
 
-    expect(runtime?.context).toEqual({ issues: [] });
-    expect(runtime?.requiresAttention).toBe(false);
+    expect(runtime?.issueCount).toBe(0);
   });
 });

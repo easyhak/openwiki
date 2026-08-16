@@ -259,7 +259,6 @@ async function translateWiki(
         plan,
         claims ?? [],
       );
-      claimsSession?.recordOwnedTranslation(filePath);
     } catch (error) {
       const reasons = [getErrorMessage(error)];
       const stampError = await markPending(
@@ -270,8 +269,6 @@ async function translateWiki(
       );
       if (stampError) {
         reasons.push(`could not mark it for retry: ${stampError}`);
-      } else {
-        claimsSession?.recordOwnedTranslation(filePath);
       }
       failures.push(`- ${filePath}: ${reasons.join("; ")}`);
     }

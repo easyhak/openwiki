@@ -468,7 +468,7 @@ export class OpenWikiLocalShellBackend extends LocalShellBackend {
       return {
         exitCode: 1,
         output:
-          "OpenWiki Claims state is implementation-owned and unavailable to shell execute. Use fetch_claims and update_claims.",
+          "OpenWiki Claims state is implementation-owned and unavailable to shell execute. Use inspect_claims and resolve_claims.",
         truncated: false,
       };
     }

@@ -101,7 +101,7 @@ describe("applyClaimOperations", () => {
     ]);
   });
 
-  test("preserves stable IDs across updates and applies ordered deletes", async () => {
+  test("supports partial updates, confirmations, and ordered retractions", async () => {
     const resolver = createMemoryResolver(
       new Map([
         [
@@ -132,7 +132,7 @@ describe("applyClaimOperations", () => {
           statement: "The reminder is scheduled for Wednesday.",
           evidence: [{ resource: "memory://reminders/weekly" }],
         },
-        { op: "delete", id: "claim_remove" },
+        { op: "retract", id: "claim_remove" },
         {
           op: "add",
           statement: "A monthly reminder also exists.",
@@ -148,6 +148,44 @@ describe("applyClaimOperations", () => {
       "claim_monthly",
     ]);
     expect(result[0]?.evidence[0]?.version).toBe("revision:2");
+  });
+
+  test("confirm retains the statement and refreshes existing evidence", async () => {
+    const resource = "memory://reminders/weekly";
+    const result = await applyClaimOperations({
+      claims: EXISTING_CLAIMS,
+      operations: [{ op: "confirm", id: "claim_existing" }],
+      resolver: createMemoryResolver(
+        new Map([[resource, memoryEvidence(resource, "revision:2")]]),
+      ),
+    });
+
+    expect(result[0]).toEqual({
+      ...EXISTING_CLAIMS[0],
+      evidence: [{ resource, version: "revision:2" }],
+    });
+  });
+
+  test("statement-only updates retain resources and refresh their versions", async () => {
+    const resource = "memory://reminders/weekly";
+    const result = await applyClaimOperations({
+      claims: EXISTING_CLAIMS,
+      operations: [
+        {
+          op: "update",
+          id: "claim_existing",
+          statement: "The reminder is scheduled for Wednesday.",
+        },
+      ],
+      resolver: createMemoryResolver(
+        new Map([[resource, memoryEvidence(resource, "revision:3")]]),
+      ),
+    });
+
+    expect(result[0]?.statement).toBe(
+      "The reminder is scheduled for Wednesday.",
+    );
+    expect(result[0]?.evidence).toEqual([{ resource, version: "revision:3" }]);
   });
 
   test("resolves shared evidence once per mutation batch", async () => {
@@ -191,7 +229,7 @@ describe("applyClaimOperations", () => {
 
     const result = await applyClaimOperations({
       claims: original,
-      operations: [{ op: "delete", id: "claim_existing" }],
+      operations: [{ op: "retract", id: "claim_existing" }],
       resolver: createMemoryResolver(new Map()),
     });
 
@@ -200,12 +238,12 @@ describe("applyClaimOperations", () => {
   });
 
   test.each([
-    ["unknown IDs", [{ op: "delete", id: "claim_missing" }] as const],
+    ["unknown IDs", [{ op: "retract", id: "claim_missing" }] as const],
     [
       "duplicate targets",
       [
-        { op: "delete", id: "claim_existing" },
-        { op: "delete", id: "claim_existing" },
+        { op: "confirm", id: "claim_existing" },
+        { op: "retract", id: "claim_existing" },
       ] as const,
     ],
     ["empty operations", [] as const],
@@ -314,7 +352,7 @@ describe("applyClaimOperations", () => {
     const result = await applyClaimOperations({
       claims: EXISTING_CLAIMS,
       operations: [
-        { op: "delete", id: "claim_existing" },
+        { op: "retract", id: "claim_existing" },
         {
           op: "add",
           statement: "Replacement fact.",
@@ -343,7 +381,7 @@ describe("applyClaimOperations", () => {
     await expect(
       applyClaimOperations({
         claims: invalid,
-        operations: [{ op: "delete", id: "claim_invalid" }],
+        operations: [{ op: "retract", id: "claim_invalid" }],
         resolver: createMemoryResolver(new Map(), calls),
       }),
     ).rejects.toThrow(ClaimSessionError);
@@ -366,5 +404,15 @@ describe("applyClaimOperations", () => {
       }),
     ).rejects.toThrow("Generated claim id cannot be empty");
     expect(calls).toEqual([]);
+  });
+
+  test("rejects empty partial updates", async () => {
+    await expect(
+      applyClaimOperations({
+        claims: EXISTING_CLAIMS,
+        operations: [{ op: "update", id: "claim_existing" } as never],
+        resolver: createMemoryResolver(new Map()),
+      }),
+    ).rejects.toThrow("requires a statement or evidence");
   });
 });

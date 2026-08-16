@@ -1,56 +1,36 @@
 import { ToolMessage } from "@langchain/core/messages";
 import { createMiddleware } from "langchain";
-import { MUTATION_PATH_METADATA_KEY } from "../../../agent/docs-only-backend.js";
-import { ClaimSessionError } from "../../core/errors.js";
-import { isGroundedWikiPage, normalizeWikiPagePath } from "./paths.js";
+import { isGroundedWikiPage } from "./paths.js";
 import { ClaimSession } from "./session.js";
 
 /**
- * Filesystem tools that create or change generated Markdown.
- */
-const PAGE_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
-
-/**
- * Enforces claim-fetch ordering around generated-page mutations.
+ * Creates middleware that adds page-local Claims debt to successful reads.
  *
- * @param session - Run-scoped authoritative claim state.
- * @returns LangChain middleware guarding page write and delete tools.
+ * The note exists only in the tool result presented to the model; the backend
+ * content and generated Markdown remain unchanged.
+ *
+ * @param session - Run-scoped Claims state used to look up lazy issues.
+ * @returns Middleware wrapping repository filesystem reads.
  */
-export function createClaimsAuthoringMiddleware(session: ClaimSession) {
+export function createClaimsReadNoteMiddleware(session: ClaimSession) {
   return createMiddleware({
-    name: "OpenWikiClaimsAuthoringMiddleware",
+    name: "OpenWikiClaimsReadNoteMiddleware",
     wrapToolCall: async (request, handler) => {
       const requestedPath = getRequestedPath(request.toolCall.args);
-      const isPageMutation =
+      const isPageRead =
+        request.toolCall.name === "read_file" &&
         requestedPath !== undefined &&
-        isGroundedWikiPage(requestedPath) &&
-        PAGE_WRITE_TOOLS.has(request.toolCall.name);
-
-      if (isPageMutation) {
-        try {
-          session.assertReadyForWrite(requestedPath);
-        } catch (error) {
-          return toAuthoringErrorMessage(
-            error,
-            request.toolCall.id,
-            request.toolCall.name,
-          );
-        }
-      }
-
+        isGroundedWikiPage(requestedPath);
       const result = await handler(request);
-      if (!isPageMutation || !hasSuccessfulMutation(result, requestedPath)) {
+      if (!isPageRead) {
         return result;
       }
-
-      try {
-        session.recordWrite(requestedPath);
-      } catch (error) {
-        return toAuthoringErrorMessage(
-          error,
-          request.toolCall.id,
-          request.toolCall.name,
-        );
+      const note = session.getReadNote(requestedPath);
+      if (!note) {
+        return result;
+      }
+      for (const message of getToolMessages(result)) {
+        appendReadNote(message, note);
       }
       return result;
     },
@@ -58,26 +38,25 @@ export function createClaimsAuthoringMiddleware(session: ClaimSession) {
 }
 
 /**
- * Converts an authoring-order failure into an actionable agent tool result.
+ * Appends a Claims note without changing the shape of the tool result.
  *
- * @param error - Unknown authoring guard failure.
- * @param toolCallId - Optional model-supplied tool call identifier.
- * @param toolName - Tool name used when no call identifier exists.
- * @returns Error ToolMessage that lets the agent recover in the same run.
+ * DeepAgents filesystem reads use structured text blocks, while direct tool
+ * results may still use plain strings. Supporting both shapes ensures the note
+ * reaches the model in production as well as in lightweight test harnesses.
+ * Failed reads are left untouched.
+ *
+ * @param message - Filesystem tool result to decorate.
+ * @param note - Non-persisted page-local Claims guidance.
  */
-function toAuthoringErrorMessage(
-  error: unknown,
-  toolCallId: string | undefined,
-  toolName: string,
-): ToolMessage {
-  if (!(error instanceof ClaimSessionError)) {
-    throw error;
+function appendReadNote(message: ToolMessage, note: string): void {
+  if (message.status === "error") {
+    return;
   }
-  return new ToolMessage({
-    content: error.message,
-    status: "error",
-    tool_call_id: toolCallId ?? toolName,
-  });
+  if (typeof message.content === "string") {
+    message.content = `${message.content}\n\n${note}`;
+    return;
+  }
+  message.content = [...message.content, { type: "text", text: `\n\n${note}` }];
 }
 
 /**
@@ -96,37 +75,7 @@ function getRequestedPath(input: unknown): string | undefined {
 }
 
 /**
- * Determines whether a tool result contains a backend-confirmed mutation.
- *
- * @param result - Unknown tool handler result.
- * @param requestedPath - Expected mutation path.
- * @returns Whether the backend marked the requested mutation successful.
- */
-function hasSuccessfulMutation(
-  result: unknown,
-  requestedPath: string,
-): boolean {
-  return getToolMessages(result).some((message) => {
-    if (message.status === "error") {
-      return false;
-    }
-    const mutatedPath = message.metadata?.[MUTATION_PATH_METADATA_KEY];
-    if (typeof mutatedPath !== "string") {
-      return false;
-    }
-    try {
-      return (
-        normalizeWikiPagePath(mutatedPath) ===
-        normalizeWikiPagePath(requestedPath)
-      );
-    } catch {
-      return false;
-    }
-  });
-}
-
-/**
- * Extracts ToolMessages from direct and Command-like results.
+ * Extracts ToolMessages from direct and Command-like tool results.
  *
  * @param result - Unknown tool handler result.
  * @returns Tool messages contained by the result.

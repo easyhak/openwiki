@@ -3,39 +3,36 @@ import type {
   OpenWikiOutputMode,
 } from "../../../agent/types.js";
 import { OpenWikiIgnore } from "../../../agent/openwiki-ignore.js";
-import { runClaimsPreflight } from "./preflight.js";
 import { RepositoryEvidenceResolver } from "../../evidence/repository/resolver.js";
+import { runClaimsPreflight } from "./preflight.js";
 import { ClaimSession } from "./session.js";
 import { ClaimsStore } from "./store.js";
-import type { GroundingContext, ReconciliationObligation } from "./types.js";
 
 /**
  * Prepared repository Claims state for one init or update run.
  */
 export interface ClaimsRuntime {
   /**
-   * Run-scoped working state used by tools and finalization.
+   * Run-scoped working state used by tools, middleware, and finalization.
    */
   session: ClaimSession;
 
   /**
-   * Compact deterministic reconciliation worklist.
+   * Number of lazy page-local issues, used for diagnostics only.
    */
-  context: GroundingContext;
+  issueCount: number;
 
   /**
-   * Whether grounding issues or orphan cleanup prevent an update no-op.
+   * Persists dirty claim pages and removes deleted or orphaned sidecars.
    */
-  requiresAttention: boolean;
-
-  /**
-   * Finalizes synchronized pages and reports unfinished reconciliation.
-   */
-  finalize(): Promise<ReconciliationObligation[]>;
+  finalize(): Promise<void>;
 }
 
 /**
  * Prepares Claims only for repository init and update runs.
+ *
+ * Update preparation detects evidence debt for page-local read notes without
+ * turning it into mandatory agent work or blocking an update no-op.
  *
  * @param command - Current OpenWiki command.
  * @param outputMode - Current output target.
@@ -68,8 +65,7 @@ export async function prepareClaimsRuntime(
     });
     return {
       session,
-      context: { issues: [] },
-      requiresAttention: true,
+      issueCount: 0,
       finalize: () => session.finalize(store),
     };
   }
@@ -78,14 +74,12 @@ export async function prepareClaimsRuntime(
   const session = new ClaimSession({
     resolver,
     persisted: preflight.persisted,
-    issues: preflight.context.issues,
+    issues: preflight.issues,
     orphanPages: preflight.orphanPages,
   });
   return {
     session,
-    context: preflight.context,
-    requiresAttention:
-      preflight.context.issues.length > 0 || preflight.orphanPages.length > 0,
+    issueCount: preflight.issues.length,
     finalize: () => session.finalize(store),
   };
 }

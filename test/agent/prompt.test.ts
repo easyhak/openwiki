@@ -290,45 +290,33 @@ describe("createUserPrompt", () => {
     expect(prompt).not.toContain("  focus on auth  ");
   });
 
-  test("renders compact Claims grounding issues for repository updates", () => {
+  test("does not inject global Claims debt into repository updates", () => {
     const prompt = createUserPrompt(
       "update",
       emptyContext(),
       null,
       "repository",
       "/repo",
-      {
-        issues: [
-          {
-            page: "/openwiki/architecture.md",
-            kind: "stale",
-            claimId: "claim_runtime",
-            resources: ["repo://src/agent/index.ts#runOpenWikiAgent"],
-          },
-        ],
-      },
     );
 
-    expect(prompt).toContain("Grounding issues that must be reconciled:");
-    expect(
-      prompt.indexOf("Grounding issues that must be reconciled:"),
-    ).toBeLessThan(prompt.indexOf("read /openwiki/.last-update.json"));
+    expect(prompt).not.toContain("Grounding issues that must be reconciled:");
     expect(prompt).toContain(
-      "- /openwiki/architecture.md: evidence-changed claim=claim_runtime resources=repo://src/agent/index.ts#runOpenWikiAgent",
+      "Determine the affected documentation from repository changes rather than from Claims debt",
     );
   });
 
-  test("does not leak claim statements when no grounding work exists", () => {
+  test("explains that page-local Claims notes are relevant-only", () => {
     const prompt = createUserPrompt(
       "update",
       emptyContext(),
       null,
       "repository",
       "/repo",
-      { issues: [] },
     );
 
-    expect(prompt).toContain("No persisted grounding issues were detected.");
+    expect(prompt).toContain(
+      "inspect and resolve only affected propositions relevant to this task",
+    );
   });
 });
 
@@ -337,15 +325,22 @@ describe("createSystemPrompt Claims workflow", () => {
     for (const command of ["init", "update"] as const) {
       const prompt = createSystemPrompt(command, "repository");
 
-      expect(prompt).toContain("update_claims");
+      expect(prompt).toContain("resolve_claims");
+      expect(prompt).not.toContain("update_claims");
+      expect(prompt).not.toContain("fetch_claims");
       if (command === "update") {
-        expect(prompt).toContain("fetch_claims");
+        expect(prompt).toContain("inspect_claims");
         expect(prompt).toContain(
-          "Reconcile the supplied grounding worklist before general repository mapping",
+          "Normal Markdown reads and writes require no Claims call",
         );
         expect(prompt).toContain(
-          "Process the grounding worklist one page at a time",
+          "Inspect and resolve only IDs relevant to the current task",
         );
+        expect(prompt).toContain("one concise, atomic proposition");
+        expect(prompt).toContain(
+          "note IDs from every affected page together in one inspect_claims call",
+        );
+        expect(prompt).toContain("Use the pages selector only as a fallback");
       }
       expect(prompt).toContain(
         "Never use execute to create, edit, move, or delete generated wiki files",
@@ -356,7 +351,7 @@ describe("createSystemPrompt Claims workflow", () => {
         expect(prompt).toContain("wiki-question-finder");
         expect(prompt).toContain("wiki-answer-verifier");
         expect(prompt).toContain(
-          "Update the canonical page's complete Claim set",
+          "Maintain affected propositions with resolve_claims",
         );
         expect(prompt).toContain("subagents never mutate Claims or Markdown");
       } else {

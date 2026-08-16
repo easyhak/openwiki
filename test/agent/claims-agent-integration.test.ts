@@ -111,11 +111,11 @@ describe("Claims agent graph integration", () => {
       const options = latestGraphOptions();
       expect(options.tools.map((tool) => tool.name)).toEqual([
         "delete_file",
-        "update_claims",
-        "fetch_claims",
+        "resolve_claims",
+        "inspect_claims",
       ]);
       expect(options.middleware.map((middleware) => middleware.name)).toContain(
-        "OpenWikiClaimsAuthoringMiddleware",
+        "OpenWikiClaimsReadNoteMiddleware",
       );
       expect(
         options.middleware.map((middleware) => middleware.name),
@@ -154,10 +154,10 @@ describe("Claims agent graph integration", () => {
 
       const options = latestGraphOptions();
       expect(options.tools.map((tool) => tool.name)).not.toContain(
-        "update_claims",
+        "resolve_claims",
       );
       expect(options.tools.map((tool) => tool.name)).not.toContain(
-        "fetch_claims",
+        "inspect_claims",
       );
       expect(options.tools.map((tool) => tool.name)).not.toContain(
         "delete_file",

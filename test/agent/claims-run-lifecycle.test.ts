@@ -1,7 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ToolMessage } from "@langchain/core/messages";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 /**
@@ -33,7 +32,6 @@ vi.mock("../../src/config/env.js", async (importOriginal) => ({
   loadOpenWikiEnv: vi.fn(() => Promise.resolve()),
 }));
 
-import { MUTATION_PATH_METADATA_KEY } from "../../src/agent/docs-only-backend.ts";
 import { runOpenWikiAgent } from "../../src/agent/index.ts";
 import { ClaimSession } from "../../src/claims/brains/code/session.ts";
 import { ClaimsStore } from "../../src/claims/brains/code/store.ts";
@@ -150,7 +148,7 @@ interface CapturedStreamConfig {
 }
 
 /**
- * Grounds and writes one factual page through the registered Claims surfaces.
+ * Grounds and writes one factual page through the registered surfaces.
  *
  * @param options - Captured graph configuration.
  * @param page - Generated page to write.
@@ -159,20 +157,14 @@ async function groundAndWritePage(
   options: CapturedGraphOptions,
   page: string,
 ): Promise<void> {
-  const updateClaims = options.tools.find(
-    (tool) => tool.name === "update_claims",
+  const resolveClaims = options.tools.find(
+    (tool) => tool.name === "resolve_claims",
   );
-  const fetchClaims = options.tools.find(
-    (tool) => tool.name === "fetch_claims",
-  );
-  const claimsMiddleware = options.middleware.find(
-    (middleware) => middleware.name === "OpenWikiClaimsAuthoringMiddleware",
-  );
-  if (!updateClaims || !fetchClaims || !claimsMiddleware?.wrapToolCall) {
+  if (!resolveClaims) {
     throw new Error("Claims authoring surfaces were not registered.");
   }
 
-  await updateClaims.invoke({
+  await resolveClaims.invoke({
     page,
     operations: [
       {
@@ -182,33 +174,8 @@ async function groundAndWritePage(
       },
     ],
   });
-  await fetchClaims.invoke({ page });
-
-  await claimsMiddleware.wrapToolCall(
-    {
-      toolCall: {
-        args: { file_path: page },
-        id: "write-page",
-        name: "write_file",
-      },
-      runtime: {},
-      state: { messages: [] },
-      tool: undefined,
-    },
-    async () => {
-      const result = await options.backend.write(page, "# Page\n");
-      if (result.error) {
-        throw new Error(result.error);
-      }
-      return new ToolMessage({
-        content: "Wrote page.",
-        metadata: result.metadata ?? {
-          [MUTATION_PATH_METADATA_KEY]: page,
-        },
-        tool_call_id: "write-page",
-      });
-    },
-  );
+  const result = await options.backend.write(page, "# Page\n");
+  if (result.error) throw new Error(result.error);
 }
 
 describe("Claims production run lifecycle", () => {
@@ -303,7 +270,7 @@ describe("Claims production run lifecycle", () => {
     );
   });
 
-  test("completes with a warning when Claims work remains unfinished", async () => {
+  test("does not turn unrelated ungrounded pages into unfinished work", async () => {
     const cwd = await createRepository();
     const completedPage = "/openwiki/completed.md";
     const unfinishedPage = "/openwiki/unfinished.md";
@@ -324,10 +291,16 @@ describe("Claims production run lifecycle", () => {
       }),
     ).resolves.toEqual(expect.objectContaining({ command: "update" }));
 
-    expect(events).toContainEqual({
-      type: "text",
-      text: `Claims reconciliation remains unfinished for 1 page; completed pages were persisted and unfinished pages will be retried on a future update: ${unfinishedPage}`,
-    });
+    expect(
+      events.some(
+        (event) =>
+          typeof event === "object" &&
+          event !== null &&
+          "text" in event &&
+          typeof event.text === "string" &&
+          event.text.includes("Claims reconciliation remains"),
+      ),
+    ).toBe(false);
     const store = new ClaimsStore(cwd);
     await expect(store.loadPage(completedPage)).resolves.toEqual(
       expect.objectContaining({
@@ -411,14 +384,15 @@ describe("Claims production run lifecycle", () => {
     ).resolves.toEqual(expect.objectContaining({ status: "interrupted" }));
   });
 
-  test("supplies grounding context even when a user message bypasses no-op", async () => {
+  test("does not inject global grounding debt when a user message bypasses no-op", async () => {
     const cwd = await createRepository();
     await mkdir(path.join(cwd, "openwiki"));
     await writeFile(path.join(cwd, "openwiki/page.md"), "# Ungrounded\n");
     graphHarness.streamBehavior.mockImplementation(
       async (options: CapturedGraphOptions, input: CapturedStreamInput) => {
+        expect(input.messages[0]?.content).not.toContain("ungrounded-page");
         expect(input.messages[0]?.content).toContain(
-          "- /openwiki/page.md: ungrounded-page",
+          "If a page you read includes an OpenWiki Claims note",
         );
         await groundAndWritePage(options, "/openwiki/page.md");
       },

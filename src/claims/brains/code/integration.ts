@@ -1,6 +1,6 @@
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { AnyAgentMiddleware } from "langchain";
-import { createClaimsAuthoringMiddleware } from "./middleware.js";
+import { createClaimsReadNoteMiddleware } from "./middleware.js";
 import type { ClaimsRuntime } from "./runtime.js";
 import {
   createClaimsDeleteFileTool,
@@ -12,10 +12,14 @@ import {
  * Agent-facing pieces of the repository Claims subsystem.
  */
 export interface ClaimsIntegration {
-  /** Claims-aware tools added to the repository agent. */
+  /**
+   * Claims-aware tools added to the repository agent.
+   */
   tools: StructuredToolInterface[];
 
-  /** Middleware that enforces Claims ordering around page writes. */
+  /**
+   * Middleware that surfaces lazy claim debt on relevant page reads.
+   */
   middleware: AnyAgentMiddleware[];
 }
 
@@ -35,6 +39,6 @@ export function createClaimsIntegration(
       createClaimsDeleteFileTool(runtime.session, backend),
       ...createClaimsTools(runtime.session),
     ],
-    middleware: [createClaimsAuthoringMiddleware(runtime.session)],
+    middleware: [createClaimsReadNoteMiddleware(runtime.session)],
   };
 }

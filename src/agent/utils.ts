@@ -84,21 +84,12 @@ async function readRunWikiGoal(
  *
  * @param cwd - Absolute repository root.
  * @param openWikiIgnore - Active repository read boundary.
- * @param claimsRequireAttention - Whether deterministic Claims state needs work.
  * @returns Skip decision and diagnostic reason.
  */
 export async function getUpdateNoopStatus(
   cwd: string,
   openWikiIgnore = new OpenWikiIgnore([]),
-  claimsRequireAttention = false,
 ): Promise<UpdateNoopStatus> {
-  if (claimsRequireAttention) {
-    return {
-      shouldSkip: false,
-      reason: "grounded claims require reconciliation",
-    };
-  }
-
   const lastUpdate = await readLastUpdate(cwd, "repository");
 
   if (!lastUpdate?.gitHead) {

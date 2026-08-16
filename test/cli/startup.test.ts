@@ -201,7 +201,7 @@ describe("resolveStartupCommand", () => {
     }
   });
 
-  test("still requires credentials when clean Git state has grounding issues", async () => {
+  test("skips credentials when only the stored page hash has drifted", async () => {
     const repo = await createRepoWithOpenWiki();
     await writeFile(
       path.join(repo, "openwiki", "quickstart.md"),
@@ -213,15 +213,13 @@ describe("resolveStartupCommand", () => {
     const head = await git(repo, ["rev-parse", "HEAD"]);
     await writeLastUpdate(repo, head);
 
-    const result = await resolveStartupCommand(updatePrintCommand(), {
+    const command = updatePrintCommand();
+    const result = await resolveStartupCommand(command, {
       cwd: repo,
       isStdinTTY: false,
     });
 
-    expect(result.kind).toBe("error");
-    if (result.kind === "error") {
-      expect(result.message).toContain("OPENROUTER_API_KEY is required");
-    }
+    expect(result).toBe(command);
   });
 
   test("still requires credentials when an update message is supplied", async () => {

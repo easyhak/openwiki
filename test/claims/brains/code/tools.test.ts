@@ -1,432 +1,344 @@
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { describe, expect, test, vi } from "vitest";
+import { EvidenceResolutionError } from "../../../../src/claims/core/errors.ts";
+import type {
+  EvidenceResolver,
+  ResolvedEvidence,
+} from "../../../../src/claims/core/types.ts";
 import { ClaimSession } from "../../../../src/claims/brains/code/session.ts";
 import {
   createClaimsDeleteFileTool,
   createClaimsTools,
 } from "../../../../src/claims/brains/code/tools.ts";
-import type {
-  EvidenceResolver,
-  ResolvedEvidence,
-} from "../../../../src/claims/core/types.ts";
-import {
-  EvidenceResolutionError,
-  EvidenceResourceError,
-} from "../../../../src/claims/core/errors.ts";
 
-/**
- * Finds one named Claims tool.
- *
- * @param tools - Run-bound Claims tools.
- * @param name - Exact tool name.
- * @returns Matching structured tool.
- */
-function getTool(
-  tools: readonly StructuredToolInterface[],
-  name: string,
-): StructuredToolInterface {
-  const tool = tools.find((candidate) => candidate.name === name);
-  if (!tool) {
-    throw new Error(`Missing Claims tool ${name}`);
-  }
-  return tool;
-}
+const PAGE = "/openwiki/page.md";
+const RESOURCE = "memory://feature";
 
-/**
- * Creates a resolver that owns canonical resource versions.
- *
- * @returns Resolver for the tool fixtures.
- */
-function createResolver(): EvidenceResolver {
+function resolved(version = "revision:2"): ResolvedEvidence {
   return {
-    resolve(resource: string): Promise<ResolvedEvidence> {
-      return Promise.resolve({
-        evidence: {
-          resource: resource.replace("draft", "canonical"),
-          version: "memory-v1:revision:7",
-        },
-        content: "fixture content",
-      });
-    },
+    evidence: { resource: RESOURCE, version },
+    content: "feature content",
   };
 }
 
-/**
- * Creates an empty deterministic claim session.
- *
- * @returns Run-scoped Claims session.
- */
-function createSession(): ClaimSession {
+function createSession(options?: {
+  resolver?: EvidenceResolver;
+  issue?: boolean;
+  createClaimId?: () => string;
+}): ClaimSession {
   return new ClaimSession({
-    resolver: createResolver(),
-    persisted: new Map(),
-    issues: [],
+    resolver: options?.resolver ?? {
+      resolve: () => Promise.resolve(resolved()),
+    },
+    persisted: new Map([
+      [
+        PAGE,
+        {
+          schemaVersion: 1,
+          pageVersion: `sha256:${"a".repeat(64)}`,
+          claims: [
+            {
+              id: "claim_existing",
+              statement: "The feature exists.",
+              evidence: [{ resource: RESOURCE, version: "revision:1" }],
+            },
+          ],
+        },
+      ],
+    ]),
+    issues: options?.issue
+      ? [
+          {
+            page: PAGE,
+            kind: "stale",
+            claimId: "claim_existing",
+            resources: [RESOURCE],
+          },
+        ]
+      : [],
     orphanPages: [],
-    createClaimId: () => "claim_generated",
+    createClaimId: options?.createClaimId,
   });
 }
 
-/**
- * Verifies one model-correctable Claims tool result.
- *
- * @param output - Unknown structured-tool output.
- */
-function expectRetryableToolOutput(output: unknown): void {
-  const parsed: unknown = JSON.parse(String(output));
-  expect(parsed).toMatchObject({ retryable: true });
-  if (typeof parsed !== "object" || parsed === null || !("error" in parsed)) {
-    throw new Error("Expected a retryable Claims tool error.");
-  }
-  expect(typeof parsed.error).toBe("string");
+function getTool(
+  tools: StructuredToolInterface[],
+  name: string,
+): StructuredToolInterface {
+  const tool = tools.find((candidate) => candidate.name === name);
+  if (!tool) throw new Error(`Missing tool ${name}`);
+  return tool;
+}
+
+function parse(output: unknown): Record<string, unknown> {
+  return JSON.parse(String(output)) as Record<string, unknown>;
 }
 
 describe("createClaimsTools", () => {
-  test("exposes only update and fetch tools", () => {
+  test("exposes the compact resolve and inspect API", () => {
     const tools = createClaimsTools(createSession());
-
-    expect(tools.map((tool) => tool.name)).toEqual([
-      "update_claims",
-      "fetch_claims",
+    expect(tools.map(({ name }) => name)).toEqual([
+      "resolve_claims",
+      "inspect_claims",
     ]);
-    expect(getTool(tools, "update_claims").description).toContain(
-      "OpenWiki resolves versions and IDs",
+    expect(getTool(tools, "resolve_claims").description).toContain("confirm");
+    expect(getTool(tools, "resolve_claims").description).toContain(
+      "one concise, atomic proposition",
+    );
+    expect(getTool(tools, "inspect_claims").description).toContain(
+      "without creating a write obligation",
+    );
+    expect(getTool(tools, "inspect_claims").description).toContain("Pass ids");
+    expect(getTool(tools, "inspect_claims").description).toContain(
+      "Pass pages only as a fallback",
     );
   });
 
-  test("returns OpenWiki-owned IDs and resolver-owned versions", async () => {
-    const tools = createClaimsTools(createSession());
-    const update = getTool(tools, "update_claims");
-    const fetch = getTool(tools, "fetch_claims");
-    const page = "/openwiki/page.md";
-
-    const updateOutput: unknown = await update.invoke({
-      page,
-      operations: [
-        {
-          op: "add",
-          statement: "  A generated fact.  ",
-          evidence: [{ resource: "memory://draft/fact" }],
-        },
-      ],
-    });
-    const fetchOutput: unknown = await fetch.invoke({ page });
-
-    expect(updateOutput).toBe(
-      JSON.stringify(
-        {
-          page,
-          revision: 1,
-          claims: [
-            {
-              id: "claim_generated",
-              statement: "A generated fact.",
-              evidence: [
-                {
-                  resource: "memory://canonical/fact",
-                  version: "memory-v1:revision:7",
-                },
-              ],
-            },
-          ],
-        },
-        null,
-        2,
-      ),
+  test("returns only compact operation results and allocated IDs", async () => {
+    const resolve = getTool(
+      createClaimsTools(createSession({ createClaimId: () => "claim_new" })),
+      "resolve_claims",
     );
-    expect(fetchOutput).toBe(
-      JSON.stringify(
-        {
-          page,
-          revision: 1,
-          claims: [
-            {
-              id: "claim_generated",
-              statement: "A generated fact.",
-              evidence: [
-                {
-                  resource: "memory://canonical/fact",
-                  version: "memory-v1:revision:7",
-                },
-              ],
-            },
-          ],
-        },
-        null,
-        2,
-      ),
-    );
-  });
-
-  test("authorizes the returned update revision without a redundant fetch", async () => {
-    const session = createSession();
-    const update = getTool(createClaimsTools(session), "update_claims");
-    const page = "/openwiki/page.md";
-
-    await update.invoke({
-      page,
-      operations: [
-        {
-          op: "add",
-          statement: "A generated fact.",
-          evidence: [{ resource: "memory://draft/fact" }],
-        },
-      ],
-    });
-
-    expect(() => session.assertReadyForWrite(page)).not.toThrow();
-  });
-
-  test("canonicalizes wiki-relative page paths at the tool boundary", async () => {
-    const tools = createClaimsTools(createSession());
-    const update = getTool(tools, "update_claims");
-    const fetch = getTool(tools, "fetch_claims");
-
-    const updateOutput: unknown = await update.invoke({
-      page: "components/task.md",
-      operations: [
-        {
-          op: "add",
-          statement: "A task is queued.",
-          evidence: [{ resource: "memory://draft/task" }],
-        },
-      ],
-    });
-    const fetchOutput: unknown = await fetch.invoke({
-      page: "openwiki/components/task.md",
-    });
-
-    expect(JSON.parse(String(updateOutput))).toMatchObject({
-      page: "/openwiki/components/task.md",
-      revision: 1,
-    });
-    expect(JSON.parse(String(fetchOutput))).toMatchObject({
-      page: "/openwiki/components/task.md",
-      revision: 1,
-      claims: [{ statement: "A task is queued." }],
-    });
-  });
-
-  test("fetches and authorizes one page", async () => {
-    const session = createSession();
-    const fetch = getTool(createClaimsTools(session), "fetch_claims");
-    const page = "components/worker.md";
-
-    const output = JSON.parse(String(await fetch.invoke({ page }))) as {
-      page: string;
-      revision: number;
-    };
-
-    expect(output).toEqual({
-      page: "/openwiki/components/worker.md",
-      revision: 0,
-      claims: [],
-    });
-    expect(() => session.assertReadyForWrite(output.page)).not.toThrow();
-  });
-
-  test("rejects agent-supplied fields through the tool schema", async () => {
-    const update = getTool(createClaimsTools(createSession()), "update_claims");
-    const page = "/openwiki/page.md";
-
-    for (const operation of [
-      {
-        op: "add",
-        id: "agent_id",
-        statement: "Fact.",
-        evidence: [{ resource: "memory://draft/fact" }],
-      },
-      {
-        op: "add",
-        statement: "Fact.",
-        evidence: [
-          { resource: "memory://draft/fact", version: "agent_version" },
-        ],
-      },
-      {
-        op: "add",
-        statement: "Fact.",
-        evidence: [{ resource: "memory://draft/fact" }],
-        unknown: true,
-      },
-    ]) {
-      await expect(
-        update.invoke({ page, operations: [operation] }),
-      ).rejects.toThrow("did not match expected schema");
-    }
-  });
-
-  test("rejects structurally invalid inputs through the tool schema", async () => {
-    const tools = createClaimsTools(createSession());
-    const update = getTool(tools, "update_claims");
-    const fetch = getTool(tools, "fetch_claims");
-
-    await expect(
-      update.invoke({ page: "/openwiki/page.md", operations: [] }),
-    ).rejects.toThrow("did not match expected schema");
-    await expect(
-      fetch.invoke({ page: "/openwiki/page.md", unknown: true }),
-    ).rejects.toThrow("did not match expected schema");
-    await expect(fetch.invoke({ page: "" })).rejects.toThrow(
-      "did not match expected schema",
-    );
-    await expect(
-      fetch.invoke({
-        pages: ["/openwiki/page.md", "/openwiki/other.md"],
-      }),
-    ).rejects.toThrow("did not match expected schema");
-  });
-
-  test("returns retryable errors for semantically invalid inputs", async () => {
-    const tools = createClaimsTools(createSession());
-    const update = getTool(tools, "update_claims");
-    const fetch = getTool(tools, "fetch_claims");
-
-    for (const invocation of [
-      update.invoke({
-        page: "/openwiki/page.md",
-        operations: [
-          {
-            op: "add",
-            statement: "Fact.",
-            evidence: [{ resource: " " }],
-          },
-        ],
-      }),
-      fetch.invoke({ page: "../outside.md" }),
-    ]) {
-      const output: unknown = await invocation;
-      expectRetryableToolOutput(output);
-    }
-  });
-
-  test("returns unresolved evidence as a retryable tool error", async () => {
-    const resolver: EvidenceResolver = {
-      resolve: () => Promise.resolve(null),
-    };
-    const session = new ClaimSession({
-      resolver,
-      persisted: new Map(),
-      issues: [],
-      orphanPages: [],
-    });
-    const update = getTool(createClaimsTools(session), "update_claims");
-
-    const output: unknown = await update.invoke({
-      page: "page.md",
-      operations: [
-        {
-          op: "add",
-          statement: "Missing fact.",
-          evidence: [{ resource: "repo://src/missing.ts#missing" }],
-        },
-      ],
-    });
-
-    expect(JSON.parse(String(output))).toEqual({
-      error: "Evidence does not resolve: repo://src/missing.ts#missing",
-      retryable: true,
-    });
-  });
-
-  test("returns invalid evidence resources as retryable tool errors", async () => {
-    const resolver: EvidenceResolver = {
-      resolve: () =>
-        Promise.reject(new EvidenceResourceError("unsupported resource")),
-    };
-    const session = new ClaimSession({
-      resolver,
-      persisted: new Map(),
-      issues: [],
-      orphanPages: [],
-    });
-    const update = getTool(createClaimsTools(session), "update_claims");
-
-    const output: unknown = await update.invoke({
-      page: "page.md",
-      operations: [
-        {
-          op: "add",
-          statement: "Fact.",
-          evidence: [{ resource: "web://unsupported" }],
-        },
-      ],
-    });
-
-    expectRetryableToolOutput(output);
-    expect(String(output)).toContain("unsupported resource");
-  });
-
-  test("does not hide operational evidence failures", async () => {
-    const resolver: EvidenceResolver = {
-      resolve: () =>
-        Promise.reject(new EvidenceResolutionError("parser unavailable")),
-    };
-    const session = new ClaimSession({
-      resolver,
-      persisted: new Map(),
-      issues: [],
-      orphanPages: [],
-    });
-    const update = getTool(createClaimsTools(session), "update_claims");
-
-    await expect(
-      update.invoke({
+    const output = parse(
+      await resolve.invoke({
         page: "page.md",
         operations: [
           {
             op: "add",
-            statement: "Fact.",
-            evidence: [{ resource: "repo://src/page.ts#fact" }],
+            statement: "The feature is configurable.",
+            evidence: [{ resource: RESOURCE }],
           },
         ],
       }),
-    ).rejects.toThrow("parser unavailable");
+    );
+
+    expect(output).toEqual({
+      page: PAGE,
+      results: [{ op: "add", id: "claim_new" }],
+    });
+    expect(JSON.stringify(output)).not.toContain("revision:2");
+    expect(output).not.toHaveProperty("claims");
+  });
+
+  test("inspects selected claims without exposing opaque versions", async () => {
+    const inspect = getTool(
+      createClaimsTools(createSession({ issue: true })),
+      "inspect_claims",
+    );
+    const output = parse(
+      await inspect.invoke({
+        ids: ["claim_existing"],
+      }),
+    );
+
+    expect(output).toEqual({
+      pages: [
+        {
+          page: PAGE,
+          claims: [
+            {
+              id: "claim_existing",
+              statement: "The feature exists.",
+              evidence: [RESOURCE],
+              issue: { kind: "stale", resources: [RESOURCE] },
+            },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(output)).not.toContain("revision:1");
+  });
+
+  test("confirm refreshes evidence and clears the lazy issue", async () => {
+    const session = createSession({ issue: true });
+    const tools = createClaimsTools(session);
+    const resolve = getTool(tools, "resolve_claims");
+    const inspect = getTool(tools, "inspect_claims");
+
+    expect(
+      parse(
+        await resolve.invoke({
+          page: PAGE,
+          operations: [{ op: "confirm", id: "claim_existing" }],
+        }),
+      ),
+    ).toEqual({
+      page: PAGE,
+      results: [{ op: "confirm", id: "claim_existing" }],
+    });
+    const inspected = parse(await inspect.invoke({ ids: ["claim_existing"] }));
+    expect(JSON.stringify(inspected)).not.toContain("issue");
+  });
+
+  test("inspects complete claim sets for selected pages", async () => {
+    const inspect = getTool(
+      createClaimsTools(createSession()),
+      "inspect_claims",
+    );
+
+    expect(parse(await inspect.invoke({ pages: ["page.md"] }))).toEqual({
+      pages: [
+        {
+          page: PAGE,
+          claims: [
+            {
+              id: "claim_existing",
+              statement: "The feature exists.",
+              evidence: [RESOURCE],
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  test.each([
+    ["neither selector", {}],
+    ["both selectors", { ids: ["claim_existing"], pages: ["page.md"] }],
+  ])("rejects %s", async (_case, input) => {
+    const inspect = getTool(
+      createClaimsTools(createSession()),
+      "inspect_claims",
+    );
+    await expect(inspect.invoke(input)).rejects.toThrow(
+      "did not match expected schema",
+    );
+  });
+
+  test("supports statement-only partial updates", async () => {
+    const session = createSession();
+    const resolve = getTool(createClaimsTools(session), "resolve_claims");
+    await resolve.invoke({
+      page: PAGE,
+      operations: [
+        {
+          op: "update",
+          id: "claim_existing",
+          statement: "The feature remains available.",
+        },
+      ],
+    });
+    expect(session.inspectClaims(PAGE)[0]?.statement).toBe(
+      "The feature remains available.",
+    );
+  });
+
+  test.each([
+    [
+      "unknown claim",
+      { page: PAGE, operations: [{ op: "retract", id: "claim_missing" }] },
+    ],
+    [
+      "invalid page",
+      {
+        page: "../outside.md",
+        operations: [{ op: "confirm", id: "claim_existing" }],
+      },
+    ],
+  ])("returns retryable errors for %s", async (_case, input) => {
+    const resolve = getTool(
+      createClaimsTools(createSession()),
+      "resolve_claims",
+    );
+    expect(parse(await resolve.invoke(input))).toMatchObject({
+      retryable: true,
+    });
+  });
+
+  test("rejects an empty partial update through the public schema", async () => {
+    const resolve = getTool(
+      createClaimsTools(createSession()),
+      "resolve_claims",
+    );
+    await expect(
+      resolve.invoke({
+        page: PAGE,
+        operations: [{ op: "update", id: "claim_existing" }],
+      }),
+    ).rejects.toThrow("did not match expected schema");
+  });
+
+  test("returns unresolved evidence as a retryable confirmation error", async () => {
+    const resolve = getTool(
+      createClaimsTools(
+        createSession({ resolver: { resolve: () => Promise.resolve(null) } }),
+      ),
+      "resolve_claims",
+    );
+    const output = parse(
+      await resolve.invoke({
+        page: PAGE,
+        operations: [{ op: "confirm", id: "claim_existing" }],
+      }),
+    );
+    expect(output).toMatchObject({ retryable: true });
+    expect(output.error).toContain("Evidence does not resolve");
+  });
+
+  test("does not hide operational resolver failures", async () => {
+    const failure = new EvidenceResolutionError("resolver unavailable");
+    const resolve = getTool(
+      createClaimsTools(
+        createSession({ resolver: { resolve: () => Promise.reject(failure) } }),
+      ),
+      "resolve_claims",
+    );
+    await expect(
+      resolve.invoke({
+        page: PAGE,
+        operations: [{ op: "confirm", id: "claim_existing" }],
+      }),
+    ).rejects.toBe(failure);
   });
 });
 
 describe("createClaimsDeleteFileTool", () => {
-  test("deletes and records a fetched page with no remaining claims", async () => {
+  test("deletes a page without inspecting or retracting its claims", async () => {
     const session = createSession();
-    const page = "/openwiki/page.md";
-    session.fetchClaims(page);
-    const deleteFile = vi.fn(() => Promise.resolve({ path: page }));
-    const backend = { delete: deleteFile };
     const recordDeletion = vi.spyOn(session, "recordDeletion");
+    const backend = { delete: vi.fn(() => Promise.resolve({ path: PAGE })) };
     const tool = createClaimsDeleteFileTool(session, backend);
 
-    const output: unknown = await tool.invoke({ file_path: page });
-
-    expect(JSON.parse(String(output))).toEqual({ deleted: page });
-    expect(deleteFile).toHaveBeenCalledWith(page);
-    expect(recordDeletion).toHaveBeenCalledWith(page);
+    expect(parse(await tool.invoke({ file_path: "page.md" }))).toEqual({
+      deleted: PAGE,
+    });
+    expect(backend.delete).toHaveBeenCalledWith(PAGE);
+    expect(recordDeletion).toHaveBeenCalledWith(PAGE);
   });
 
-  test("does not record deletion when the backend refuses it", async () => {
+  test("does not record a deletion refused by the backend", async () => {
     const session = createSession();
-    const page = "/openwiki/page.md";
-    session.fetchClaims(page);
-    const backend = {
-      delete: vi.fn(() => Promise.resolve({ error: "permission denied" })),
-    };
     const recordDeletion = vi.spyOn(session, "recordDeletion");
-    const tool = createClaimsDeleteFileTool(session, backend);
+    const tool = createClaimsDeleteFileTool(session, {
+      delete: () => Promise.resolve({ error: "permission denied" }),
+    });
 
-    const output: unknown = await tool.invoke({ file_path: page });
-
-    expect(JSON.parse(String(output))).toEqual({ error: "permission denied" });
+    expect(parse(await tool.invoke({ file_path: PAGE }))).toEqual({
+      error: "permission denied",
+    });
     expect(recordDeletion).not.toHaveBeenCalled();
   });
 
-  test("returns retryable errors for invalid deletion ordering and paths", async () => {
+  test("deletes a reserved page without Claims bookkeeping", async () => {
     const session = createSession();
-    const backend = {
-      delete: vi.fn(() => Promise.resolve({ path: "/openwiki/page.md" })),
-    };
+    const recordDeletion = vi.spyOn(session, "recordDeletion");
+    const page = "/openwiki/_plan.md";
+    const backend = { delete: vi.fn(() => Promise.resolve({ path: page })) };
     const tool = createClaimsDeleteFileTool(session, backend);
 
-    for (const filePath of ["page.md", "/openwiki/index.md"]) {
-      const output: unknown = await tool.invoke({ file_path: filePath });
-      expectRetryableToolOutput(output);
-    }
+    expect(parse(await tool.invoke({ file_path: "_plan.md" }))).toEqual({
+      deleted: page,
+    });
+    expect(backend.delete).toHaveBeenCalledWith(page);
+    expect(recordDeletion).not.toHaveBeenCalled();
+  });
+
+  test("returns invalid deletion paths as retryable input errors", async () => {
+    const tool = createClaimsDeleteFileTool(createSession(), {
+      delete: () => Promise.resolve({ path: PAGE }),
+    });
+    expect(
+      parse(await tool.invoke({ file_path: "../outside.md" })),
+    ).toMatchObject({ retryable: true });
   });
 });

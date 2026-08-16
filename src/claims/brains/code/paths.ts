@@ -50,13 +50,43 @@ export function normalizeWikiPagePath(page: string): string {
  * @returns Canonical `/openwiki/...md` path for internal Claims APIs.
  */
 export function normalizeClaimsToolPagePath(page: string): string {
+  return normalizeWikiPagePath(normalizeWikiToolPagePath(page));
+}
+
+/**
+ * Canonicalizes a model-supplied generated Markdown path.
+ *
+ * Unlike {@link normalizeClaimsToolPagePath}, this permits structural and
+ * temporary wiki pages that do not own Claims. Claims implementation files
+ * remain unavailable.
+ *
+ * @param page - Agent-supplied canonical, repository-relative, or wiki-relative path.
+ * @returns Canonical `/openwiki/...md` path for a generated Markdown file.
+ */
+export function normalizeWikiToolPagePath(page: string): string {
   const slashed = page.trim().replace(/\\/gu, "/");
+  if (hasTraversalSegment(slashed)) {
+    throw new ClaimSessionError(
+      `Wiki page cannot contain traversal segments: ${page}`,
+    );
+  }
   const unrooted = slashed.replace(/^\/+/, "");
   const rooted =
     unrooted === "openwiki" || unrooted.startsWith("openwiki/")
       ? unrooted
       : `openwiki/${unrooted}`;
-  return normalizeWikiPagePath(rooted);
+  const normalized = path.posix.normalize(`/${rooted}`);
+  const segments = normalized.toLowerCase().split("/");
+  if (
+    !normalized.startsWith("/openwiki/") ||
+    !normalized.endsWith(".md") ||
+    segments.includes(CLAIMS_DIRECTORY)
+  ) {
+    throw new ClaimSessionError(
+      `Wiki page must be a Markdown file below /openwiki: ${page}`,
+    );
+  }
+  return normalized;
 }
 
 /**

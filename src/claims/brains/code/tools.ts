@@ -2,10 +2,14 @@ import {
   DynamicStructuredTool,
   type StructuredToolInterface,
 } from "@langchain/core/tools";
-import { z } from "zod";
 import type { DeleteResult } from "deepagents";
+import { z } from "zod";
 import { ClaimSessionError, EvidenceResourceError } from "../../core/errors.js";
-import { normalizeClaimsToolPagePath } from "./paths.js";
+import {
+  isGroundedWikiPage,
+  normalizeClaimsToolPagePath,
+  normalizeWikiToolPagePath,
+} from "./paths.js";
 import { ClaimSession } from "./session.js";
 
 /**
@@ -17,7 +21,6 @@ const CanonicalNonEmptyStringSchema = z
   .refine((value) => value === value.trim(), {
     message: "Must not contain surrounding whitespace",
   });
-
 /**
  * Runtime validator for trimmed non-empty claim prose.
  */
@@ -29,48 +32,64 @@ const ClaimStatementSchema = z.string().trim().min(1);
 const ProposedEvidenceSchema = z
   .object({ resource: CanonicalNonEmptyStringSchema })
   .strict();
+/**
+ * Runtime validator for a non-empty proposed evidence set.
+ */
+const EvidenceArraySchema = z.array(ProposedEvidenceSchema).min(1);
 
 /**
- * Runtime validator for one claim operation.
+ * Runtime validator for one compact claim operation.
  */
 const ClaimOperationSchema = z.discriminatedUnion("op", [
   z
     .object({
       op: z.literal("add"),
       statement: ClaimStatementSchema,
-      evidence: z.array(ProposedEvidenceSchema).min(1),
+      evidence: EvidenceArraySchema,
     })
+    .strict(),
+  z
+    .object({ op: z.literal("confirm"), id: CanonicalNonEmptyStringSchema })
     .strict(),
   z
     .object({
       op: z.literal("update"),
       id: CanonicalNonEmptyStringSchema,
-      statement: ClaimStatementSchema,
-      evidence: z.array(ProposedEvidenceSchema).min(1),
+      statement: ClaimStatementSchema.optional(),
+      evidence: EvidenceArraySchema.optional(),
     })
-    .strict(),
+    .strict()
+    .refine(
+      (operation) =>
+        operation.statement !== undefined || operation.evidence !== undefined,
+      { message: "An update requires statement or evidence" },
+    ),
   z
-    .object({ op: z.literal("delete"), id: CanonicalNonEmptyStringSchema })
+    .object({ op: z.literal("retract"), id: CanonicalNonEmptyStringSchema })
     .strict(),
 ]);
 
 /**
- * Runtime validator for `update_claims` input.
+ * Runtime validator for `resolve_claims` input.
  */
-const UpdateClaimsInputSchema = z
+const ResolveClaimsInputSchema = z
   .object({
     page: CanonicalNonEmptyStringSchema,
     operations: z.array(ClaimOperationSchema).min(1),
   })
   .strict();
-
 /**
- * Runtime validator for `fetch_claims` input.
+ * Runtime validator for `inspect_claims` input.
  */
-const FetchClaimsInputSchema = z
-  .object({ page: CanonicalNonEmptyStringSchema })
-  .strict();
-
+const InspectClaimsInputSchema = z
+  .object({
+    ids: z.array(CanonicalNonEmptyStringSchema).min(1).optional(),
+    pages: z.array(CanonicalNonEmptyStringSchema).min(1).optional(),
+  })
+  .strict()
+  .refine(({ ids, pages }) => (ids === undefined) !== (pages === undefined), {
+    message: "Pass exactly one of ids or pages",
+  });
 /**
  * Runtime validator for the DeepAgents-compatible `delete_file` input.
  */
@@ -84,33 +103,31 @@ const DeleteFileInputSchema = z
 export interface ClaimsDeletionBackend {
   /**
    * Deletes one canonical generated page.
+   *
+   * @param filePath - Canonical virtual page path.
+   * @returns Backend-confirmed deletion result.
    */
   delete(filePath: string): Promise<DeleteResult>;
 }
 
 /**
- * Creates the repository-only Claims tools for one run.
+ * Creates the compact, page-local Claims tools for one run.
  *
  * @param session - Run-scoped authoritative claim state.
- * @returns Mutation and fetch tools bound to the session.
+ * @returns Mutation and inspection tools bound to the session.
  */
 export function createClaimsTools(
   session: ClaimSession,
 ): StructuredToolInterface[] {
   return [
     new DynamicStructuredTool({
-      name: "update_claims",
+      name: "resolve_claims",
       description:
-        "Atomically add, update, or delete material factual claims for one generated wiki page. Returns the complete authoritative claim set and authorizes an immediate page write, so do not call fetch_claims again unless another mutation occurs. Page accepts /openwiki/components/task.md, openwiki/components/task.md, or components/task.md. Evidence uses repo://path or repo://path#symbol resources. OpenWiki resolves versions and IDs; never supply them.",
+        "Atomically maintain material factual propositions for one wiki page. Each statement must be one concise, atomic proposition, not an excerpt, list, or paragraph summary. Use confirm when a claim remains true, update to change its statement or evidence, retract when it is obsolete, and add for a new material fact. Normal Markdown edits need no Claims call. Evidence uses repo://path or repo://path#symbol resources.",
       schema: {
         type: "object",
         properties: {
-          page: {
-            type: "string",
-            minLength: 1,
-            description:
-              "Generated Markdown page as an /openwiki path or wiki-relative path, for example /openwiki/components/task.md or components/task.md.",
-          },
+          page: { type: "string", minLength: 1 },
           operations: {
             type: "array",
             minItems: 1,
@@ -129,18 +146,31 @@ export function createClaimsTools(
                 {
                   type: "object",
                   properties: {
-                    op: { const: "update" },
+                    op: { const: "confirm" },
                     id: { type: "string", minLength: 1 },
-                    statement: { type: "string", minLength: 1 },
-                    evidence: evidenceArraySchema(),
                   },
-                  required: ["op", "id", "statement", "evidence"],
+                  required: ["op", "id"],
                   additionalProperties: false,
                 },
                 {
                   type: "object",
                   properties: {
-                    op: { const: "delete" },
+                    op: { const: "update" },
+                    id: { type: "string", minLength: 1 },
+                    statement: { type: "string", minLength: 1 },
+                    evidence: evidenceArraySchema(),
+                  },
+                  required: ["op", "id"],
+                  anyOf: [
+                    { required: ["statement"] },
+                    { required: ["evidence"] },
+                  ],
+                  additionalProperties: false,
+                },
+                {
+                  type: "object",
+                  properties: {
+                    op: { const: "retract" },
                     id: { type: "string", minLength: 1 },
                   },
                   required: ["op", "id"],
@@ -153,47 +183,51 @@ export function createClaimsTools(
         required: ["page", "operations"],
         additionalProperties: false,
       } as const,
-      func: async (input) => {
-        return runClaimsTool(async () => {
-          const parsed = UpdateClaimsInputSchema.parse(input);
-          const updated = await session.updateClaims({
+      func: (input) =>
+        runClaimsTool(async () => {
+          const parsed = ResolveClaimsInputSchema.parse(input);
+          return session.resolveClaims({
             page: normalizeClaimsToolPagePath(parsed.page),
             operations: parsed.operations,
           });
-          return {
-            page: updated.page,
-            ...session.fetchClaims(updated.page),
-          };
-        });
-      },
+        }),
     }),
     new DynamicStructuredTool({
-      name: "fetch_claims",
+      name: "inspect_claims",
       description:
-        "Fetch the complete current working claim set and revision for one generated wiki page without mutating it. Finish reconciling and writing this page before fetching another page. Use this to inspect existing claims or before a write with no preceding update_claims call. A successful update_claims result already provides and authorizes its page revision. Page accepts /openwiki/components/task.md, openwiki/components/task.md, or components/task.md.",
+        "Inspect material factual propositions without creating a write obligation. Pass ids from one or more OpenWiki Claims read notes for targeted cross-page inspection. Pass pages only as a fallback when complete page claim sets are needed. Pass exactly one selector; results are grouped by owning page.",
       schema: {
         type: "object",
         properties: {
-          page: {
-            type: "string",
-            minLength: 1,
-            description:
-              "Generated Markdown page as an /openwiki path or wiki-relative path, for example /openwiki/components/task.md or components/task.md.",
+          ids: {
+            type: "array",
+            minItems: 1,
+            items: { type: "string", minLength: 1 },
+          },
+          pages: {
+            type: "array",
+            minItems: 1,
+            items: { type: "string", minLength: 1 },
           },
         },
-        required: ["page"],
+        oneOf: [{ required: ["ids"] }, { required: ["pages"] }],
         additionalProperties: false,
       } as const,
-      func: (input) => {
-        return runClaimsTool(() => {
-          const parsed = FetchClaimsInputSchema.parse(input);
-          const page = normalizeClaimsToolPagePath(parsed.page);
+      func: (input) =>
+        runClaimsTool(() => {
+          const parsed = InspectClaimsInputSchema.parse(input);
           return Promise.resolve({
-            page,
-            ...session.fetchClaims(page),
+            pages: parsed.ids
+              ? session.inspectClaimsByIds(parsed.ids)
+              : [
+                  ...new Set(
+                    (parsed.pages ?? []).map(normalizeClaimsToolPagePath),
+                  ),
+                ].map((page) => {
+                  return { page, claims: session.inspectClaims(page) };
+                }),
           });
-        });
-      },
+        }),
     }),
   ];
 }
@@ -201,8 +235,8 @@ export function createClaimsTools(
 /**
  * Creates the repository page-deletion tool missing from DeepAgents 1.12.
  *
- * The tool owns the complete deletion lifecycle because the upstream filesystem
- * middleware does not expose `delete_file`.
+ * The tool records a successful Markdown deletion in the Claims session so
+ * finalization removes the owning sidecar without model-managed retractions.
  *
  * @param session - Run-scoped authoritative claim state.
  * @param backend - Guarded OpenWiki filesystem backend.
@@ -215,25 +249,19 @@ export function createClaimsDeleteFileTool(
   return new DynamicStructuredTool({
     name: "delete_file",
     description:
-      "Delete one generated factual wiki page after deleting all of its claims. A successful update_claims call returning the empty authoritative set authorizes immediate deletion; otherwise call fetch_claims first. Accepts /openwiki/components/task.md or the wiki-relative components/task.md.",
+      "Delete one generated wiki page. Its Claims sidecar is removed automatically after a successful deletion.",
     schema: {
       type: "object",
       properties: {
-        file_path: {
-          type: "string",
-          minLength: 1,
-          description:
-            "Generated Markdown page as an /openwiki path or wiki-relative path.",
-        },
+        file_path: { type: "string", minLength: 1 },
       },
       required: ["file_path"],
       additionalProperties: false,
     } as const,
-    func: async (input) => {
-      return runClaimsTool(async () => {
+    func: (input) =>
+      runClaimsTool(async () => {
         const parsed = DeleteFileInputSchema.parse(input);
-        const page = normalizeClaimsToolPagePath(parsed.file_path);
-        session.assertReadyForDeletion(page);
+        const page = normalizeWikiToolPagePath(parsed.file_path);
         const result = await backend.delete(page);
         if (result.error) {
           return { error: result.error };
@@ -243,10 +271,11 @@ export function createClaimsDeleteFileTool(
             `Deletion backend did not confirm the deleted path: ${page}`,
           );
         }
-        session.recordDeletion(page);
+        if (isGroundedWikiPage(page)) {
+          await session.recordDeletion(page);
+        }
         return { deleted: page };
-      });
-    },
+      }),
   });
 }
 
@@ -257,25 +286,21 @@ export function createClaimsDeleteFileTool(
  * intentionally rethrown so they cannot be mistaken for agent input errors.
  *
  * @param operation - Parsed Claims operation to execute.
- * @returns JSON tool output for either success or a retryable input failure.
+ * @returns Compact JSON for either success or a retryable input failure.
  */
 async function runClaimsTool(
   operation: () => Promise<unknown>,
 ): Promise<string> {
   try {
-    return JSON.stringify(await operation(), null, 2);
+    return JSON.stringify(await operation());
   } catch (error) {
     if (!isRecoverableClaimsToolError(error)) {
       throw error;
     }
-    return JSON.stringify(
-      {
-        error: formatRecoverableClaimsToolError(error),
-        retryable: true,
-      },
-      null,
-      2,
-    );
+    return JSON.stringify({
+      error: formatRecoverableClaimsToolError(error),
+      retryable: true,
+    });
   }
 }
 
@@ -298,27 +323,27 @@ function isRecoverableClaimsToolError(
 /**
  * Formats one recoverable Claims failure as concise retry guidance.
  *
- * @param error - Deterministic model-correctable failure.
- * @returns Human-readable error detail.
+ * @param error - Validated recoverable tool failure.
+ * @returns Human-readable correction guidance.
  */
 function formatRecoverableClaimsToolError(
   error: ClaimSessionError | EvidenceResourceError | z.ZodError,
 ): string {
-  if (!(error instanceof z.ZodError)) {
-    return error.message;
+  if (error instanceof z.ZodError) {
+    return error.issues
+      .map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join(".") : "input";
+        return `${path}: ${issue.message}`;
+      })
+      .join("; ");
   }
-  return `Invalid Claims tool input: ${error.issues
-    .map((issue) => {
-      const location = issue.path.length > 0 ? issue.path.join(".") : "input";
-      return `${location}: ${issue.message}`;
-    })
-    .join("; ")}`;
+  return error.message;
 }
 
 /**
- * Creates the repeated raw JSON schema for proposed evidence arrays.
+ * Creates the JSON Schema fragment for one non-empty evidence set.
  *
- * @returns Strict non-empty evidence-array schema.
+ * @returns Strict model-facing evidence array schema.
  */
 function evidenceArraySchema() {
   return {

@@ -1,6 +1,6 @@
 import { cacheEvidenceResolver } from "../../core/resolver-cache.js";
 import type { EvidenceResolver } from "../../core/types.js";
-import type { GroundingContext, GroundingIssue, PageClaims } from "./types.js";
+import type { GroundingIssue, PageClaims } from "./types.js";
 import { ClaimsStore } from "./store.js";
 
 /**
@@ -8,9 +8,9 @@ import { ClaimsStore } from "./store.js";
  */
 export interface ClaimsPreflightResult {
   /**
-   * Compact prompt-facing reconciliation worklist.
+   * Page-local evidence issues surfaced only when relevant pages are read.
    */
-  context: GroundingContext;
+  issues: GroundingIssue[];
 
   /**
    * Valid persisted sidecars keyed by virtual page path.
@@ -24,7 +24,7 @@ export interface ClaimsPreflightResult {
 }
 
 /**
- * Runs global claim freshness and page synchronization checks.
+ * Runs global claim freshness checks without creating mandatory agent work.
  *
  * Each evidence resource resolves once per preflight. Resolution errors are
  * intentionally allowed to propagate so a parser or filesystem failure cannot
@@ -50,12 +50,7 @@ export async function runClaimsPreflight(
   for (const page of pages) {
     const pageClaims = persisted.get(page);
     if (!pageClaims) {
-      issues.push({ page, kind: "ungrounded-page" });
       continue;
-    }
-
-    if ((await store.hashPage(page)) !== pageClaims.pageVersion) {
-      issues.push({ page, kind: "out-of-sync-page" });
     }
 
     for (const claim of pageClaims.claims) {
@@ -92,14 +87,14 @@ export async function runClaimsPreflight(
   issues.sort(compareGroundingIssues);
   orphanPages.sort((left, right) => left.localeCompare(right));
   return {
-    context: { issues },
+    issues,
     persisted,
     orphanPages,
   };
 }
 
 /**
- * Produces deterministic prompt and test ordering for grounding issues.
+ * Produces deterministic page-read and test ordering for grounding issues.
  *
  * @param left - First issue.
  * @param right - Second issue.

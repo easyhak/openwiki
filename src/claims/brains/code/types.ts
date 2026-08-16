@@ -15,110 +15,146 @@ export interface PageClaims {
   schemaVersion: number;
 
   /**
-   * SHA-256 version of the finalized Markdown synchronized with these claims.
+   * Compatibility snapshot of the generated Markdown bytes.
+   *
+   * Hash drift is informational in schema v1 and does not create agent work.
    */
   pageVersion: string;
 
   /**
-   * Complete material claim set for the page.
+   * Complete material proposition set owned by the page.
    */
   claims: Claim[];
 }
 
 /**
- * Input accepted by the code-brain `update_claims` tool.
+ * Input accepted by the code-brain `resolve_claims` tool.
  */
-export interface UpdateClaimsInput {
+export interface ResolveClaimsInput {
   /**
    * Virtual generated-page path below `/openwiki`.
    */
   page: string;
 
   /**
-   * Atomic batch of mutations to validate and apply together.
+   * Atomic page-local mutations to validate and apply in order.
    */
   operations: ClaimOperation[];
 }
 
 /**
- * Result returned by the code-brain `fetch_claims` tool.
+ * Compact result returned after one successful page-local mutation batch.
  */
-export interface FetchClaimsResult {
+export interface ResolveClaimsResult {
   /**
-   * Current run-scoped claim revision for authoring-order validation.
-   */
-  revision: number;
-
-  /**
-   * Complete working claim set for the requested page.
-   */
-  claims: Claim[];
-}
-
-/**
- * Deterministic reason a code-brain claim or page needs reconciliation.
- */
-export type GroundingIssueKind =
-  "stale" | "unresolved" | "ungrounded-page" | "out-of-sync-page";
-
-/**
- * Compact prompt-facing code-brain grounding issue.
- */
-export interface GroundingIssue {
-  /**
-   * Generated page requiring reconciliation.
+   * Canonical generated-page path owning the mutations.
    */
   page: string;
 
   /**
-   * Deterministic issue category.
+   * Applied operations with existing or newly allocated claim identifiers.
+   */
+  results: ResolvedClaimOperation[];
+}
+
+/**
+ * Deterministic reason an existing claim may need attention.
+ */
+export type GroundingIssueKind = "stale" | "unresolved";
+
+/**
+ * Page-local evidence issue surfaced lazily when the page is read.
+ */
+export interface GroundingIssue {
+  /**
+   * Generated page that owns the affected claim.
+   */
+  page: string;
+
+  /**
+   * Current evidence failure category.
    */
   kind: GroundingIssueKind;
 
   /**
-   * Existing claim identifier when the issue belongs to one claim.
-   *
-   * @default undefined when the issue belongs to the page as a whole.
+   * Stable identifier of the affected claim.
    */
-  claimId?: string;
+  claimId: string;
 
   /**
-   * Evidence resources whose state caused a claim-level issue.
-   *
-   * @default undefined for page-level synchronization issues.
+   * Evidence resources that are stale or unresolved.
    */
-  resources?: string[];
+  resources: string[];
 }
 
 /**
- * Deterministic Claims input supplied to a code-brain update agent.
+ * Model-facing issue detail attached to an inspected claim.
  */
-export interface GroundingContext {
+export interface InspectedClaimIssue {
   /**
-   * Compact, stable-order reconciliation worklist.
+   * Current evidence failure category.
    */
-  issues: GroundingIssue[];
+  kind: GroundingIssueKind;
+
+  /**
+   * Evidence resources responsible for the issue.
+   */
+  resources: string[];
 }
 
 /**
- * Outstanding deterministic reconciliation work for one generated page.
+ * Compact model-facing representation of one claim.
  */
-export interface ReconciliationObligation {
+export interface InspectedClaim {
   /**
-   * Generated page that may not yet finish the run.
+   * Stable OpenWiki-generated claim identifier.
+   */
+  id: string;
+
+  /**
+   * Current factual proposition.
+   */
+  statement: string;
+
+  /**
+   * Resolver-owned evidence identities without opaque versions.
+   */
+  evidence: string[];
+
+  /**
+   * Lazy evidence issue when one was detected during preflight.
+   *
+   * @default undefined when no issue is known.
+   */
+  issue?: InspectedClaimIssue;
+}
+
+/**
+ * Compact inspected Claims grouped under their owning generated page.
+ */
+export interface InspectedPageClaims {
+  /**
+   * Canonical generated-page path owning the returned claims.
    */
   page: string;
 
   /**
-   * Original preflight issues whose claims still require mutation.
-   *
-   * @default an empty array when claim mutations are complete but the final
-   * page write is still missing.
+   * Selected or complete model-facing Claims for the page.
    */
-  issues: GroundingIssue[];
+  claims: InspectedClaim[];
+}
+
+/**
+ * Compact result for one successful claim mutation.
+ */
+export interface ResolvedClaimOperation {
+  /**
+   * Applied operation discriminator.
+   */
+  op: ClaimOperation["op"];
 
   /**
-   * Whether the page still requires a final fetch followed by a write or deletion.
+   * Existing or newly allocated stable claim identifier.
    */
-  requiresPageWrite: boolean;
+  id: string;
 }

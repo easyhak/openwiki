@@ -2,20 +2,21 @@ import { randomUUID } from "node:crypto";
 import { ClaimSessionError } from "../../core/errors.js";
 import { applyClaimOperations, cloneClaims } from "../../core/mutations.js";
 import { cacheEvidenceResolver } from "../../core/resolver-cache.js";
+import type { Claim, EvidenceResolver } from "../../core/types.js";
 import { normalizeWikiPagePath } from "./paths.js";
 import { ClaimsStore } from "./store.js";
-import type { Claim, EvidenceResolver } from "../../core/types.js";
-import type {
-  FetchClaimsResult,
-  GroundingIssue,
-  PageClaims,
-  ReconciliationObligation,
-  UpdateClaimsInput,
+import {
+  CODE_CLAIMS_SCHEMA_VERSION,
+  type GroundingIssue,
+  type InspectedClaim,
+  type InspectedPageClaims,
+  type PageClaims,
+  type ResolveClaimsInput,
+  type ResolveClaimsResult,
 } from "./types.js";
-import { CODE_CLAIMS_SCHEMA_VERSION } from "./types.js";
 
 /**
- * Injectable Claim session options.
+ * Injectable dependencies and persisted state for one Claims session.
  */
 export interface ClaimSessionOptions {
   /**
@@ -29,102 +30,59 @@ export interface ClaimSessionOptions {
   persisted: Map<string, PageClaims>;
 
   /**
-   * Deterministic preflight issues requiring reconciliation.
+   * Lazy page-local evidence issues detected during preflight.
    */
   issues: GroundingIssue[];
 
   /**
-   * Sidecars whose Markdown pages no longer exist.
+   * Sidecars whose generated Markdown pages no longer exist.
    */
   orphanPages: string[];
 
   /**
    * Identifier factory used for newly added claims.
    *
-   * @default a `claim_`-prefixed cryptographically random UUID.
+   * @default A `claim_`-prefixed cryptographically random UUID.
    */
   createClaimId?: () => string;
 }
 
 /**
- * Internal mutable state for one generated page during one run.
+ * Mutable run-scoped state for one generated page.
  */
 interface WorkingPageState {
   /**
-   * Complete current working claim set.
+   * Complete current proposition set.
    */
   claims: Claim[];
 
   /**
-   * Completion gate for the latest queued mutation on this page.
+   * Completion gate for the latest queued mutation.
    */
   pendingMutation: Promise<void>;
 
   /**
-   * Monotonic claim revision incremented after every successful mutation batch.
+   * Whether claim state changed and requires persistence.
    */
-  revision: number;
+  dirty: boolean;
 
   /**
-   * Most recent revision returned through `fetch_claims`.
-   *
-   * @default undefined until the agent fetches this page's claims.
-   */
-  fetchedRevision?: number;
-
-  /**
-   * Claim revision used by the latest successful Markdown write.
-   *
-   * @default undefined until the page is written after a matching fetch.
-   */
-  writtenRevision?: number;
-
-  /**
-   * Whether the page was deleted after fetching an empty claim set.
-   *
-   * @default false.
+   * Whether the owning Markdown page was successfully deleted.
    */
   deleted: boolean;
 
   /**
-   * Whether deterministic preflight requires agent-owned reconciliation.
+   * Evidence issues not yet resolved by a claim operation.
    */
-  requiresReconciliation: boolean;
-
-  /**
-   * Preflight claim issues not yet targeted by a successful mutation.
-   */
-  pendingIssues: GroundingIssue[];
+  issues: GroundingIssue[];
 }
 
 /**
- * One synchronized page frozen for a finalization pass.
- */
-interface FinalizablePage {
-  /**
-   * Canonical generated-page path.
-   */
-  page: string;
-
-  /**
-   * Mutable run state selected at the start of finalization.
-   */
-  state: WorkingPageState;
-
-  /**
-   * Hash of the finalized Markdown.
-   *
-   * @default undefined when the page was deleted.
-   */
-  pageVersion?: string;
-}
-
-/**
- * Run-scoped authoritative working claim state.
+ * Run-scoped claim state with lazy inspection and dirty-only persistence.
  */
 export class ClaimSession {
   /**
-   * Deterministic evidence resolver.
+   * Deterministic repository evidence resolver.
    */
   private readonly resolver: EvidenceResolver;
 
@@ -134,7 +92,12 @@ export class ClaimSession {
   private readonly pages = new Map<string, WorkingPageState>();
 
   /**
-   * Sidecars eligible for successful-run orphan cleanup.
+   * Current generated-page owner for every globally unique claim identifier.
+   */
+  private readonly claimOwners = new Map<string, string>();
+
+  /**
+   * Sidecars eligible for deterministic successful-run cleanup.
    */
   private readonly orphanPages: string[];
 
@@ -143,6 +106,11 @@ export class ClaimSession {
    */
   private readonly createClaimId: () => string;
 
+  /**
+   * Creates a run-scoped Claims session from persisted state and preflight.
+   *
+   * @param options - Resolver, persisted claims, lazy issues, and orphan pages.
+   */
   constructor(options: ClaimSessionOptions) {
     this.resolver = options.resolver;
     this.orphanPages = [
@@ -152,308 +120,218 @@ export class ClaimSession {
       options.createClaimId ??
       (() => `claim_${randomUUID().replaceAll("-", "")}`);
 
-    const issuePages = new Set(
-      options.issues.map((issue) => normalizeWikiPagePath(issue.page)),
-    );
-    for (const [page, persisted] of options.persisted) {
-      const normalizedPage = normalizeWikiPagePath(page);
-      if (this.pages.has(normalizedPage)) {
-        throw new ClaimSessionError(
-          `Duplicate persisted claim page: ${normalizedPage}`,
-        );
+    for (const [pageInput, persisted] of options.persisted) {
+      const page = normalizeWikiPagePath(pageInput);
+      if (this.pages.has(page)) {
+        throw new ClaimSessionError(`Duplicate persisted claim page: ${page}`);
       }
-      this.pages.set(normalizedPage, {
+      this.assertClaimOwnershipAvailable(page, persisted.claims);
+      for (const claim of persisted.claims) {
+        this.claimOwners.set(claim.id, page);
+      }
+      this.pages.set(page, {
         claims: cloneClaims(persisted.claims),
         pendingMutation: Promise.resolve(),
-        revision: 0,
+        dirty: false,
         deleted: false,
-        requiresReconciliation: issuePages.has(normalizedPage),
-        pendingIssues: options.issues
-          .filter(
-            (issue) => normalizeWikiPagePath(issue.page) === normalizedPage,
-          )
+        issues: options.issues
+          .filter((issue) => normalizeWikiPagePath(issue.page) === page)
           .map(cloneGroundingIssue),
       });
-    }
-    for (const page of issuePages) {
-      if (!this.pages.has(page)) {
-        this.pages.set(page, {
-          claims: [],
-          pendingMutation: Promise.resolve(),
-          revision: 0,
-          deleted: false,
-          requiresReconciliation: true,
-          pendingIssues: options.issues
-            .filter((issue) => normalizeWikiPagePath(issue.page) === page)
-            .map(cloneGroundingIssue),
-        });
-      }
     }
   }
 
   /**
-   * Validates, resolves, and atomically applies a claim mutation batch.
+   * Atomically validates, resolves, and applies a page-local mutation batch.
    *
-   * @param input - Page and ordered claim operations.
-   * @returns Canonical page and new run-scoped claim revision.
+   * Successful operations mark only the owning page dirty and clear issues for
+   * the claim identifiers they target.
+   *
+   * @param input - Canonical page and ordered claim operations.
+   * @returns Canonical page and compact per-operation results.
    */
-  async updateClaims(input: UpdateClaimsInput): Promise<{
-    /**
-     * Canonical virtual page path.
-     */
-    page: string;
-
-    /**
-     * New run-scoped claim revision.
-     */
-    revision: number;
-  }> {
+  async resolveClaims(input: ResolveClaimsInput): Promise<ResolveClaimsResult> {
     const page = normalizeWikiPagePath(input.page);
-    const current = this.getOrCreatePage(page);
-    const previousMutation = current.pendingMutation;
+    const state = this.getOrCreatePage(page);
+    const previousMutation = state.pendingMutation;
     let releaseMutation = (): void => undefined;
-    current.pendingMutation = new Promise<void>((resolve) => {
+    state.pendingMutation = new Promise<void>((resolve) => {
       releaseMutation = resolve;
     });
     await previousMutation;
 
     try {
-      current.claims = await applyClaimOperations({
-        claims: current.claims,
+      const existingIds = new Set(state.claims.map(({ id }) => id));
+      const previousClaims = state.claims;
+      const nextClaims = await applyClaimOperations({
+        claims: state.claims,
         operations: input.operations,
         resolver: this.resolver,
-        createClaimId: this.createClaimId,
+        createClaimId: () => this.allocateClaimId(),
       });
-      current.revision += 1;
-      current.fetchedRevision = undefined;
-      current.writtenRevision = undefined;
-      current.deleted = false;
-      current.requiresReconciliation = true;
-      const targetedClaimIds = new Set(
-        input.operations.flatMap((operation) =>
-          operation.op === "add" ? [] : [operation.id],
-        ),
+      this.assertClaimOwnershipAvailable(page, nextClaims);
+      this.replaceClaimOwnership(page, previousClaims, nextClaims);
+      state.claims = nextClaims;
+      const allocatedIds = nextClaims
+        .map(({ id }) => id)
+        .filter((id) => !existingIds.has(id));
+      let nextAllocatedId = 0;
+      const results = input.operations.map((operation) => ({
+        op: operation.op,
+        id:
+          operation.op === "add"
+            ? allocatedIds[nextAllocatedId++]
+            : operation.id,
+      }));
+      state.dirty = true;
+      state.deleted = false;
+      const targetedIds = new Set(results.map(({ id }) => id));
+      state.issues = state.issues.filter(
+        (issue) => !targetedIds.has(issue.claimId),
       );
-      current.pendingIssues = current.pendingIssues.filter(
-        (issue) =>
-          issue.claimId === undefined || !targetedClaimIds.has(issue.claimId),
-      );
-      return { page, revision: current.revision };
+      return { page, results };
     } finally {
       releaseMutation();
     }
   }
 
   /**
-   * Returns and records the authoritative claim revision used for page writing.
+   * Returns compact claim state without creating a write obligation.
    *
    * @param pageInput - Virtual generated-page path.
-   * @returns Complete cloned claim state and current revision.
+   * @returns Complete cloned model-facing claims without opaque evidence versions.
    */
-  fetchClaims(pageInput: string): FetchClaimsResult {
+  inspectClaims(pageInput: string): InspectedClaim[] {
     const page = normalizeWikiPagePath(pageInput);
     const state = this.getOrCreatePage(page);
-    state.fetchedRevision = state.revision;
-    return {
-      revision: state.revision,
-      claims: cloneClaims(state.claims),
-    };
+    if (state.deleted) {
+      return [];
+    }
+    return state.claims.map((claim) => toInspectedClaim(claim, state.issues));
   }
 
   /**
-   * Returns factual constraints for an OpenWiki-owned translation.
+   * Returns selected Claims by globally unique identifier, grouped by owner.
    *
-   * A code-owned translation may bypass the agent fetch tool only when the page
-   * existed in valid persisted state and deterministic preflight found no issue.
+   * The first occurrence of each identifier determines response order. Repeated
+   * identifiers are ignored so an accidental duplicate does not enlarge the
+   * model-facing payload.
+   *
+   * @param ids - Stable claim identifiers from one or more page read notes.
+   * @returns Selected Claims grouped under their canonical generated pages.
+   */
+  inspectClaimsByIds(ids: readonly string[]): InspectedPageClaims[] {
+    const grouped = new Map<string, InspectedClaim[]>();
+    for (const id of new Set(ids)) {
+      const page = this.claimOwners.get(id);
+      const state = page ? this.pages.get(page) : undefined;
+      const claim = state?.claims.find((candidate) => candidate.id === id);
+      if (!page || !state || state.deleted || !claim) {
+        throw new ClaimSessionError(`Unknown claim id: ${id}`);
+      }
+      const claims = grouped.get(page) ?? [];
+      claims.push(toInspectedClaim(claim, state.issues));
+      grouped.set(page, claims);
+    }
+    return [...grouped].map(([page, claims]) => ({ page, claims }));
+  }
+
+  /**
+   * Formats a non-persisted read note for page-local evidence debt.
    *
    * @param pageInput - Virtual generated-page path.
-   * @returns Complete cloned claims, or `null` when the agent must reconcile it.
+   * @returns Compact note for the model, or `undefined` when no issue remains.
+   */
+  getReadNote(pageInput: string): string | undefined {
+    const page = normalizeWikiPagePath(pageInput);
+    const issues = this.pages.get(page)?.issues ?? [];
+    if (issues.length === 0) {
+      return undefined;
+    }
+    const summary = issues
+      .map((issue) => `${issue.claimId} (${issue.kind})`)
+      .join(", ");
+    return `[OpenWiki Claims: ${summary}. Inspect and resolve only claims relevant to this task; this note is not part of the file.]`;
+  }
+
+  /**
+   * Returns existing factual constraints for deterministic translation.
+   *
+   * Translation may use claims with lazy evidence debt because it changes
+   * language rather than repository facts.
+   *
+   * @param pageInput - Virtual generated-page path.
+   * @returns Cloned claims, or `null` when the page has no claim state.
    */
   getOwnedTranslationClaims(pageInput: string): Claim[] | null {
-    const page = normalizeWikiPagePath(pageInput);
-    const state = this.pages.get(page);
-    if (!state || state.requiresReconciliation) {
-      return null;
-    }
-    return cloneClaims(state.claims);
+    const state = this.pages.get(normalizeWikiPagePath(pageInput));
+    return state && !state.deleted ? cloneClaims(state.claims) : null;
   }
 
   /**
-   * Verifies that the agent fetched the exact current revision before a page write.
+   * Records a successful Markdown deletion so its sidecar follows automatically.
    *
-   * @param pageInput - Virtual generated-page path.
+   * @param pageInput - Virtual generated-page path confirmed by the backend.
    */
-  assertReadyForWrite(pageInput: string): void {
+  async recordDeletion(pageInput: string): Promise<void> {
     const page = normalizeWikiPagePath(pageInput);
     const state = this.getOrCreatePage(page);
-    if (state.fetchedRevision !== state.revision) {
-      throw new ClaimSessionError(
-        `Call fetch_claims for ${page} before writing or deleting it.`,
-      );
-    }
-  }
-
-  /**
-   * Verifies fetch ordering and an empty claim set before page deletion.
-   *
-   * @param pageInput - Virtual generated-page path.
-   */
-  assertReadyForDeletion(pageInput: string): void {
-    const page = normalizeWikiPagePath(pageInput);
-    this.assertReadyForWrite(page);
-    const state = this.getOrCreatePage(page);
-    if (state.claims.length > 0) {
-      throw new ClaimSessionError(
-        `Delete all claims for ${page} with update_claims before deleting the page. Its empty authoritative result authorizes immediate deletion.`,
-      );
-    }
-  }
-
-  /**
-   * Records a successful agent Markdown write at the fetched revision.
-   *
-   * @param pageInput - Virtual generated-page path.
-   */
-  recordWrite(pageInput: string): void {
-    const page = normalizeWikiPagePath(pageInput);
-    this.assertReadyForWrite(page);
-    const state = this.getOrCreatePage(page);
-    state.writtenRevision = state.revision;
-    state.deleted = false;
-    this.recordPageReconciliation(state);
-  }
-
-  /**
-   * Records a successful deletion after the agent removed every page claim.
-   *
-   * @param pageInput - Virtual generated-page path.
-   */
-  recordDeletion(pageInput: string): void {
-    const page = normalizeWikiPagePath(pageInput);
-    this.assertReadyForDeletion(page);
-    const state = this.getOrCreatePage(page);
-    state.writtenRevision = state.revision;
+    await state.pendingMutation;
+    this.replaceClaimOwnership(page, state.claims, []);
     state.deleted = true;
-    this.recordPageReconciliation(state);
+    state.dirty = false;
+    state.issues = [];
   }
 
   /**
-   * Records a Claims-constrained OpenWiki-owned translation.
+   * Persists explicitly changed claims and removes deleted or orphaned sidecars.
    *
-   * This records only the code-owned write; a later agent edit still requires
-   * its own `fetch_claims` call.
+   * Every dirty page is rechecked against current evidence and its Markdown is
+   * hashed before any sidecar is changed. Unrelated claim state remains intact.
    *
-   * @param pageInput - Virtual generated-page path.
+   * @param store - OpenWiki-owned Claims persistence.
    */
-  recordOwnedTranslation(pageInput: string): void {
-    const page = normalizeWikiPagePath(pageInput);
-    if (this.getOwnedTranslationClaims(page) === null) {
-      throw new ClaimSessionError(
-        `Cannot translate ${page} outside agent reconciliation.`,
-      );
-    }
-    const state = this.pages.get(page);
-    if (!state) {
-      throw new ClaimSessionError(`Missing working state for ${page}.`);
-    }
-    state.fetchedRevision = undefined;
-    state.writtenRevision = state.revision;
-    state.deleted = false;
-  }
-
-  /**
-   * Returns every page that still prevents deterministic run completion.
-   *
-   * Fetching Claims does not discharge an obligation. Claim-level issues leave
-   * the ledger only after a successful update or deletion, and the page leaves
-   * only after a successful write or deletion at the final fetched revision.
-   *
-   * @returns Stable-order cloned reconciliation obligations.
-   */
-  async getOutstandingReconciliation(): Promise<ReconciliationObligation[]> {
-    const outstanding: ReconciliationObligation[] = [];
-
-    for (const [page, state] of this.pages) {
-      await state.pendingMutation;
-      if (!state.requiresReconciliation) {
-        continue;
-      }
-      outstanding.push({
-        page,
-        issues: state.pendingIssues.map(cloneGroundingIssue),
-        requiresPageWrite:
-          state.writtenRevision !== state.revision ||
-          state.pendingIssues.length > 0,
-      });
-    }
-
-    return outstanding.sort((left, right) =>
-      left.page.localeCompare(right.page),
-    );
-  }
-
-  /**
-   * Persists pages synchronized during this run and reports unfinished work.
-   *
-   * Unfinished pages keep their prior sidecars so deterministic preflight can
-   * surface them again on a future update. Every eligible completed page is
-   * rechecked against current evidence and finalized Markdown before any
-   * sidecars are mutated.
-   *
-   * @param store - OpenWiki-owned claim persistence.
-   * @returns Stable-order reconciliation work left unfinished by the agent.
-   */
-  async finalize(store: ClaimsStore): Promise<ReconciliationObligation[]> {
-    const outstanding = await this.getOutstandingReconciliation();
-    const outstandingPages = new Set(outstanding.map((item) => item.page));
-    const ready: FinalizablePage[] = [];
+  async finalize(store: ClaimsStore): Promise<void> {
     const resolver = cacheEvidenceResolver(this.resolver);
+    const ready: Array<{
+      page: string;
+      state: WorkingPageState;
+      hash: string;
+    }> = [];
 
     for (const [page, state] of this.pages) {
       await state.pendingMutation;
-      if (
-        outstandingPages.has(page) ||
-        state.writtenRevision !== state.revision
-      ) {
+      if (state.deleted || !state.dirty) {
         continue;
       }
       await this.assertEvidenceStillCurrent(page, state.claims, resolver);
-      ready.push({
-        page,
-        state,
-        pageVersion: state.deleted ? undefined : await store.hashPage(page),
-      });
+      ready.push({ page, state, hash: await store.hashPage(page) });
     }
 
     for (const orphan of this.orphanPages) {
       await store.deletePage(orphan);
     }
-
-    for (const item of ready) {
-      if (item.state.deleted) {
-        await store.deletePage(item.page);
-        continue;
+    for (const [page, state] of this.pages) {
+      if (state.deleted) {
+        await store.deletePage(page);
       }
-      if (!item.pageVersion) {
-        throw new ClaimSessionError(
-          `Missing finalized page version for ${item.page}.`,
-        );
-      }
-      await store.writePage(item.page, {
-        schemaVersion: CODE_CLAIMS_SCHEMA_VERSION,
-        pageVersion: item.pageVersion,
-        claims: cloneClaims(item.state.claims),
-      });
     }
-    return outstanding;
+    for (const { page, state, hash } of ready) {
+      await store.writePage(page, {
+        schemaVersion: CODE_CLAIMS_SCHEMA_VERSION,
+        pageVersion: hash,
+        claims: cloneClaims(state.claims),
+      });
+      state.dirty = false;
+    }
   }
 
   /**
-   * Verifies that a page's evidence still matches the versions accepted this run.
+   * Verifies that dirty claims still match the evidence accepted this run.
    *
-   * @param page - Canonical virtual generated-page path.
+   * @param page - Canonical generated-page path used in diagnostics.
    * @param claims - Complete claims about to be persisted.
-   * @param resolver - Current finalization-pass cached evidence resolver.
+   * @param resolver - Finalization-pass cached evidence resolver.
    */
   private async assertEvidenceStillCurrent(
     page: string,
@@ -478,10 +356,10 @@ export class ClaimSession {
   }
 
   /**
-   * Gets or initializes empty page state for a newly planned page.
+   * Gets or initializes empty working state for a newly claimed page.
    *
-   * @param page - Canonical virtual generated-page path.
-   * @returns Mutable run-scoped page state.
+   * @param page - Canonical generated-page path.
+   * @returns Existing or newly allocated mutable page state.
    */
   private getOrCreatePage(page: string): WorkingPageState {
     const existing = this.pages.get(page);
@@ -491,39 +369,119 @@ export class ClaimSession {
     const created: WorkingPageState = {
       claims: [],
       pendingMutation: Promise.resolve(),
-      revision: 0,
+      dirty: false,
       deleted: false,
-      requiresReconciliation: true,
-      pendingIssues: [],
+      issues: [],
     };
     this.pages.set(page, created);
     return created;
   }
 
   /**
-   * Clears page-level issues and closes a fully reconciled page obligation.
+   * Allocates an identifier that is unused across every current page.
    *
-   * @param state - Page state after a successful final write or deletion.
+   * The core mutation layer separately protects against duplicates created
+   * within one operation batch. This guard covers identifiers already owned by
+   * other generated pages.
+   *
+   * @returns Globally unused OpenWiki-owned claim identifier.
    */
-  private recordPageReconciliation(state: WorkingPageState): void {
-    state.pendingIssues = state.pendingIssues.filter(
-      (issue) => issue.claimId !== undefined,
+  private allocateClaimId(): string {
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const id = this.createClaimId();
+      if (!this.claimOwners.has(id)) {
+        return id;
+      }
+    }
+    throw new ClaimSessionError(
+      "Unable to allocate a globally unique claim identifier.",
     );
-    if (state.pendingIssues.length === 0) {
-      state.requiresReconciliation = false;
+  }
+
+  /**
+   * Rejects a page state containing an identifier owned by another page.
+   *
+   * @param page - Canonical page that would own the supplied claims.
+   * @param claims - Proposed complete claim state for that page.
+   */
+  private assertClaimOwnershipAvailable(
+    page: string,
+    claims: readonly Claim[],
+  ): void {
+    const pageIds = new Set<string>();
+    for (const claim of claims) {
+      if (pageIds.has(claim.id)) {
+        throw new ClaimSessionError(
+          `Duplicate claim id ${claim.id} within ${page}`,
+        );
+      }
+      pageIds.add(claim.id);
+      const owner = this.claimOwners.get(claim.id);
+      if (owner && owner !== page) {
+        throw new ClaimSessionError(
+          `Duplicate claim id ${claim.id} across ${owner} and ${page}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Replaces the global identifier ownership contributed by one page.
+   *
+   * @param page - Canonical page whose complete state changed.
+   * @param previousClaims - Claims owned before the change.
+   * @param nextClaims - Claims owned after the change.
+   */
+  private replaceClaimOwnership(
+    page: string,
+    previousClaims: readonly Claim[],
+    nextClaims: readonly Claim[],
+  ): void {
+    const nextIds = new Set(nextClaims.map(({ id }) => id));
+    for (const { id } of previousClaims) {
+      if (!nextIds.has(id) && this.claimOwners.get(id) === page) {
+        this.claimOwners.delete(id);
+      }
+    }
+    for (const { id } of nextClaims) {
+      this.claimOwners.set(id, page);
     }
   }
 }
 
 /**
+ * Removes opaque evidence versions from one model-facing claim clone.
+ *
+ * @param claim - Authoritative current claim.
+ * @param issues - Page-local evidence issues detected during preflight.
+ * @returns Detached compact claim suitable for tool output.
+ */
+function toInspectedClaim(
+  claim: Claim,
+  issues: readonly GroundingIssue[],
+): InspectedClaim {
+  const issue = issues.find((item) => item.claimId === claim.id);
+  return {
+    id: claim.id,
+    statement: claim.statement,
+    evidence: claim.evidence.map(({ resource }) => resource),
+    ...(issue
+      ? {
+          issue: {
+            kind: issue.kind,
+            resources: [...issue.resources],
+          },
+        }
+      : {}),
+  };
+}
+
+/**
  * Clones one grounding issue across session ownership boundaries.
  *
- * @param issue - Grounding issue to clone.
- * @returns Structurally independent issue.
+ * @param issue - Persisted preflight issue.
+ * @returns Structurally independent issue state.
  */
 function cloneGroundingIssue(issue: GroundingIssue): GroundingIssue {
-  return {
-    ...issue,
-    resources: issue.resources ? [...issue.resources] : undefined,
-  };
+  return { ...issue, resources: [...issue.resources] };
 }

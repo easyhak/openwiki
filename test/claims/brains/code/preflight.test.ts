@@ -92,19 +92,17 @@ describe("runClaimsPreflight", () => {
     };
   }
 
-  test("treats existing pages without sidecars as ungrounded migration work", async () => {
+  test("does not turn pages without sidecars into mandatory work", async () => {
     await writePage("/openwiki/quickstart.md", "# Quickstart\n");
     const store = new ClaimsStore(rootDir);
 
     const result = await runClaimsPreflight(store, createResolver(new Map()));
 
-    expect(result.context.issues).toEqual([
-      { page: "/openwiki/quickstart.md", kind: "ungrounded-page" },
-    ]);
+    expect(result.issues).toEqual([]);
     expect(result.persisted.size).toBe(0);
   });
 
-  test("reports no issue for synchronized empty claims and one issue after a Markdown edit", async () => {
+  test("ignores page hash drift", async () => {
     const page = "/openwiki/page.md";
     await writePage(page, "# Page\n");
     const store = new ClaimsStore(rootDir);
@@ -117,10 +115,8 @@ describe("runClaimsPreflight", () => {
     await writePage(page, "# Page changed\n");
     const changed = await runClaimsPreflight(store, createResolver(new Map()));
 
-    expect(synchronized.context.issues).toEqual([]);
-    expect(changed.context.issues).toEqual([
-      { page, kind: "out-of-sync-page" },
-    ]);
+    expect(synchronized.issues).toEqual([]);
+    expect(changed.issues).toEqual([]);
   });
 
   test("classifies stale and unresolved claims with unresolved precedence", async () => {
@@ -165,7 +161,7 @@ describe("runClaimsPreflight", () => {
 
     const result = await runClaimsPreflight(store, resolver);
 
-    expect(result.context.issues).toEqual([
+    expect(result.issues).toEqual([
       {
         page,
         kind: "stale",
@@ -237,7 +233,7 @@ describe("runClaimsPreflight", () => {
     await expect(store.loadPage(orphanPage)).resolves.not.toBeNull();
   });
 
-  test("classifies a page rename as one orphan and one ungrounded page", async () => {
+  test("classifies a page rename only as an orphan sidecar", async () => {
     const oldPage = "/openwiki/old-name.md";
     const newPage = "/openwiki/new-name.md";
     await writePage(newPage, "# Renamed\n");
@@ -250,9 +246,7 @@ describe("runClaimsPreflight", () => {
 
     const result = await runClaimsPreflight(store, createResolver(new Map()));
 
-    expect(result.context.issues).toEqual([
-      { page: newPage, kind: "ungrounded-page" },
-    ]);
+    expect(result.issues).toEqual([]);
     expect(result.orphanPages).toEqual([oldPage]);
     await expect(store.loadPage(oldPage)).resolves.not.toBeNull();
   });
@@ -283,9 +277,7 @@ describe("runClaimsPreflight", () => {
       ),
     );
 
-    expect(result.context.issues).toEqual([
-      { page: alpha, kind: "ungrounded-page" },
-      { page: zeta, kind: "out-of-sync-page" },
+    expect(result.issues).toEqual([
       {
         page: zeta,
         kind: "stale",

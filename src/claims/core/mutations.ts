@@ -75,33 +75,23 @@ export async function applyClaimOperations(
   }
 
   for (const [index, operation] of input.operations.entries()) {
-    if (operation.op === "add" || operation.op === "update") {
-      const evidence: Evidence[] = [];
-      const resources = new Set<string>();
-      const resolvedResources = new Set<string>();
-      for (const proposed of operation.evidence) {
-        if (resources.has(proposed.resource)) {
-          throw new ClaimSessionError(
-            `Claim evidence repeats ${proposed.resource}`,
-          );
-        }
-        resources.add(proposed.resource);
-        const resolved = await resolver.resolve(proposed.resource);
-        if (!resolved) {
-          throw new ClaimSessionError(
-            `Evidence does not resolve: ${proposed.resource}`,
-          );
-        }
-        validateEvidence(resolved.evidence, "Resolved evidence");
-        if (resolvedResources.has(resolved.evidence.resource)) {
-          throw new ClaimSessionError(
-            `Claim evidence resolves to duplicate resource ${resolved.evidence.resource}`,
-          );
-        }
-        resolvedResources.add(resolved.evidence.resource);
-        evidence.push(resolved.evidence);
+    if (operation.op === "add") {
+      resolvedByOperation.set(
+        index,
+        await resolveEvidence(operation.evidence, resolver),
+      );
+      continue;
+    }
+    if (operation.op === "confirm" || operation.op === "update") {
+      const current = working.find((claim) => claim.id === operation.id);
+      if (!current) {
+        throw new ClaimSessionError(`Unknown claim id: ${operation.id}`);
       }
-      resolvedByOperation.set(index, evidence);
+      const proposed =
+        operation.op === "update" && operation.evidence !== undefined
+          ? operation.evidence
+          : current.evidence.map(({ resource }) => ({ resource }));
+      resolvedByOperation.set(index, await resolveEvidence(proposed, resolver));
     }
   }
 
@@ -119,18 +109,61 @@ export async function applyClaimOperations(
     if (claimIndex === -1) {
       throw new ClaimSessionError(`Unknown claim id: ${operation.id}`);
     }
-    if (operation.op === "delete") {
+    if (operation.op === "retract") {
       working.splice(claimIndex, 1);
       continue;
     }
+    const current = working[claimIndex];
     working[claimIndex] = {
       id: operation.id,
-      statement: operation.statement.trim(),
+      statement:
+        operation.op === "update" && operation.statement !== undefined
+          ? operation.statement.trim()
+          : current.statement,
       evidence: requireResolvedEvidence(resolvedByOperation, index),
     };
   }
 
   return cloneClaims(working);
+}
+
+/**
+ * Resolves and validates one complete proposed evidence set.
+ *
+ * @param proposedEvidence - Resolver-owned identities proposed for one claim.
+ * @param resolver - Cached resolver for the owning evidence namespace.
+ * @returns Canonical evidence identities and their current versions.
+ */
+async function resolveEvidence(
+  proposedEvidence: readonly { resource: string }[],
+  resolver: EvidenceResolver,
+): Promise<Evidence[]> {
+  const evidence: Evidence[] = [];
+  const resources = new Set<string>();
+  const resolvedResources = new Set<string>();
+  for (const proposed of proposedEvidence) {
+    if (resources.has(proposed.resource)) {
+      throw new ClaimSessionError(
+        `Claim evidence repeats ${proposed.resource}`,
+      );
+    }
+    resources.add(proposed.resource);
+    const resolved = await resolver.resolve(proposed.resource);
+    if (!resolved) {
+      throw new ClaimSessionError(
+        `Evidence does not resolve: ${proposed.resource}`,
+      );
+    }
+    validateEvidence(resolved.evidence, "Resolved evidence");
+    if (resolvedResources.has(resolved.evidence.resource)) {
+      throw new ClaimSessionError(
+        `Claim evidence resolves to duplicate resource ${resolved.evidence.resource}`,
+      );
+    }
+    resolvedResources.add(resolved.evidence.resource);
+    evidence.push(resolved.evidence);
+  }
+  return evidence;
 }
 
 /**
@@ -200,22 +233,34 @@ function requireResolvedEvidence(
  * @param operation - Proposed claim operation.
  */
 function validateOperation(operation: ClaimOperation): void {
-  if (operation.op === "delete") {
-    requireCanonicalNonEmpty(operation.id, "Delete claim id");
+  if (operation.op === "retract") {
+    requireCanonicalNonEmpty(operation.id, "Retract claim id");
+    return;
+  }
+  if (operation.op === "confirm") {
+    requireCanonicalNonEmpty(operation.id, "Confirm claim id");
     return;
   }
   if (operation.op === "update") {
     requireCanonicalNonEmpty(operation.id, "Update claim id");
+    if (operation.statement === undefined && operation.evidence === undefined) {
+      throw new ClaimSessionError(
+        "An update requires a statement or evidence change.",
+      );
+    }
   }
-  if (!operation.statement.trim()) {
+  if (operation.op !== "add" && operation.op !== "update") {
+    throw new ClaimSessionError("Unsupported claim operation.");
+  }
+  if (operation.statement !== undefined && !operation.statement.trim()) {
     throw new ClaimSessionError("Claim statement cannot be empty.");
   }
-  if (operation.evidence.length === 0) {
+  if (operation.evidence !== undefined && operation.evidence.length === 0) {
     throw new ClaimSessionError(
       "A claim requires at least one evidence resource.",
     );
   }
-  for (const proposed of operation.evidence) {
+  for (const proposed of operation.evidence ?? []) {
     requireCanonicalNonEmpty(proposed.resource, "Proposed evidence resource");
   }
 }

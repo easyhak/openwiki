@@ -185,18 +185,15 @@ export async function runOpenWikiAgent(
   emitDebug(
     options,
     claimsRuntime
-      ? `claims.issues=${claimsRuntime.context.issues.length}`
+      ? `claims.issues=${claimsRuntime.issueCount}`
       : "claims=disabled",
   );
 
   if (command === "update" && shouldCheckUpdateNoop(options)) {
-    const noopStatus = await getUpdateNoopStatus(
-      runtimeCwd,
-      openWikiIgnore,
-      claimsRuntime?.requiresAttention ?? false,
-    );
+    const noopStatus = await getUpdateNoopStatus(runtimeCwd, openWikiIgnore);
 
     if (noopStatus.shouldSkip) {
+      await claimsRuntime?.finalize();
       const message =
         "No repository changes detected since the last OpenWiki update; skipping agent run.";
       emitDebug(options, `update.noop gitHead=${noopStatus.gitHead}`);
@@ -579,13 +576,7 @@ async function runOpenWikiAgentCore(
     messages: [
       {
         role: "user",
-        content: createRunUserMessage(
-          command,
-          cwd,
-          context,
-          options,
-          claimsRuntime,
-        ),
+        content: createRunUserMessage(command, cwd, context, options),
       },
     ],
   };
@@ -699,18 +690,7 @@ async function runOpenWikiAgentCore(
   try {
     metadataWritten = await inStage("finalize", async () => {
       await cleanupTemporaryPlanFile(command, cwd, outputMode, options);
-      if (claimsRuntime) {
-        const outstanding = await claimsRuntime.finalize();
-        if (outstanding.length > 0) {
-          const pages = outstanding.map((item) => item.page).join(", ");
-          const message = `Claims reconciliation remains unfinished for ${outstanding.length} page${outstanding.length === 1 ? "" : "s"}; completed pages were persisted and unfinished pages will be retried on a future update: ${pages}`;
-          emitDebug(
-            options,
-            `claims.reconciliation=unfinished pages=${outstanding.length}`,
-          );
-          options.onEvent?.({ type: "text", text: message });
-        }
-      }
+      await claimsRuntime?.finalize();
       return persistRunMetadataIfChanged(
         command,
         cwd,
@@ -787,7 +767,6 @@ function createRunUserMessage(
   cwd: string,
   context: Awaited<ReturnType<typeof createRunContext>>,
   options: OpenWikiRunOptions,
-  claimsRuntime?: ClaimsRuntime,
 ): string {
   if (options.isFollowup === true && options.userMessage?.trim()) {
     return options.userMessage.trim();
@@ -799,7 +778,6 @@ function createRunUserMessage(
     options.userMessage ?? null,
     options.outputMode ?? "local-wiki",
     cwd,
-    claimsRuntime?.context,
   );
 }
 

@@ -64,7 +64,22 @@ export interface AddClaimOperation {
 }
 
 /**
- * Replaces the statement and evidence of an existing stable claim.
+ * Confirms an existing claim against the current versions of its evidence.
+ */
+export interface ConfirmClaimOperation {
+  /**
+   * Operation discriminator.
+   */
+  op: "confirm";
+
+  /**
+   * Stable identifier of the claim to confirm.
+   */
+  id: string;
+}
+
+/**
+ * Partially revises an existing stable claim.
  */
 export interface UpdateClaimOperation {
   /**
@@ -73,41 +88,48 @@ export interface UpdateClaimOperation {
   op: "update";
 
   /**
-   * Stable identifier of the claim to replace.
+   * Stable identifier of the claim to revise.
    */
   id: string;
 
   /**
-   * Current atomic factual proposition.
+   * Replacement proposition.
+   *
+   * @default The current statement is retained.
    */
-  statement: string;
+  statement?: string;
 
   /**
-   * Current source resources that jointly support the proposition.
+   * Replacement source resources.
+   *
+   * @default The current resources are retained and their versions refreshed.
    */
-  evidence: ProposedEvidence[];
+  evidence?: ProposedEvidence[];
 }
 
 /**
- * Deletes an existing stable claim.
+ * Retracts an existing stable claim.
  */
-export interface DeleteClaimOperation {
+export interface RetractClaimOperation {
   /**
    * Operation discriminator.
    */
-  op: "delete";
+  op: "retract";
 
   /**
-   * Stable identifier of the claim to delete.
+   * Stable identifier of the claim to retract.
    */
   id: string;
 }
 
 /**
- * One atomic mutation accepted by `update_claims`.
+ * One atomic mutation accepted by `resolve_claims`.
  */
 export type ClaimOperation =
-  AddClaimOperation | UpdateClaimOperation | DeleteClaimOperation;
+  | AddClaimOperation
+  | ConfirmClaimOperation
+  | UpdateClaimOperation
+  | RetractClaimOperation;
 
 /**
  * Current resolved representation of one evidence resource.

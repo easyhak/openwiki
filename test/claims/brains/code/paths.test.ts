@@ -4,6 +4,7 @@ import {
   CLAIMS_DIRECTORY,
   isGroundedWikiPage,
   normalizeClaimsToolPagePath,
+  normalizeWikiToolPagePath,
   normalizeWikiPagePath,
   RESERVED_WIKI_FILES,
   toClaimsSidecarRelativePath,
@@ -38,6 +39,15 @@ describe("code-brain claim paths", () => {
     expect(toRepositoryPagePath(page)).toBe("openwiki/guides/configuration.md");
     expect(toClaimsSidecarRelativePath(page)).toBe("guides/configuration.json");
   });
+
+  test.each(["_plan.md", "index.md", "/openwiki/INSTRUCTIONS.md"])(
+    "canonicalizes structural tool path %s without assigning Claims",
+    (page) => {
+      const normalized = normalizeWikiToolPagePath(page);
+      expect(normalized).toMatch(/^\/openwiki\//u);
+      expect(isGroundedWikiPage(normalized)).toBe(false);
+    },
+  );
 
   test("recognizes factual Markdown pages", () => {
     expect(isGroundedWikiPage("/openwiki/quickstart.md")).toBe(true);
