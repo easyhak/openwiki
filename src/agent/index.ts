@@ -88,6 +88,7 @@ import {
   BEDROCK_AWS_SECRET_ACCESS_KEY_ENV_KEY,
   BEDROCK_AWS_SESSION_TOKEN_ENV_KEY,
   COPILOT_BASE_URL_ENV_KEY,
+  DEFAULT_ANTHROPIC_MAX_OUTPUT_TOKENS,
   getDefaultModelId,
   getMissingProviderEnvKey,
   getProviderApiKeyEnvKey,
@@ -110,7 +111,9 @@ import {
   OPENAI_COMPATIBLE_BASE_URL_ENV_KEY,
   OPENROUTER_API_KEY_ENV_KEY,
   OPENROUTER_BASE_URL,
+  OPENWIKI_MAX_OUTPUT_TOKENS_ENV_KEY,
   OPENWIKI_MODEL_ID_ENV_KEY,
+  OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY,
   OPENWIKI_PROVIDER_ENV_KEY,
   OPENWIKI_PROVIDER_RETRY_ATTEMPTS_ENV_KEY,
   providerRequiresBaseUrl,
@@ -120,7 +123,7 @@ import {
   providerUsesExternalCliAuth,
   providerUsesResponsesApi,
   resolveConfiguredProvider,
-  resolveOpenRouterMaxTokens,
+  resolveConfiguredMaxOutputTokens,
   resolveOpenRouterProviderOnly,
   resolveProviderBaseUrl,
   resolveProviderLocation,
@@ -1134,10 +1137,14 @@ export function createModel(
   providerRetryAttempts: number,
 ) {
   const retryOptions = { maxRetries: providerRetryAttempts };
+  const configuredMaxOutputTokens = resolveConfiguredMaxOutputTokens(provider);
 
   if (provider === "gemini") {
     return new ChatGoogle({
       apiKey: getProviderApiKey(provider),
+      ...(configuredMaxOutputTokens !== undefined
+        ? { maxOutputTokens: configuredMaxOutputTokens }
+        : {}),
       model: modelId,
       platformType: "gai",
       // Gemini 3.x thought-signature round-trip; see the constant's comment.
@@ -1165,15 +1172,21 @@ export function createModel(
       projectId,
       location,
       retryOptions,
+      configuredMaxOutputTokens,
     );
   }
 
   if (provider === "anthropic") {
     const baseURL = resolveProviderBaseUrl(provider);
+    const maxTokens = resolveAnthropicMaxOutputTokens(
+      modelId,
+      configuredMaxOutputTokens,
+    );
 
     return new ChatAnthropic(modelId, {
       apiKey: getProviderApiKey(provider),
       ...(baseURL ? { anthropicApiUrl: baseURL } : {}),
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
       ...retryOptions,
     });
   }
@@ -1193,6 +1206,9 @@ export function createModel(
     // - defaultHeaders carry the account id / originator / beta header
     return new ChatOpenAI({
       apiKey: tokens.access,
+      ...(configuredMaxOutputTokens !== undefined
+        ? { maxTokens: configuredMaxOutputTokens }
+        : {}),
       model: modelId,
       useResponsesApi: true,
       zdrEnabled: true,
@@ -1216,13 +1232,14 @@ export function createModel(
 
   if (provider === "openrouter") {
     const providerOnly = resolveOpenRouterProviderOnly();
-    const maxTokens = resolveOpenRouterMaxTokens();
 
     return new ChatOpenRouter({
       apiKey: process.env[OPENROUTER_API_KEY_ENV_KEY],
       baseURL: OPENROUTER_BASE_URL,
       model: modelId,
-      ...(maxTokens !== undefined ? { maxTokens } : {}),
+      ...(configuredMaxOutputTokens !== undefined
+        ? { maxTokens: configuredMaxOutputTokens }
+        : {}),
       provider: providerOnly ? { only: providerOnly } : undefined,
       siteName: "OpenWiki",
       ...retryOptions,
@@ -1231,6 +1248,9 @@ export function createModel(
 
   if (provider === "bedrock") {
     return new ChatBedrockConverse({
+      ...(configuredMaxOutputTokens !== undefined
+        ? { maxTokens: configuredMaxOutputTokens }
+        : {}),
       model: modelId,
       region: resolveProviderRegion(provider),
       ...retryOptions,
@@ -1246,6 +1266,9 @@ export function createModel(
           baseURL,
         }
       : undefined,
+    ...(configuredMaxOutputTokens !== undefined
+      ? { maxTokens: configuredMaxOutputTokens }
+      : {}),
     model: modelId,
     useResponsesApi: providerUsesResponsesApi(provider, modelId),
     ...retryOptions,
@@ -1303,6 +1326,36 @@ const GEMINI_THOUGHT_SIGNATURE_OPTIONS = {
 } as const;
 
 /**
+ * Chooses the Anthropic request limit without imposing a modern limit on older
+ * or custom Claude models that may expose a smaller output window.
+ *
+ * LangChain 1.5.1 falls back to 4,096 tokens for model IDs it does not know,
+ * including OpenWiki's current Claude 4/5 aliases. OpenWiki raises that default
+ * to 16,384 only for modern Claude families. An explicit provider-neutral
+ * setting always wins, including for custom model IDs.
+ *
+ * @param modelId - Direct or Vertex publisher-qualified Anthropic model ID.
+ * @param configuredMaxOutputTokens - Explicit OpenWiki setting, when present.
+ * @returns The explicit limit, modern-Claude default, or `undefined`.
+ */
+function resolveAnthropicMaxOutputTokens(
+  modelId: string,
+  configuredMaxOutputTokens: number | undefined,
+): number | undefined {
+  if (configuredMaxOutputTokens !== undefined) {
+    return configuredMaxOutputTokens;
+  }
+
+  const normalizedModelId = stripPublisherPath(modelId);
+
+  return /^claude-(?:haiku|sonnet|opus)-(?:4|5)(?:[-.@]|$)/u.test(
+    normalizedModelId,
+  )
+    ? DEFAULT_ANTHROPIC_MAX_OUTPUT_TOKENS
+    : undefined;
+}
+
+/**
  * Builds the right LangChain chat model for a Gemini Enterprise (Vertex AI)
  * model ID. Vertex Model Garden serves different model families over different
  * API surfaces (native Gemini, Anthropic rawPredict, OpenAI-compatible MaaS),
@@ -1314,9 +1367,15 @@ function createGeminiEnterpriseModel(
   projectId: string,
   location: string,
   retryOptions: { maxRetries: number },
+  configuredMaxOutputTokens: number | undefined,
 ) {
   switch (resolveVertexSurface(modelId)) {
-    case "anthropic":
+    case "anthropic": {
+      const maxTokens = resolveAnthropicMaxOutputTokens(
+        modelId,
+        configuredMaxOutputTokens,
+      );
+
       // No JS-native Claude-on-Vertex chat model exists; bridge via
       // ChatAnthropic's `createClient` hook + the Anthropic Vertex SDK, which
       // authenticates through ADC. Providing `createClient` also removes the
@@ -1344,8 +1403,10 @@ function createGeminiEnterpriseModel(
                 dangerouslyAllowBrowser: true,
               }),
           ),
+        ...(maxTokens !== undefined ? { maxTokens } : {}),
         ...retryOptions,
       });
+    }
 
     case "openai-maas":
       // Partner/open-weight models (Llama, Mistral, DeepSeek, Qwen, …) are
@@ -1358,6 +1419,9 @@ function createGeminiEnterpriseModel(
           baseURL: vertexOpenAIBaseUrl(projectId, location),
           fetch: createVertexAuthFetch(),
         },
+        ...(configuredMaxOutputTokens !== undefined
+          ? { maxTokens: configuredMaxOutputTokens }
+          : {}),
         model: toVertexPublisherModel(modelId),
         ...retryOptions,
       });
@@ -1378,6 +1442,9 @@ function createGeminiEnterpriseModel(
         // enterprise path. An empty string is treated as "no API key"
         // (hasApiKey() checks `!== ""`), which blocks that fallback.
         apiKey: "",
+        ...(configuredMaxOutputTokens !== undefined
+          ? { maxOutputTokens: configuredMaxOutputTokens }
+          : {}),
         location,
         // Pass the project explicitly rather than relying on ambient
         // process.env, using the `/node` entrypoint where googleAuthOptions is
@@ -2153,6 +2220,8 @@ export function formatEnvironmentDebugValue(
     key === OPENWIKI_MODEL_ID_ENV_KEY ||
     key === OPENWIKI_PROVIDER_ENV_KEY ||
     key === OPENWIKI_PROVIDER_RETRY_ATTEMPTS_ENV_KEY ||
+    key === OPENWIKI_MAX_OUTPUT_TOKENS_ENV_KEY ||
+    key === OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY ||
     key === BEDROCK_AWS_REGION_ENV_KEY
   ) {
     return `set(value=${JSON.stringify(value)})`;

@@ -44,6 +44,7 @@ import {
   OPENWIKI_NOTION_MCP_CLIENT_ID_ENV_KEY,
   OPENWIKI_NOTION_MCP_REFRESH_TOKEN_ENV_KEY,
   OPENROUTER_API_KEY_ENV_KEY,
+  OPENWIKI_MAX_OUTPUT_TOKENS_ENV_KEY,
   OPENWIKI_NOTION_TOKEN_ENV_KEY,
   OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY,
   OPENWIKI_OPENROUTER_PROVIDER_ONLY_ENV_KEY,
@@ -59,6 +60,8 @@ import {
   OPENWIKI_MODEL_ID_ENV_KEY,
   OPENWIKI_PROVIDER_ENV_KEY,
   OPENWIKI_PROVIDER_RETRY_ATTEMPTS_ENV_KEY,
+  resolveConfiguredMaxOutputTokens,
+  resolveOpenRouterMaxTokens,
   resolveProviderRetryAttempts,
 } from "./constants.js";
 import { isFileNotFoundError } from "../platform/fs-errors.js";
@@ -116,6 +119,7 @@ export const MANAGED_ENV_KEYS = [
   GOOGLE_CLOUD_LOCATION_ENV_KEY,
   GOOGLE_APPLICATION_CREDENTIALS_ENV_KEY,
   OPENROUTER_API_KEY_ENV_KEY,
+  OPENWIKI_MAX_OUTPUT_TOKENS_ENV_KEY,
   OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY,
   OPENWIKI_OPENROUTER_PROVIDER_ONLY_ENV_KEY,
   BEDROCK_AWS_ACCESS_KEY_ID_ENV_KEY,
@@ -384,8 +388,11 @@ function createCredentialDiagnostic(
           ? getProviderWarnings(value)
           : key === OPENWIKI_PROVIDER_RETRY_ATTEMPTS_ENV_KEY
             ? getRetryAttemptsWarnings(value)
-            : (getBaseUrlDiagnosticWarnings(key, value) ??
-              getCredentialWarnings(value)),
+            : key === OPENWIKI_MAX_OUTPUT_TOKENS_ENV_KEY ||
+                key === OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY
+              ? getMaxOutputTokensWarnings(key, value)
+              : (getBaseUrlDiagnosticWarnings(key, value) ??
+                getCredentialWarnings(value)),
   };
 }
 
@@ -444,6 +451,7 @@ function isNonSecretDiagnosticKey(key: string): boolean {
     key === OPENWIKI_MODEL_ID_ENV_KEY ||
     key === OPENWIKI_PROVIDER_ENV_KEY ||
     key === OPENWIKI_PROVIDER_RETRY_ATTEMPTS_ENV_KEY ||
+    key === OPENWIKI_MAX_OUTPUT_TOKENS_ENV_KEY ||
     key === OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY ||
     key === OPENWIKI_OPENROUTER_PROVIDER_ONLY_ENV_KEY ||
     key === ANTHROPIC_BASE_URL_ENV_KEY ||
@@ -507,6 +515,20 @@ function getRetryAttemptsWarnings(value: string): string[] {
     return [];
   } catch {
     return ["invalid retry attempts"];
+  }
+}
+
+function getMaxOutputTokensWarnings(key: string, value: string): string[] {
+  try {
+    if (key === OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY) {
+      resolveOpenRouterMaxTokens({ [key]: value });
+    } else {
+      resolveConfiguredMaxOutputTokens("openai", { [key]: value });
+    }
+
+    return [];
+  } catch {
+    return ["invalid max output tokens"];
   }
 }
 
