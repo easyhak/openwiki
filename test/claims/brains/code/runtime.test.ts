@@ -66,7 +66,7 @@ describe("prepareClaimsRuntime", () => {
       claims: [],
     });
     runtime?.session.recordDeletion(orphanPage);
-    await runtime?.session.finalize(runtime.store);
+    await runtime?.finalize();
     await expect(store.loadPage(orphanPage)).resolves.toBeNull();
   });
 

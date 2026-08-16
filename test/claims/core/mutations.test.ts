@@ -150,6 +150,37 @@ describe("applyClaimOperations", () => {
     expect(result[0]?.evidence[0]?.version).toBe("revision:2");
   });
 
+  test("resolves shared evidence once per mutation batch", async () => {
+    const resource = "memory://shared";
+    const calls: string[] = [];
+
+    await applyClaimOperations({
+      claims: [],
+      operations: [
+        {
+          op: "add",
+          statement: "The first fact is supported.",
+          evidence: [{ resource }],
+        },
+        {
+          op: "add",
+          statement: "The second fact is supported.",
+          evidence: [{ resource }],
+        },
+      ],
+      resolver: createMemoryResolver(
+        new Map([[resource, memoryEvidence(resource, "revision:1")]]),
+        calls,
+      ),
+      createClaimId: (() => {
+        let next = 0;
+        return () => `claim_${++next}`;
+      })(),
+    });
+
+    expect(calls).toEqual([resource]);
+  });
+
   test("returns structural clones across ownership boundaries", async () => {
     const original = cloneClaims(EXISTING_CLAIMS);
     const cloned = cloneClaims(original);

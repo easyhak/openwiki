@@ -21,15 +21,6 @@ type ClaimsMiddleware = ReturnType<typeof createClaimsAuthoringMiddleware>;
 type ClaimsToolWrapper = NonNullable<ClaimsMiddleware["wrapToolCall"]>;
 
 /**
- * Existing claim fixture used to protect deletion.
- */
-const EXISTING_CLAIM: Claim = {
-  id: "claim_existing",
-  statement: "The page contains a fact.",
-  evidence: [{ resource: "memory://fact", version: "revision:1" }],
-};
-
-/**
  * Creates an empty or persisted Claims session.
  *
  * @param claims - Initial claims for `/openwiki/page.md`.
@@ -217,13 +208,11 @@ describe("createClaimsAuthoringMiddleware", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  test("blocks deletion with remaining claims before calling the backend", async () => {
-    const session = createSession([EXISTING_CLAIM]);
+  test("leaves deletion to the dedicated Claims deletion tool", async () => {
+    const session = createSession();
     const middleware = createClaimsAuthoringMiddleware(session);
-    const handler = vi.fn(() =>
-      Promise.resolve(mutationMessage("/openwiki/page.md")),
-    );
-    session.fetchClaims("/openwiki/page.md");
+    const success = mutationMessage("/openwiki/page.md");
+    const handler = vi.fn(() => Promise.resolve(success));
 
     const result = await invokeMiddleware(
       middleware,
@@ -232,12 +221,7 @@ describe("createClaimsAuthoringMiddleware", () => {
       handler,
     );
 
-    expect(ToolMessage.isInstance(result)).toBe(true);
-    if (!ToolMessage.isInstance(result)) {
-      throw new Error("Expected a deletion error ToolMessage.");
-    }
-    expect(result.status).toBe("error");
-    expect(result.content).toContain("Delete all claims");
-    expect(handler).not.toHaveBeenCalled();
+    expect(result).toBe(success);
+    expect(handler).toHaveBeenCalledOnce();
   });
 });

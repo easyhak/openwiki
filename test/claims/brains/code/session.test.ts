@@ -43,13 +43,16 @@ const EXISTING_CLAIM: Claim = {
  * Creates a deterministic memory evidence resolver.
  *
  * @param outcomes - Resolution outcomes keyed by resource.
+ * @param calls - Optional ordered resolution call log.
  * @returns Generic resolver for session tests.
  */
 function createResolver(
   outcomes: ReadonlyMap<string, ResolvedEvidence | null | Error>,
+  calls?: string[],
 ): EvidenceResolver {
   return {
     resolve(resource: string): Promise<ResolvedEvidence | null> {
+      calls?.push(resource);
       const outcome = outcomes.get(resource);
       if (outcome instanceof Error) {
         return Promise.reject(outcome);
@@ -154,11 +157,7 @@ describe("ClaimSession", () => {
       ],
     });
 
-    expect(result).toEqual({
-      page,
-      revision: 1,
-      claimIds: ["claim_existing"],
-    });
+    expect(result).toEqual({ page, revision: 1 });
     expect(() => session.assertReadyForWrite(page)).toThrow(ClaimSessionError);
     expect(session.fetchClaims(page).claims[0]?.id).toBe("claim_existing");
   });
@@ -550,6 +549,34 @@ describe("ClaimSession", () => {
     await expect(store.loadPage(page)).resolves.toEqual(
       expect.objectContaining({ claims: [EXISTING_CLAIM] }),
     );
+  });
+
+  test("resolves shared evidence once per finalization pass", async () => {
+    const pages = ["/openwiki/first.md", "/openwiki/second.md"];
+    for (const page of pages) await writePage(page, `# ${page}\n`);
+    const calls: string[] = [];
+    const resource = EXISTING_CLAIM.evidence[0].resource;
+    const session = new ClaimSession({
+      resolver: createResolver(
+        new Map([
+          [resource, resolved(resource, EXISTING_CLAIM.evidence[0].version)],
+        ]),
+        calls,
+      ),
+      persisted: new Map(
+        pages.map((page) => [page, persistedClaims([EXISTING_CLAIM])]),
+      ),
+      issues: [],
+      orphanPages: [],
+    });
+    for (const page of pages) {
+      session.fetchClaims(page);
+      session.recordWrite(page);
+    }
+
+    await session.finalize(new ClaimsStore(rootDir));
+
+    expect(calls).toEqual([resource]);
   });
 
   test("exposes translation claims only for fresh persisted pages", () => {
