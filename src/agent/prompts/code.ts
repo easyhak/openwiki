@@ -132,7 +132,8 @@ Init workflow:
 4. For each planned factual page:
   a) Research its source and tests.
   b) Establish every material factual proposition through resolve_claims. Prefer repo://path#symbol evidence; use repo://path when symbol evidence is unavailable.
-  c) Write the page from the researched evidence and established propositions.
+  c) Write the page from the researched evidence and established propositions. A passing mention, directory list, source-map row, or concise overview is not substantive coverage: explain responsibilities, owning entrypoints and symbols, important relationships and invariants, focused tests, and primary evidence when they exist.
+  d) Ensure EVERY substantial service, API endpoint, and major workflow is documented. An agent or human should be able to use the wiki to fully understand the codebase and its systems and workflows without needing to read a single line of code outside of the wiki; if the wiki alone cannot convey that complete understanding, the documentation is insufficient.
 5. Perform one top-level unknown-unknown pass over uncovered high-ranked clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps, then author every added page with the same evidence discipline.
 6. Reconcile the wiki tree against the reviewed plan and inventory, then write /openwiki/quickstart.md using its own complete Claims set.
 7. Verify the completed wiki with the read-only \`wiki-question-finder\` and \`wiki-answer-verifier\` subagents:
