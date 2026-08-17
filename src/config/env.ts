@@ -34,6 +34,7 @@ import {
   OPENAI_CHATGPT_REFRESH_TOKEN_ENV_KEY,
   OPENAI_COMPATIBLE_API_KEY_ENV_KEY,
   OPENAI_COMPATIBLE_BASE_URL_ENV_KEY,
+  OPENAI_COMPATIBLE_USE_RESPONSES_API_ENV_KEY,
   OPENWIKI_GOOGLE_ACCESS_TOKEN_ENV_KEY,
   OPENWIKI_GOOGLE_CLIENT_ID_ENV_KEY,
   OPENWIKI_GOOGLE_CLIENT_SECRET_ENV_KEY,
@@ -112,6 +113,7 @@ export const MANAGED_ENV_KEYS = [
   OPENAI_CHATGPT_PLAN_ENV_KEY,
   OPENAI_COMPATIBLE_API_KEY_ENV_KEY,
   OPENAI_COMPATIBLE_BASE_URL_ENV_KEY,
+  OPENAI_COMPATIBLE_USE_RESPONSES_API_ENV_KEY,
   ANTHROPIC_API_KEY_ENV_KEY,
   ANTHROPIC_BASE_URL_ENV_KEY,
   GEMINI_API_KEY_ENV_KEY,
@@ -188,6 +190,8 @@ export const DEBUG_ENV_KEYS: readonly string[] = [
 const managedEnvKeys: readonly string[] = MANAGED_ENV_KEYS;
 
 const deprecatedEnvKeys = ["OPENAI_ORG_ID", "OPENAI_PROJECT"];
+const booleanDiagnosticValues = new Set(["true", "false"]);
+const invalidBooleanWarning = "invalid boolean";
 
 /**
  * The shell's values for managed credential keys, captured once before any load
@@ -386,13 +390,15 @@ function createCredentialDiagnostic(
         ? getModelWarnings(value)
         : key === OPENWIKI_PROVIDER_ENV_KEY
           ? getProviderWarnings(value)
-          : key === OPENWIKI_PROVIDER_RETRY_ATTEMPTS_ENV_KEY
-            ? getRetryAttemptsWarnings(value)
-            : key === OPENWIKI_MAX_OUTPUT_TOKENS_ENV_KEY ||
-                key === OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY
-              ? getMaxOutputTokensWarnings(key, value)
-              : (getBaseUrlDiagnosticWarnings(key, value) ??
-                getCredentialWarnings(value)),
+          : key === OPENAI_COMPATIBLE_USE_RESPONSES_API_ENV_KEY
+            ? getBooleanWarnings(value)
+            : key === OPENWIKI_PROVIDER_RETRY_ATTEMPTS_ENV_KEY
+              ? getRetryAttemptsWarnings(value)
+              : key === OPENWIKI_MAX_OUTPUT_TOKENS_ENV_KEY ||
+                  key === OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY
+                ? getMaxOutputTokensWarnings(key, value)
+                : (getBaseUrlDiagnosticWarnings(key, value) ??
+                  getCredentialWarnings(value)),
   };
 }
 
@@ -454,6 +460,7 @@ function isNonSecretDiagnosticKey(key: string): boolean {
     key === OPENWIKI_MAX_OUTPUT_TOKENS_ENV_KEY ||
     key === OPENWIKI_OPENROUTER_MAX_TOKENS_ENV_KEY ||
     key === OPENWIKI_OPENROUTER_PROVIDER_ONLY_ENV_KEY ||
+    key === OPENAI_COMPATIBLE_USE_RESPONSES_API_ENV_KEY ||
     key === ANTHROPIC_BASE_URL_ENV_KEY ||
     key === BASETEN_BASE_URL_ENV_KEY ||
     key === COPILOT_BASE_URL_ENV_KEY ||
@@ -504,6 +511,12 @@ function getModelWarnings(value: string): string[] {
 
 function getProviderWarnings(value: string): string[] {
   return normalizeProvider(value) === null ? ["invalid provider"] : [];
+}
+
+function getBooleanWarnings(value: string): string[] {
+  return booleanDiagnosticValues.has(value.trim().toLowerCase())
+    ? []
+    : [invalidBooleanWarning];
 }
 
 function getRetryAttemptsWarnings(value: string): string[] {

@@ -134,7 +134,11 @@ async function canSkipCleanUpdateBeforeCredentials(
 
   try {
     const openWikiIgnore = await OpenWikiIgnore.load(cwd);
-    const noopStatus = await getUpdateNoopStatus(cwd, openWikiIgnore);
+    const noopStatus = await getUpdateNoopStatus(
+      cwd,
+      openWikiIgnore,
+      command.language,
+    );
 
     return noopStatus.shouldSkip;
   } catch {

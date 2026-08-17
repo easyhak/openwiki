@@ -14,6 +14,10 @@ export const OPENAI_API_KEY_ENV_KEY = "OPENAI_API_KEY";
 export const OPENAI_BASE_URL_ENV_KEY = "OPENAI_BASE_URL";
 export const OPENAI_COMPATIBLE_API_KEY_ENV_KEY = "OPENAI_COMPATIBLE_API_KEY";
 export const OPENAI_COMPATIBLE_BASE_URL_ENV_KEY = "OPENAI_COMPATIBLE_BASE_URL";
+export const OPENAI_COMPATIBLE_USE_RESPONSES_API_ENV_KEY =
+  "OPENWIKI_OPENAI_COMPATIBLE_USE_RESPONSES_API";
+export const OPENAI_COMPATIBLE_STREAM_MESSAGES_ENV_KEY =
+  "OPENWIKI_OPENAI_COMPATIBLE_STREAM_MESSAGES";
 export const OPENAI_CHATGPT_ACCESS_TOKEN_ENV_KEY =
   "OPENAI_CHATGPT_ACCESS_TOKEN";
 export const OPENAI_CHATGPT_REFRESH_TOKEN_ENV_KEY =
@@ -57,6 +61,7 @@ export const OPENWIKI_PROVIDER_RETRY_ATTEMPTS_ENV_KEY =
   "OPENWIKI_PROVIDER_RETRY_ATTEMPTS";
 export const DEFAULT_PROVIDER_RETRY_ATTEMPTS = 3;
 export const DEFAULT_ANTHROPIC_MAX_OUTPUT_TOKENS = 16_384;
+const TRUE_ENV_VALUE = "true";
 export const OPENWIKI_GOOGLE_ACCESS_TOKEN_ENV_KEY =
   "OPENWIKI_GOOGLE_ACCESS_TOKEN";
 export const OPENWIKI_GOOGLE_CLIENT_ID_ENV_KEY = "OPENWIKI_GOOGLE_CLIENT_ID";
@@ -454,6 +459,10 @@ export function providerUsesResponsesApi(
   provider: OpenWikiProvider,
   modelId: string,
 ): boolean {
+  if (provider === "openai-compatible") {
+    return resolveOpenAiCompatibleUseResponsesApi();
+  }
+
   const setting = getProviderConfig(provider).responsesApi;
 
   return (
@@ -912,6 +921,41 @@ export function resolveOpenRouterProviderOnly(
   return providers.length > 0 ? providers : undefined;
 }
 
+export function resolveOpenAiCompatibleUseResponsesApi(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    env[OPENAI_COMPATIBLE_USE_RESPONSES_API_ENV_KEY]?.trim().toLowerCase() ===
+    TRUE_ENV_VALUE
+  );
+}
+
+// Opt-in to keep "messages" stream mode for openai-compatible endpoints.
+//
+// The "messages" stream mode makes @langchain/core route `.invoke()`
+// through `_streamResponseChunks` chunk aggregation. Providers that emit
+// reasoning deltas before the first `role: "assistant"` delta (z.ai GLM
+// via https://api.z.ai/api/coding/paas/v4) aggregate to a
+// ChatMessageChunk instead of an AIMessage, which the agent loop's
+// wrapModelCall validator rejects ("expected AIMessage or Command, got
+// object" — issue #659). Dropping "messages" forces the non-streaming
+// `_generate` path, which returns a proper AIMessage at the cost of
+// live token streaming in the TUI. Endpoints known to emit a
+// role:"assistant" first delta can opt back in with the env below.
+export function resolveOpenAiCompatibleStreamMessages(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    env[OPENAI_COMPATIBLE_STREAM_MESSAGES_ENV_KEY]?.trim().toLowerCase() ===
+    TRUE_ENV_VALUE
+  );
+}
+
+// Caps per-request output tokens for OpenRouter. Without a cap, OpenRouter's
+// credit pre-check budgets for the model's full advertised output ceiling and
+// rejects the request with 402 when the balance can't cover that worst case.
+// Setting a cap trades those hard 402 failures for possible truncation
+// (finish_reason "length") when a generation genuinely needs more tokens.
 /**
  * Resolves the legacy OpenRouter-specific output-token cap.
  *

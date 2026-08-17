@@ -7,6 +7,7 @@ import path from "node:path";
 import type { ClaimSession } from "../claims/brains/code/session.js";
 import type { Claim } from "../claims/core/types.js";
 import { getErrorMessage } from "../platform/diagnostics.js";
+import { getPrimaryLanguageSubtag } from "../platform/language.js";
 import {
   OPENWIKI_TRANSLATION_PENDING_FIELD,
   readFrontmatterField,
@@ -104,21 +105,9 @@ export function resolveTranslationPlan(
     source,
     translateAll:
       requestedLanguage !== undefined &&
-      primarySubtag(requestedLanguage) !== primarySubtag(currentWikiLanguage),
+      getPrimaryLanguageSubtag(requestedLanguage) !==
+        getPrimaryLanguageSubtag(currentWikiLanguage),
   };
-}
-
-/**
- * Returns a language tag's primary subtag (for example `zh` for `zh-CN`),
- * treating an absent wiki language as English.
- */
-function primarySubtag(tag: string | undefined): string {
-  if (!tag) return "en";
-  try {
-    return new Intl.Locale(tag).language;
-  } catch {
-    return tag;
-  }
 }
 
 /**

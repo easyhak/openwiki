@@ -8,7 +8,10 @@ import {
   isExpectedSnapshotRaceError,
   isFileNotFoundError,
 } from "../platform/fs-errors.js";
-import { resolveLanguage } from "../platform/language.js";
+import {
+  getPrimaryLanguageSubtag,
+  resolveLanguage,
+} from "../platform/language.js";
 import {
   readOpenWikiOnboardingConfig,
   readRepositoryWikiInstructions,
@@ -82,13 +85,23 @@ async function readRunWikiGoal(
 /**
  * Decides whether an update can skip its model invocation.
  *
+ * An explicit request whose primary language differs from the persisted wiki
+ * language is meaningful even on a clean tree, because the translation pass
+ * must run before the update agent.
+ *
+ * Working-tree and committed changes that only touch `openwiki/` or paths
+ * excluded by `openWikiIgnore` do not count as meaningful, so an ignored path
+ * changing on its own never forces a rebuild.
+ *
  * @param cwd - Absolute repository root.
  * @param openWikiIgnore - Active repository read boundary.
+ * @param requestedLanguage - Optional output language requested for this run.
  * @returns Skip decision and diagnostic reason.
  */
 export async function getUpdateNoopStatus(
   cwd: string,
   openWikiIgnore = new OpenWikiIgnore([]),
+  requestedLanguage?: string | null,
 ): Promise<UpdateNoopStatus> {
   const lastUpdate = await readLastUpdate(cwd, "repository");
 
@@ -98,6 +111,15 @@ export async function getUpdateNoopStatus(
 
   if (lastUpdate.status === "interrupted") {
     return { shouldSkip: false, reason: "previous update was interrupted" };
+  }
+
+  const resolvedRequestedLanguage = resolveLanguage(requestedLanguage).language;
+  if (
+    resolvedRequestedLanguage !== undefined &&
+    getPrimaryLanguageSubtag(resolvedRequestedLanguage) !==
+      getPrimaryLanguageSubtag(lastUpdate.language)
+  ) {
+    return { shouldSkip: false, reason: "output language changed" };
   }
 
   const head = await getGitHead(cwd);
