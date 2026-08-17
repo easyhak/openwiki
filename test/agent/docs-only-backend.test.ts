@@ -12,6 +12,8 @@ import {
 describe("OpenWikiLocalShellBackend", () => {
   test("recognizes canonical Claims state paths without reserving lookalikes", () => {
     expect(isClaimsStatePath("/openwiki/.claims/page.json")).toBe(true);
+    expect(isClaimsStatePath("/OPENWIKI/.CLAIMS/page.json")).toBe(true);
+    expect(isClaimsStatePath("\\OpenWiki\\.Claims\\page.json")).toBe(true);
     expect(isClaimsStatePath("openwiki/section/../.claims/page.json")).toBe(
       true,
     );
@@ -152,6 +154,8 @@ describe("OpenWikiLocalShellBackend", () => {
 
     const read = await backend.read("/openwiki/.claims/page.json");
     expect(read.error).toContain("Claims state");
+    const mixedCaseRead = await backend.read("/openwiki/.CLAIMS/page.json");
+    expect(mixedCaseRead.error).toContain("Claims state");
     const readRaw = await backend.readRaw("/openwiki/.claims/page.json");
     expect(readRaw.error).toContain("Claims state");
     const write = await backend.write("/openwiki/.claims/new.json", "bad");
@@ -195,6 +199,11 @@ describe("OpenWikiLocalShellBackend", () => {
     );
     expect(claimsInspection.exitCode).toBe(1);
     expect(claimsInspection.output).toContain("Claims state");
+    const mixedCaseInspection = await backend.execute(
+      "cat OPENWIKI/.CLAIMS/page.json",
+    );
+    expect(mixedCaseInspection.exitCode).toBe(1);
+    expect(mixedCaseInspection.output).toContain("Claims state");
   });
 
   test("does not reserve personal-brain .claims paths", async () => {

@@ -130,7 +130,7 @@ function isWorktreeGitScandirError(error: unknown): boolean {
  * @returns Whether the command names the OpenWiki Claims directory.
  */
 function referencesClaimsState(command: string): boolean {
-  const normalized = command.replaceAll("\\", "/");
+  const normalized = command.replaceAll("\\", "/").toLowerCase();
 
   return /(?:^|[/\s'"`=;|&()])openwiki\/\.claims(?:\/|[\s'"`=;|&()]|$)/u.test(
     normalized,
@@ -607,7 +607,9 @@ function markMutation<Result extends WriteResult | EditResult | DeleteResult>(
  * @returns Whether the normalized path is the Claims directory or its descendant.
  */
 export function isClaimsStatePath(filePath: string): boolean {
-  const normalized = path.posix.normalize(filePath.replaceAll("\\", "/"));
+  const normalized = path.posix
+    .normalize(filePath.replaceAll("\\", "/"))
+    .toLowerCase();
   const absolute = normalized.startsWith("/") ? normalized : `/${normalized}`;
 
   return (
