@@ -132,7 +132,7 @@ Init workflow:
 4. For each planned factual page:
   a) Research its source and tests.
   b) Establish every material factual proposition through resolve_claims. Prefer repo://path#symbol evidence; use repo://path when symbol evidence is unavailable.
-  c) Write the page from the researched evidence and established propositions.
+  c) Write the page from the researched evidence and established propositions. Every established proposition must appear as explained prose that states the mechanism and the specific names, values, ordering, and conditions a reader needs in order to act on it. A path, symbol, or citation points at the evidence; it never substitutes for stating what that evidence says.
 5. Perform one top-level unknown-unknown pass over uncovered high-ranked clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps, then author every added page with the same evidence discipline.
 6. Reconcile the wiki tree against the reviewed plan and inventory, then write /openwiki/quickstart.md using its own complete Claims set.
 7. Verify the completed wiki with the read-only \`wiki-question-finder\` and \`wiki-answer-verifier\` subagents:
@@ -141,7 +141,7 @@ Init workflow:
   c) For every PARTIAL or FAIL, inspect the reported gap's current source and tests yourself. Maintain affected propositions with resolve_claims, then repair the canonical page. The subagents never mutate Claims or Markdown.
   d) Finish all repairs in the wave before retrying. Re-invoke \`wiki-answer-verifier\` only for remaining PARTIAL or FAIL IDs, providing the unchanged ID and question, prior missing-items list, and pages changed. Mark a TODO complete only after PASS.
 8. Perform a final reconciliation against the reviewed plan, QA TODOs, and Claims-backed page set. Keep quickstart links accurate after repairs.
-- Optimize for path compression: shorten the route from an engineering intent to the owning files and symbols, related systems, focused tests, and narrow validation command.
+- Optimize for path compression: shorten the route from an engineering intent to the owning files and symbols, related systems, focused tests, and narrow validation command. Path compression supplements explanation and never replaces it: a page that routes a reader to a file without stating what that file does, and what is true of it, has not documented anything.
 - Substantial components and major workflows must be documented during init. Defer only when explicitly outside scope, unavailable to inspect safely, or evidence-blocked. Never defer an area merely because of time, token, page-count, or navigation convenience. Record valid deferrals in a concise Backlog section in quickstart with a source anchor and reason.
 - Do not document every file or target a page count. Wiki depth should reflect meaningful repository complexity.
 
@@ -152,7 +152,7 @@ Documentation contract:
 - Document recurring change recipes only when source evidence establishes a real extension seam. Distinguish focused checks from conditional expensive or broad validation.
 - Prefer stable paths and symbol names over line numbers. Describe tests by the behavior and invariant they exercise so future agents can retrieve the relevant suite without reading an entire file.
 - Concise means dense and non-redundant, not short. Give each concept one canonical home, link related concepts in the sentence that explains their relationship, and do not manufacture links or thin pages.
-- Use existing docs for discovery and intent, verify current claims against source and tests, and link rather than duplicate useful existing material.
+- Use existing docs for discovery and intent, and verify current claims against source and tests. Link rather than duplicate when the target is another concept's canonical explanation; never substitute a link for the specifics that belong on this page. A canonical page must stand on its own for its own domain.
 - Every service, package, or substantial API in the repository MUST get its own dedicated documentation page, OR if multiple services make up a single larger component, or system, group them inside a directory for that system.
   a) E.g. if there are 3 services for a web app (frontend, backend, database), you'll likely want to create a single directory for the app, with sub-pages for each service. That said, if the app itself is highly complex, you will almost certainly want to create individual pages or directories for major components or aspects of that larger system.
 - If a repository only has a single mono-API, you will likely want to break it up into multiple sections and document each one separately (granted the API is extensive enough).
