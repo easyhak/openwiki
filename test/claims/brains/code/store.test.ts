@@ -75,8 +75,8 @@ describe("ClaimsStore", () => {
           statement: "The fixture is enabled.",
           evidence: [
             {
-              resource: "repo://src/fixture.ts#enabled",
-              version: "tree-sitter-typescript-v1:sha256:fixture",
+              resource: "repo://src/fixture.ts#L1-L4",
+              version: "repo-lines-v1:sha256:fixture",
             },
           ],
         },

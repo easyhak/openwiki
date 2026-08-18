@@ -90,7 +90,7 @@ export async function applyClaimOperations(
       const proposed =
         operation.op === "update" && operation.evidence !== undefined
           ? operation.evidence
-          : current.evidence.map(({ resource }) => ({ resource }));
+          : current.evidence;
       resolvedByOperation.set(index, await resolveEvidence(proposed, resolver));
     }
   }
@@ -135,7 +135,7 @@ export async function applyClaimOperations(
  * @returns Canonical evidence identities and their current versions.
  */
 async function resolveEvidence(
-  proposedEvidence: readonly { resource: string }[],
+  proposedEvidence: readonly { resource: string; version?: string }[],
   resolver: EvidenceResolver,
 ): Promise<Evidence[]> {
   const evidence: Evidence[] = [];
@@ -148,7 +148,10 @@ async function resolveEvidence(
       );
     }
     resources.add(proposed.resource);
-    const resolved = await resolver.resolve(proposed.resource);
+    const resolved = await resolver.resolve(
+      proposed.resource,
+      proposed.version,
+    );
     if (!resolved) {
       throw new ClaimSessionError(
         `Evidence does not resolve: ${proposed.resource}`,

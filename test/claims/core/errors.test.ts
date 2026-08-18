@@ -5,7 +5,6 @@ import {
   ClaimsPersistenceError,
   ClaimsPersistenceSecurityError,
   ClaimSessionError,
-  EvidenceParseError,
   EvidenceResolutionError,
   EvidenceResourceError,
   EvidenceSecurityError,
@@ -30,7 +29,6 @@ describe("Claims errors", () => {
       ErrorType: EvidenceResolutionError,
       expectedName: "EvidenceResolutionError",
     },
-    { ErrorType: EvidenceParseError, expectedName: "EvidenceParseError" },
     {
       ErrorType: EvidenceSecurityError,
       expectedName: "EvidenceSecurityError",
@@ -52,10 +50,7 @@ describe("Claims errors", () => {
       ) {
         expect(error).toBeInstanceOf(ClaimsPersistenceError);
       }
-      if (
-        error instanceof EvidenceParseError ||
-        error instanceof EvidenceSecurityError
-      ) {
+      if (error instanceof EvidenceSecurityError) {
         expect(error).toBeInstanceOf(EvidenceResolutionError);
       }
     },

@@ -396,7 +396,10 @@ export class ClaimSession {
   ): Promise<void> {
     for (const claim of claims) {
       for (const evidence of claim.evidence) {
-        const current = await resolver.resolve(evidence.resource);
+        const current = await resolver.resolve(
+          evidence.resource,
+          evidence.version,
+        );
         if (!current) {
           throw new ClaimSessionError(
             `Evidence disappeared before finalizing ${page}: ${evidence.resource}`,

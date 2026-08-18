@@ -62,16 +62,6 @@ export class EvidenceResolutionError extends ClaimsError {
 }
 
 /**
- * Reports a parser or grammar failure that permits conservative file fallback.
- */
-export class EvidenceParseError extends EvidenceResolutionError {
-  constructor(message: string) {
-    super(message);
-    this.name = "EvidenceParseError";
-  }
-}
-
-/**
  * Reports an evidence path whose physical containment cannot be proven safe.
  */
 export class EvidenceSecurityError extends EvidenceResolutionError {

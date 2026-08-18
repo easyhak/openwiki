@@ -56,7 +56,6 @@ export async function prepareClaimsRuntime(
   const resolver = new RepositoryEvidenceResolver({
     rootDir: cwd,
     openWikiIgnore,
-    onWarning,
   });
 
   if (command === "init") {
