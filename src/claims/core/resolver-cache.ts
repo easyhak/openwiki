@@ -7,7 +7,7 @@ import type { EvidenceResolver, ResolvedEvidence } from "./types.js";
  * finalization pass so caching never crosses a freshness boundary.
  *
  * @param resolver - Underlying evidence resolver.
- * @returns Resolver that resolves each resource/prior-version pair at most once.
+ * @returns Resolver that resolves each resource and prior-version pair at most once.
  */
 export function cacheEvidenceResolver(
   resolver: EvidenceResolver,

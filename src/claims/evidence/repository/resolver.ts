@@ -14,53 +14,120 @@ import {
 import type { EvidenceResolver, ResolvedEvidence } from "../../core/types.js";
 
 /**
- * Number of complete lines hashed on either side of a selected range.
+ * Maximum number of complete lines used as context on each side of a range.
  */
-const RANGE_CONTEXT_LINES = 3;
+const RANGE_CONTEXT_LINE_COUNT = 3;
 
 /**
  * Prefix for line-range versions carrying resolver-owned relocation metadata.
  */
-const RANGE_VERSION_PREFIX = "repo-lines-v1:sha256:";
+const LINE_RANGE_VERSION_PREFIX = "repo-lines-v1:sha256:";
 
 /**
- * Compact relocation metadata encoded into an opaque evidence version.
+ * Exact number of fields in serialized line-range relocation metadata.
  */
-interface RangeVersionMetadata {
-  /** Selected line count. */
-  n: number;
-  /** First selected line hash. */
-  f: string;
-  /** Last selected line hash. */
-  l: string;
-  /** Number of preceding context lines. */
-  bn: number;
-  /** Preceding context hash. */
-  b: string;
-  /** Number of following context lines. */
-  an: number;
-  /** Following context hash. */
-  a: string;
+const LINE_RANGE_VERSION_METADATA_FIELD_COUNT = 7;
+
+/**
+ * Resolver-owned anchors encoded into an opaque line-range evidence version.
+ */
+interface LineRangeVersionMetadata {
+  /**
+   * Number of lines in the selected source range.
+   */
+  selectedLineCount: number;
+
+  /**
+   * Hash used to prefilter candidates by their first selected line.
+   */
+  firstSelectedLineHash: string;
+
+  /**
+   * Hash used to prefilter candidates by their last selected line.
+   */
+  lastSelectedLineHash: string;
+
+  /**
+   * Number of lines included in the preceding context hash.
+   */
+  precedingContextLineCount: number;
+
+  /**
+   * Hash used to locate the boundary before a changed range.
+   */
+  precedingContextHash: string;
+
+  /**
+   * Number of lines included in the following context hash.
+   */
+  followingContextLineCount: number;
+
+  /**
+   * Hash used to locate the boundary after a changed range.
+   */
+  followingContextHash: string;
 }
 
 /**
  * Parsed prior line-range version.
  */
-interface ParsedRangeVersion {
-  /** Hash of the complete selected source range. */
+interface ParsedLineRangeVersion {
+  /**
+   * Hash of the complete selected source range.
+   */
   contentHash: string;
-  /** Resolver-owned relocation metadata. */
-  metadata: RangeVersionMetadata;
+
+  /**
+   * Resolver-owned anchors used to relocate the selected source range.
+   */
+  metadata: LineRangeVersionMetadata;
 }
 
 /**
- * Zero-based half-open line range inside split source text.
+ * Zero-based half-open span within an array of exact source lines.
  */
-interface ResolvedLineRange {
-  /** First selected line index. */
-  start: number;
-  /** Index immediately after the last selected line. */
-  end: number;
+interface SourceLineSpan {
+  /**
+   * Zero-based index of the first selected source line.
+   */
+  startIndex: number;
+
+  /**
+   * Zero-based index immediately after the last selected source line.
+   */
+  endIndexExclusive: number;
+}
+
+/**
+ * Inputs required to resolve one language-agnostic line-range resource.
+ */
+interface ResolveLineRangeEvidenceInput {
+  /**
+   * Canonical repository evidence resource.
+   */
+  resource: string;
+
+  /**
+   * Complete current source text.
+   */
+  source: string;
+
+  /**
+   * One-based first line from the resource's location hint.
+   */
+  startLine: number;
+
+  /**
+   * One-based last line from the resource's location hint.
+   */
+  endLine: number;
+
+  /**
+   * Prior opaque version used to relocate previously established evidence.
+   *
+   * @default undefined when establishing new evidence.
+   */
+  previousVersion?: string;
 }
 
 /**
@@ -168,9 +235,9 @@ export class RepositoryEvidenceResolver implements EvidenceResolver {
     }
 
     if (!parsed.range) {
-      return wholeFileEvidence(canonicalResource, source);
+      return createWholeFileEvidence(canonicalResource, source);
     }
-    return lineRangeEvidence({
+    return resolveLineRangeEvidence({
       resource: canonicalResource,
       source,
       startLine: parsed.range.startLine,
@@ -218,48 +285,51 @@ export class RepositoryEvidenceResolver implements EvidenceResolver {
 }
 
 /**
- * Resolves a language-agnostic line range, using its prior opaque version as a
- * compact text anchor when edits moved or resized the selected source.
+ * Resolves a language-agnostic line range, using hashed anchors from its prior
+ * opaque version when edits moved or resized the selected source.
  *
  * @param input - Current source, requested range, and optional prior version.
  * @returns Current range evidence, or `null` when it cannot be located safely.
  */
-function lineRangeEvidence(input: {
-  resource: string;
-  source: string;
-  startLine: number;
-  endLine: number;
-  previousVersion?: string;
-}): ResolvedEvidence | null {
+function resolveLineRangeEvidence(
+  input: ResolveLineRangeEvidenceInput,
+): ResolvedEvidence | null {
   const lines = splitSourceLines(input.source);
-  const hintedRange = toResolvedRange(
+  const hintedSpan = toSourceLineSpan(
     input.startLine,
     input.endLine,
     lines.length,
   );
   const previousVersion = input.previousVersion;
-  const previous = parseRangeVersion(previousVersion);
+  const parsedPreviousVersion = parseLineRangeVersion(previousVersion);
 
-  if (!previous || !previousVersion) {
-    return hintedRange
-      ? buildLineRangeEvidence(input.resource, lines, hintedRange)
+  if (!parsedPreviousVersion || !previousVersion) {
+    return hintedSpan
+      ? createLineRangeEvidence(input.resource, lines, hintedSpan)
       : null;
   }
 
-  const exactRange = locateExactRange(lines, hintedRange, previous);
-  if (exactRange) {
+  const unchangedSpan = locateUnchangedLineRange(
+    lines,
+    hintedSpan,
+    parsedPreviousVersion,
+  );
+  if (unchangedSpan) {
     return {
       evidence: {
         resource: input.resource,
         version: previousVersion,
       },
-      content: rangeContent(lines, exactRange),
+      content: getLineRangeContent(lines, unchangedSpan),
     };
   }
 
-  const relocatedRange = locateRangeByContext(lines, previous.metadata);
-  return relocatedRange
-    ? buildLineRangeEvidence(input.resource, lines, relocatedRange)
+  const changedSpan = locateChangedLineRange(
+    lines,
+    parsedPreviousVersion.metadata,
+  );
+  return changedSpan
+    ? createLineRangeEvidence(input.resource, lines, changedSpan)
     : null;
 }
 
@@ -290,32 +360,34 @@ function splitSourceLines(source: string): string[] {
  * @param lineCount - Current source line count.
  * @returns Current indexes, or `null` when the request is out of bounds.
  */
-function toResolvedRange(
+function toSourceLineSpan(
   startLine: number,
   endLine: number,
   lineCount: number,
-): ResolvedLineRange | null {
-  return endLine <= lineCount ? { start: startLine - 1, end: endLine } : null;
+): SourceLineSpan | null {
+  return endLine <= lineCount
+    ? { startIndex: startLine - 1, endIndexExclusive: endLine }
+    : null;
 }
 
 /**
- * Builds current evidence and relocation metadata for one selected range.
+ * Creates current evidence and relocation metadata for one selected range.
  *
  * @param resource - Canonical repository resource.
  * @param lines - Exact current source lines.
- * @param range - Selected current range.
+ * @param span - Selected current line span.
  * @returns Persistable range evidence.
  */
-function buildLineRangeEvidence(
+function createLineRangeEvidence(
   resource: string,
   lines: readonly string[],
-  range: ResolvedLineRange,
+  span: SourceLineSpan,
 ): ResolvedEvidence {
-  const content = rangeContent(lines, range);
+  const content = getLineRangeContent(lines, span);
   return {
     evidence: {
       resource,
-      version: formatRangeVersion(content, lines, range),
+      version: formatLineRangeVersion(content, lines, span),
     },
     content,
   };
@@ -325,43 +397,55 @@ function buildLineRangeEvidence(
  * Locates unchanged selected text at its original hint or elsewhere in a file.
  *
  * @param lines - Exact current source lines.
- * @param hintedRange - Current location implied by the persisted URI.
- * @param previous - Prior selected-content fingerprint and anchors.
+ * @param hintedSpan - Current location implied by the persisted URI.
+ * @param previousVersion - Parsed prior content fingerprint and relocation anchors.
  * @returns Unique unchanged range, or `null`.
  */
-function locateExactRange(
+function locateUnchangedLineRange(
   lines: readonly string[],
-  hintedRange: ResolvedLineRange | null,
-  previous: ParsedRangeVersion,
-): ResolvedLineRange | null {
+  hintedSpan: SourceLineSpan | null,
+  previousVersion: ParsedLineRangeVersion,
+): SourceLineSpan | null {
+  const { metadata } = previousVersion;
   if (
-    hintedRange &&
-    hintedRange.end - hintedRange.start === previous.metadata.n &&
-    hash(rangeContent(lines, hintedRange)) === previous.contentHash
+    hintedSpan &&
+    hintedSpan.endIndexExclusive - hintedSpan.startIndex ===
+      metadata.selectedLineCount &&
+    hashText(getLineRangeContent(lines, hintedSpan)) ===
+      previousVersion.contentHash
   ) {
-    return hintedRange;
+    return hintedSpan;
   }
 
-  const matches: ResolvedLineRange[] = [];
-  const lineHashes = lines.map((line) => hash(line));
-  const { n, f, l } = previous.metadata;
-  for (let start = 0; start + n <= lines.length; start += 1) {
-    const end = start + n;
-    if (lineHashes[start] !== f || lineHashes[end - 1] !== l) {
+  const matchingSpans: SourceLineSpan[] = [];
+  const lineHashes = lines.map((line) => hashText(line));
+  for (
+    let startIndex = 0;
+    startIndex + metadata.selectedLineCount <= lines.length;
+    startIndex += 1
+  ) {
+    const endIndexExclusive = startIndex + metadata.selectedLineCount;
+    if (
+      lineHashes[startIndex] !== metadata.firstSelectedLineHash ||
+      lineHashes[endIndexExclusive - 1] !== metadata.lastSelectedLineHash
+    ) {
       continue;
     }
-    const candidate = { start, end };
-    if (hash(rangeContent(lines, candidate)) === previous.contentHash) {
-      matches.push(candidate);
+    const candidateSpan = { startIndex, endIndexExclusive };
+    if (
+      hashText(getLineRangeContent(lines, candidateSpan)) ===
+      previousVersion.contentHash
+    ) {
+      matchingSpans.push(candidateSpan);
     }
   }
-  if (matches.length === 1) {
-    return matches[0];
+  if (matchingSpans.length === 1) {
+    return matchingSpans[0];
   }
-  const anchored = matches.filter((candidate) =>
-    matchesRangeContext(lines, candidate, previous.metadata),
+  const contextMatches = matchingSpans.filter((candidate) =>
+    hasMatchingRangeContext(lines, candidate, metadata),
   );
-  return anchored.length === 1 ? anchored[0] : null;
+  return contextMatches.length === 1 ? contextMatches[0] : null;
 }
 
 /**
@@ -372,29 +456,34 @@ function locateExactRange(
  * @param metadata - Prior relocation metadata.
  * @returns Unique non-empty current range, or `null`.
  */
-function locateRangeByContext(
+function locateChangedLineRange(
   lines: readonly string[],
-  metadata: RangeVersionMetadata,
-): ResolvedLineRange | null {
-  const starts = findContextBoundaries(
+  metadata: LineRangeVersionMetadata,
+): SourceLineSpan | null {
+  const startIndexes = findContextBoundaries(
     lines,
-    metadata.bn,
-    metadata.b,
+    metadata.precedingContextLineCount,
+    metadata.precedingContextHash,
     "before",
   );
-  const ends = findContextBoundaries(lines, metadata.an, metadata.a, "after");
-  const candidates: ResolvedLineRange[] = [];
-  for (const start of starts) {
-    for (const end of ends) {
-      if (end > start) {
-        candidates.push({ start, end });
-        if (candidates.length > 1) {
+  const endIndexesExclusive = findContextBoundaries(
+    lines,
+    metadata.followingContextLineCount,
+    metadata.followingContextHash,
+    "after",
+  );
+  const candidateSpans: SourceLineSpan[] = [];
+  for (const startIndex of startIndexes) {
+    for (const endIndexExclusive of endIndexesExclusive) {
+      if (endIndexExclusive > startIndex) {
+        candidateSpans.push({ startIndex, endIndexExclusive });
+        if (candidateSpans.length > 1) {
           return null;
         }
       }
     }
   }
-  return candidates[0] ?? null;
+  return candidateSpans[0] ?? null;
 }
 
 /**
@@ -415,88 +504,125 @@ function findContextBoundaries(
   if (contextLineCount === 0) {
     return [side === "before" ? 0 : lines.length];
   }
-  const boundaries: number[] = [];
-  for (let start = 0; start + contextLineCount <= lines.length; start += 1) {
+  const boundaryIndexes: number[] = [];
+  for (
+    let contextStartIndex = 0;
+    contextStartIndex + contextLineCount <= lines.length;
+    contextStartIndex += 1
+  ) {
     if (
-      hash(lines.slice(start, start + contextLineCount).join("")) ===
-      contextHash
+      hashText(
+        lines
+          .slice(contextStartIndex, contextStartIndex + contextLineCount)
+          .join(""),
+      ) === contextHash
     ) {
-      boundaries.push(side === "before" ? start + contextLineCount : start);
+      boundaryIndexes.push(
+        side === "before"
+          ? contextStartIndex + contextLineCount
+          : contextStartIndex,
+      );
     }
   }
-  return boundaries;
+  return boundaryIndexes;
 }
 
 /**
  * Checks whether a candidate still has both prior exterior anchors.
  *
  * @param lines - Exact current source lines.
- * @param range - Candidate unchanged range.
+ * @param span - Candidate unchanged line span.
  * @param metadata - Prior relocation metadata.
  * @returns Whether both anchors still surround the candidate.
  */
-function matchesRangeContext(
+function hasMatchingRangeContext(
   lines: readonly string[],
-  range: ResolvedLineRange,
-  metadata: RangeVersionMetadata,
+  span: SourceLineSpan,
+  metadata: LineRangeVersionMetadata,
 ): boolean {
-  const beforeMatches =
-    metadata.bn === 0
-      ? range.start === 0
-      : range.start >= metadata.bn &&
-        hash(lines.slice(range.start - metadata.bn, range.start).join("")) ===
-          metadata.b;
-  const afterMatches =
-    metadata.an === 0
-      ? range.end === lines.length
-      : range.end + metadata.an <= lines.length &&
-        hash(lines.slice(range.end, range.end + metadata.an).join("")) ===
-          metadata.a;
-  return beforeMatches && afterMatches;
+  const precedingContextMatches =
+    metadata.precedingContextLineCount === 0
+      ? span.startIndex === 0
+      : span.startIndex >= metadata.precedingContextLineCount &&
+        hashText(
+          lines
+            .slice(
+              span.startIndex - metadata.precedingContextLineCount,
+              span.startIndex,
+            )
+            .join(""),
+        ) === metadata.precedingContextHash;
+  const followingContextMatches =
+    metadata.followingContextLineCount === 0
+      ? span.endIndexExclusive === lines.length
+      : span.endIndexExclusive + metadata.followingContextLineCount <=
+          lines.length &&
+        hashText(
+          lines
+            .slice(
+              span.endIndexExclusive,
+              span.endIndexExclusive + metadata.followingContextLineCount,
+            )
+            .join(""),
+        ) === metadata.followingContextHash;
+  return precedingContextMatches && followingContextMatches;
 }
 
 /**
  * Extracts exact source text for a line range.
  *
  * @param lines - Exact source lines.
- * @param range - Selected indexes.
- * @returns Concatenated source bytes represented as text.
+ * @param span - Selected line indexes.
+ * @returns Exact source text represented by the selected lines.
  */
-function rangeContent(
+function getLineRangeContent(
   lines: readonly string[],
-  range: ResolvedLineRange,
+  span: SourceLineSpan,
 ): string {
-  return lines.slice(range.start, range.end).join("");
+  return lines.slice(span.startIndex, span.endIndexExclusive).join("");
 }
 
 /**
- * Formats a range content hash plus compact relocation metadata.
+ * Formats a range content hash plus relocation metadata.
  *
  * @param content - Exact selected text.
  * @param lines - Exact complete source lines.
- * @param range - Selected current range.
+ * @param span - Selected current line span.
  * @returns Opaque persistable evidence version.
  */
-function formatRangeVersion(
+function formatLineRangeVersion(
   content: string,
   lines: readonly string[],
-  range: ResolvedLineRange,
+  span: SourceLineSpan,
 ): string {
-  const beforeStart = Math.max(0, range.start - RANGE_CONTEXT_LINES);
-  const afterEnd = Math.min(lines.length, range.end + RANGE_CONTEXT_LINES);
-  const metadata: RangeVersionMetadata = {
-    n: range.end - range.start,
-    f: hash(lines[range.start]),
-    l: hash(lines[range.end - 1]),
-    bn: range.start - beforeStart,
-    b: hash(lines.slice(beforeStart, range.start).join("")),
-    an: afterEnd - range.end,
-    a: hash(lines.slice(range.end, afterEnd).join("")),
+  const precedingContextStartIndex = Math.max(
+    0,
+    span.startIndex - RANGE_CONTEXT_LINE_COUNT,
+  );
+  const followingContextEndIndexExclusive = Math.min(
+    lines.length,
+    span.endIndexExclusive + RANGE_CONTEXT_LINE_COUNT,
+  );
+  const metadata: LineRangeVersionMetadata = {
+    selectedLineCount: span.endIndexExclusive - span.startIndex,
+    firstSelectedLineHash: hashText(lines[span.startIndex]),
+    lastSelectedLineHash: hashText(lines[span.endIndexExclusive - 1]),
+    precedingContextLineCount: span.startIndex - precedingContextStartIndex,
+    precedingContextHash: hashText(
+      lines.slice(precedingContextStartIndex, span.startIndex).join(""),
+    ),
+    followingContextLineCount:
+      followingContextEndIndexExclusive - span.endIndexExclusive,
+    followingContextHash: hashText(
+      lines
+        .slice(span.endIndexExclusive, followingContextEndIndexExclusive)
+        .join(""),
+    ),
   };
   const encoded = Buffer.from(JSON.stringify(metadata), "utf8").toString(
     "base64url",
   );
-  return `${RANGE_VERSION_PREFIX}${hash(content)}:${encoded}`;
+  return `${LINE_RANGE_VERSION_PREFIX}${hashText(content)}:${encoded}`;
 }
 
 /**
@@ -506,29 +632,32 @@ function formatRangeVersion(
  * @param value - Optional prior evidence version.
  * @returns Validated range version, or `null`.
  */
-function parseRangeVersion(
+function parseLineRangeVersion(
   value: string | undefined,
-): ParsedRangeVersion | null {
-  if (!value?.startsWith(RANGE_VERSION_PREFIX)) {
+): ParsedLineRangeVersion | null {
+  if (!value?.startsWith(LINE_RANGE_VERSION_PREFIX)) {
     return null;
   }
-  const body = value.slice(RANGE_VERSION_PREFIX.length);
-  const separator = body.indexOf(":");
-  if (separator === -1) {
+  const versionBody = value.slice(LINE_RANGE_VERSION_PREFIX.length);
+  const metadataSeparatorIndex = versionBody.indexOf(":");
+  if (metadataSeparatorIndex === -1) {
     return null;
   }
-  const contentHash = body.slice(0, separator);
-  if (!isHash(contentHash)) {
+  const contentHash = versionBody.slice(0, metadataSeparatorIndex);
+  if (!isSha256Hash(contentHash)) {
     return null;
   }
   try {
-    const decoded: unknown = JSON.parse(
-      Buffer.from(body.slice(separator + 1), "base64url").toString("utf8"),
+    const decodedMetadata: unknown = JSON.parse(
+      Buffer.from(
+        versionBody.slice(metadataSeparatorIndex + 1),
+        "base64url",
+      ).toString("utf8"),
     );
-    if (!isRangeVersionMetadata(decoded)) {
+    if (!isLineRangeVersionMetadata(decodedMetadata)) {
       return null;
     }
-    return { contentHash, metadata: decoded };
+    return { contentHash, metadata: decodedMetadata };
   } catch {
     return null;
   }
@@ -540,40 +669,73 @@ function parseRangeVersion(
  * @param value - Unknown decoded JSON.
  * @returns Whether the value is safe relocation metadata.
  */
-function isRangeVersionMetadata(value: unknown): value is RangeVersionMetadata {
+function isLineRangeVersionMetadata(
+  value: unknown,
+): value is LineRangeVersionMetadata {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
   const record = value as Record<string, unknown>;
   return (
-    Object.keys(record).length === 7 &&
-    Number.isSafeInteger(record.n) &&
-    (record.n as number) > 0 &&
-    Number.isSafeInteger(record.bn) &&
-    (record.bn as number) >= 0 &&
-    (record.bn as number) <= RANGE_CONTEXT_LINES &&
-    Number.isSafeInteger(record.an) &&
-    (record.an as number) >= 0 &&
-    (record.an as number) <= RANGE_CONTEXT_LINES &&
-    isHash(record.f) &&
-    isHash(record.l) &&
-    isHash(record.b) &&
-    isHash(record.a)
+    Object.keys(record).length === LINE_RANGE_VERSION_METADATA_FIELD_COUNT &&
+    isSafeIntegerInRange(
+      record.selectedLineCount,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ) &&
+    isSafeIntegerInRange(
+      record.precedingContextLineCount,
+      0,
+      RANGE_CONTEXT_LINE_COUNT,
+    ) &&
+    isSafeIntegerInRange(
+      record.followingContextLineCount,
+      0,
+      RANGE_CONTEXT_LINE_COUNT,
+    ) &&
+    isSha256Hash(record.firstSelectedLineHash) &&
+    isSha256Hash(record.lastSelectedLineHash) &&
+    isSha256Hash(record.precedingContextHash) &&
+    isSha256Hash(record.followingContextHash)
   );
 }
 
 /**
- * Builds explicit whole-file evidence.
+ * Checks whether a value is a safe integer inside an inclusive range.
+ *
+ * @param value - Unknown candidate value.
+ * @param minimum - Smallest accepted integer.
+ * @param maximum - Largest accepted integer.
+ * @returns Whether the value is a safe integer inside the requested range.
+ */
+function isSafeIntegerInRange(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= minimum &&
+    value <= maximum
+  );
+}
+
+/**
+ * Creates explicit whole-file evidence.
  *
  * @param resource - Canonical whole-file repository resource.
  * @param source - Complete source text.
  * @returns Whole-file-backed resolved evidence.
  */
-function wholeFileEvidence(resource: string, source: string): ResolvedEvidence {
+function createWholeFileEvidence(
+  resource: string,
+  source: string,
+): ResolvedEvidence {
   return {
     evidence: {
       resource,
-      version: version("repo-file-v1", source),
+      version: createHashedVersion("repo-file-v1", source),
     },
     content: source,
   };
@@ -600,11 +762,11 @@ function isPathInside(rootDir: string, candidate: string): boolean {
  * Creates an algorithm-prefixed SHA-256 evidence version.
  *
  * @param algorithm - Stable resolver algorithm identifier.
- * @param content - Canonical representation to hash.
+ * @param content - Exact content to hash.
  * @returns Persistable opaque evidence version.
  */
-function version(algorithm: string, content: string): string {
-  return `${algorithm}:sha256:${hash(content)}`;
+function createHashedVersion(algorithm: string, content: string): string {
+  return `${algorithm}:sha256:${hashText(content)}`;
 }
 
 /**
@@ -613,7 +775,7 @@ function version(algorithm: string, content: string): string {
  * @param content - Text to fingerprint.
  * @returns Lowercase hexadecimal digest.
  */
-function hash(content: string): string {
+function hashText(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
@@ -623,7 +785,7 @@ function hash(content: string): string {
  * @param value - Unknown candidate digest.
  * @returns Whether the value is a canonical digest.
  */
-function isHash(value: unknown): value is string {
+function isSha256Hash(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 }
 

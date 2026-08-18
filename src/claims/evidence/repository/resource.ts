@@ -67,7 +67,7 @@ export function formatRepositoryEvidenceResource(
   const parsed = parseRepositoryEvidenceResource(formatted);
   if (
     parsed.path !== resource.path ||
-    !equalLineRanges(parsed.range, resource.range)
+    !areLineRangesEqual(parsed.range, resource.range)
   ) {
     throw new EvidenceResourceError(
       `Repository evidence is not normalized: ${formatted}`,
@@ -230,7 +230,7 @@ function formatLineRange(range: RepositoryLineRange): string {
  * @param right - Formatter input range.
  * @returns Whether both ranges are absent or equal.
  */
-function equalLineRanges(
+function areLineRangesEqual(
   left: RepositoryLineRange | undefined,
   right: RepositoryLineRange | undefined,
 ): boolean {
