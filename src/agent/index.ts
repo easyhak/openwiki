@@ -47,6 +47,7 @@ import {
 } from "../okf/index-labels.js";
 import { OpenWikiLocalShellBackend } from "./docs-only-backend.js";
 import { getSelectedModelAvailability } from "../model-availability.js";
+import { createOpenWikiCodeInterpreterMiddleware } from "./code-interpreter.js";
 import { createOpenWikiIndexMiddleware } from "./okf-middleware.js";
 import {
   createWikiTranslationMiddleware,
@@ -490,6 +491,9 @@ function createOpenWikiAgentGraph(
                   ),
                 ]
               : []),
+            // Exploration and fan-out move inside the REPL, so the
+            // orchestrator's turn count stops scaling with repository size.
+            createOpenWikiCodeInterpreterMiddleware(),
             ...(claimsIntegration?.middleware ?? []),
             createOpenWikiIndexMiddleware(
               wikiBackend,
