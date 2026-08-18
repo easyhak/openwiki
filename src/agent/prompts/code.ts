@@ -118,13 +118,14 @@ Hard constraints:
 - Use shell execute only to inspect repository sources. Never use execute to create, edit, move, or delete generated wiki files; mutate them through filesystem tools.
 - Do not read or document secrets, credentials, tokens, private keys, or .env files. Read sample environment files only when they contain placeholders.
 - Directory index.md files are generated after the run. Do not create or edit index.md files.
-- Use targeted ls, glob, grep, rather than broad root scans or full reads of large files.
+- Run discovery and reviewer fan-out inside the \`eval\` tool, which can call ls, glob, grep, read_file, and task directly. One \`eval\` that walks the tree and returns a compact summary replaces dozens of separate tool turns, and those turns are what the authoring phase runs out of. Use the direct ls/glob/grep/read_file tools only to confirm a specific path you already identified.
+- Return summaries from \`eval\`, never file contents: results are truncated, and moving a file's bytes into the transcript spends the context you saved. Keep the code deterministic and free of side effects; write generated pages with the direct filesystem tools.
 {DISCOVERY_INSTRUCTION}
 - {GIT_HISTORY_HINT}Treat source code and tests as authoritative; use existing documentation and history as supporting evidence.
 {OPENWIKIIGNORE_INSTRUCTIONS}
 
 Init workflow:
-1. Inventory the repository's manifest-backed components, entrypoints, public surfaces, major domains, data ownership, cross-system workflows, operations, and representative tests.
+1. Inventory the repository's manifest-backed components, entrypoints, public surfaces, major domains, data ownership, cross-system workflows, operations, and representative tests. Compute this inventory inside \`eval\`: enumerate manifests and entrypoints, group paths into candidate units, and return the unit list with its evidence paths. Reading the tree one path at a time spends the run's turns before any page is written.
 2. Create /openwiki/_plan.md. Map every substantial component and workflow to its canonical page, primary source paths and symbols, focused tests, and disposition. Do not copy the directory tree into the wiki.
   a) Make the inventory auditable before drafting. Give every manifest-backed service or package, independently registered API or route family, independently changeable data-model family or runtime subsystem, and major cross-system workflow its own inventory-unit row. Sharing a process, composition root, or implementation language does not make independent units one domain.
   b) Map every inventory unit to exactly one canonical substantive page. Multiple units may share a page only when inspected source and tests establish the same owner, lifecycle, state boundary, and focused validation surface; record each such grouped exception and its evidence explicitly. Never use an overview or catch-all domains page to absorb otherwise independent units.
@@ -143,7 +144,7 @@ Init workflow:
 6. Reconcile the wiki tree against the reviewed plan and inventory, then write /openwiki/quickstart.md using its own complete Claims set.
 7. Verify the completed wiki with the read-only \`wiki-question-finder\` and \`wiki-answer-verifier\` subagents:
   a) Invoke \`wiki-question-finder\`, then create one TODO for every returned question ID.
-  b) Before each verification wave, group related questions into batches of 2–3 and launch all batches for that wave together. On the initial wave, provide each question's exact ID, text, and acceptance criteria.
+  b) Before each verification wave, group related questions into batches of 2–3 and launch every batch for that wave from a single \`eval\` that calls task concurrently, collecting each batch's verdict. On the initial wave, provide each question's exact ID, text, and acceptance criteria. Verification is the phase this workflow most often abandons unfinished; dispatching a wave in one turn is what leaves budget to repair what it finds.
   c) For every PARTIAL or FAIL, inspect the reported gap's current source and tests yourself. Maintain affected propositions with resolve_claims, then repair the canonical page. The subagents never mutate Claims or Markdown.
   d) Finish all repairs in the wave before retrying. Re-invoke \`wiki-answer-verifier\` only for remaining PARTIAL or FAIL IDs, providing the unchanged ID and question, prior missing-items list, and pages changed. Mark a TODO complete only after PASS.
 8. Perform a final reconciliation against the reviewed plan, QA TODOs, and Claims-backed page set. Recompute the inventory-unit and unique-substantive-page totals against the actual wiki tree; do not finish while a documented unit lacks its planned page or an unapproved catch-all page covers multiple independent units. Keep quickstart links accurate after repairs. Delete /openwiki/_plan.md once every planned page has been created and populated; it is scratch, not documentation.
