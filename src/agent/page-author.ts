@@ -28,6 +28,7 @@ import {
   type AnyBackendProtocol,
   type FsToolName,
 } from "deepagents";
+import { z } from "zod";
 import type { OpenWikiCommand, OpenWikiOutputMode } from "./types.js";
 
 /**
@@ -70,22 +71,55 @@ Hard constraints:
 - Prefer grep and targeted reads over reading a large file whole. Everything you read stays in your context for the rest of your turns, so a wide read costs every later step, not just the one that made it.
 - Do not invent files, modules, APIs, or behavior. Every material proposition must be supported by source or tests you inspected.
 
-Writing the page:
-- Explain responsibilities, why the component exists, ownership and entrypoints, important symbols, dependencies and data flow, invariants and lifecycle ordering, extension points, focused tests and what they prove, validation, schemas, and scope boundaries the evidence supports.
+Establish the claims first, then write the page from them:
+- Derive the material factual propositions from what you inspected, before drafting prose. Each is one concise atomic proposition with the repo://path or repo://path#symbol evidence that establishes it. Split compound facts rather than collapsing a component into one summary proposition.
+- Cover the categories your assignment and the page's subject require: responsibilities, why it exists, ownership and entrypoints, important symbols, dependencies and data flow, invariants and lifecycle ordering, extension points, focused tests and what they prove, validation, schemas, and scope boundaries the evidence supports. A page that established two or three propositions has not read its subject.
+- Write the page from that proposition set. Every proposition must appear as explained prose stating the mechanism and the specific names, values, ordering, and conditions a reader needs to act on it. Prose may exceed the claim set where it connects or contextualises, but nothing material should appear on the page without a proposition behind it.
 - A passing mention, directory list, source-map row, or concise overview is not substantive coverage. A path or symbol points at evidence; it never substitutes for stating what that evidence says.
 - An agent or human should be able to understand this component and its workflows from your page without reading a single line of code outside the wiki.
 - State each supplied relationship in the prose that explains it, linking the target page by the path you were given. Do not invent link targets: another author may not have written that page yet, and a guessed path is a broken link.
 - Begin the file with OKF v0.1 front matter as your assignment specifies.
 
 Reporting:
-- Return the material factual propositions you established, each as one concise atomic proposition with its repo://path or repo://path#symbol evidence. Split compound facts rather than returning one summary proposition for the page.
-- The coordinator owns every Claims operation. Do not call Claims tools; your returned propositions are how they reach the wiki's claim set.
+- Return every proposition you established, with its evidence, in the structured response. That return is how they reach the wiki's claim set: the coordinator owns all Claims operations and establishes what you report, so a proposition you leave out of the response is one the wiki cannot later re-verify, however well the prose reads.
 - Report any assigned unit you could not document from evidence, and why, rather than writing an unsupported page.`;
+
+/**
+ * The author's return contract.
+ *
+ * Enforced as a schema rather than asked for in prose, because asking did not
+ * work: in the first fan-out run 50 of 60 authors returned no propositions at
+ * all and the coordinator ended up inventing most of the claim set itself,
+ * which is backwards - the author is the one holding the evidence.
+ */
+const PAGE_AUTHOR_RESPONSE = z.object({
+  page: z.string().describe("The canonical page path you were assigned."),
+  propositions: z
+    .array(
+      z.object({
+        statement: z
+          .string()
+          .describe(
+            "One concise atomic material proposition, stating a mechanism rather than naming a location.",
+          ),
+        evidence: z
+          .array(z.string())
+          .describe(
+            "repo://path or repo://path#symbol resources you inspected that establish this statement.",
+          ),
+      }),
+    )
+    .describe("Every proposition you established for this page."),
+  undocumented: z
+    .array(z.string())
+    .describe("Anything assigned that evidence did not support, and why."),
+});
 
 const PAGE_AUTHOR_SUBAGENT: SubAgent = {
   name: "page-author",
   description: PAGE_AUTHOR_DESCRIPTION,
   systemPrompt: PAGE_AUTHOR_SYSTEM_PROMPT,
+  responseFormat: PAGE_AUTHOR_RESPONSE,
 };
 
 /**
