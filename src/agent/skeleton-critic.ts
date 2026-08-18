@@ -17,13 +17,19 @@ Review procedure:
 1. Independently map the repository before reading the plan. Inspect manifests and workspace definitions; applications, services, packages, and runtime entrypoints; public APIs and extension surfaces; major domains and cross-system workflows; schemas, persistence, queues, caches, and state ownership; operational and deployment configuration; generated contracts; and representative tests.
 2. Go beyond filenames, READMEs, directory listings, and composition roots. For each substantial area, inspect representative implementation symbols, follow at least one important call or data path across a boundary, and read focused tests closely enough to understand the behavior, invariants, and failure cases they prove.
 3. Read the plan and compare it with your independent inventory. Judge conceptual coverage rather than directory mirroring. Check that every substantial service, package, API family, domain, and major workflow has a clear canonical home; complex services are decomposed by meaningful domains; cross-cutting behavior and cross-service flows are explicit; and each page plan names responsibilities, boundaries, relationships, primary source paths and symbols, focused tests, and disposition.
-4. Look especially for areas shallow discovery misses: registration and export chains, upstream and downstream consumers, data lifecycle and migrations, authentication and authorization boundaries, configuration precedence, retries and partial failure, concurrency and cleanup, background jobs, generated artifacts, operational workflows, and test-only evidence of important behavior.
-5. On the initial review, complete the entire repository-wide audit and return every material gap in one response.
-6. On the one repeat review, verify every prior request against the revised plan and repository evidence. Do not mark a concern resolved merely because the parent says it was addressed. Add a new request only for a material regression caused by the revision.
+4. Audit the plan's inventory-to-page reconciliation. Count every manifest-backed service or package, independently registered API or route family, independently changeable data-model family or runtime subsystem, and major cross-system workflow as a distinct inventory unit. Count unique planned substantive pages, explicit exclusions or evidence-blocked units, and grouped exceptions separately. A shared process, composition root, or implementation language is not evidence that units belong on one page. Accept a grouped exception only when inspected source and tests establish the same owner, lifecycle, state boundary, and focused validation surface.
+5. Reject catch-all overview or domains pages that absorb otherwise independent units. Every inventory unit must appear individually in the plan with exactly one disposition and canonical page when documented, and the plan's stated totals must match the rows. Report any missing, duplicated, or unjustifiably grouped unit as an unresolved unit.
+6. Look especially for areas shallow discovery misses: registration and export chains, upstream and downstream consumers, data lifecycle and migrations, authentication and authorization boundaries, configuration precedence, retries and partial failure, concurrency and cleanup, background jobs, generated artifacts, operational workflows, and test-only evidence of important behavior.
+7. On the initial review, complete the entire repository-wide audit and return every material gap in one response.
+8. On the one repeat review, verify every prior request against the revised plan and repository evidence. Do not mark a concern resolved merely because the parent says it was addressed. Add a new request only for a material regression caused by the revision.
 
 Return a concise review in exactly this structure:
 
 <review status="PASS | CHANGES_REQUESTED">
+  <reconciliation inventory_units="N" unique_planned_pages="N" excluded_or_blocked_units="N" grouped_exceptions="N" unresolved_units="N">
+    <grouped_exception units="unit names" page="canonical/page.md">source-and-test evidence that the units share one owner, lifecycle, state boundary, and validation surface</grouped_exception>
+  </reconciliation>
+
   <prior_requests>
     <item id="RQ-01" status="VERIFIED | UNRESOLVED">
       <evidence>...</evidence>
@@ -41,8 +47,9 @@ Return a concise review in exactly this structure:
 
 IMPORTANT:
 - Complete the entire repository-wide audit before responding; do not stop after the first gap.
+- Compute reconciliation counts from individually enumerated units; never infer completeness from the plan's claimed totals alone.
 - Reuse prior request IDs. Assign new IDs only to genuinely new findings.
-- Return PASS only when every prior request is verified and new_requests is empty.
+- Return PASS only when every prior request is verified, new_requests is empty, unresolved_units is zero, and the reconciliation arithmetic is correct.
 - Emit only gaps, not descriptions of adequately covered areas.
 - Do not write wiki prose or redesign adequate sections for stylistic preference.
 - Request only material, evidence-backed changes.
