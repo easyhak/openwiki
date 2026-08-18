@@ -143,6 +143,39 @@ describe("RepositoryEvidenceResolver", () => {
     expect(resolved?.content).toContain("def run");
   });
 
+  test("resolves Kotlin symbols with syntax-level evidence", async () => {
+    await writeFixture(
+      "Fixture.kt",
+      "class Service {\n  fun run(): Int = 1\n}\n",
+    );
+    const resolver = new RepositoryEvidenceResolver({ rootDir });
+
+    const resolved = await resolver.resolve("repo://Fixture.kt#Service.run");
+
+    expect(resolved?.evidence.version).toMatch(
+      /^tree-sitter-kotlin-v1:sha256:[a-f0-9]{64}$/u,
+    );
+    expect(resolved?.content).toContain("fun run");
+  });
+
+  test("falls back before parsing Kotlin sources containing null bytes", async () => {
+    const source = "/*\0";
+    await writeFixture("Fixture.kt", source);
+    const warnings: string[] = [];
+    const resolver = new RepositoryEvidenceResolver({
+      rootDir,
+      onWarning: (warning) => warnings.push(warning),
+    });
+
+    const resolved = await resolver.resolve("repo://Fixture.kt#Service");
+
+    expect(resolved?.evidence.version).toMatch(
+      /^repo-file-v1:sha256:[a-f0-9]{64}$/u,
+    );
+    expect(resolved?.content).toBe(source);
+    expect(warnings[0]).toContain("cannot safely parse null bytes");
+  });
+
   test("falls back once per file when supported source cannot be parsed", async () => {
     await writeFixture("fixture.ts", "export const broken =");
     const warnings: string[] = [];

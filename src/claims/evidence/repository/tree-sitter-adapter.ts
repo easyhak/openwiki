@@ -92,6 +92,11 @@ const JAVASCRIPT_DECLARATIONS = declarationFields({
 export type DeclarationNameFields = ReadonlyMap<string, readonly string[]>;
 
 /**
+ * Direct named-child paths used by grammars that do not expose name fields.
+ */
+type DeclarationNamePaths = ReadonlyMap<string, readonly (readonly string[])[]>;
+
+/**
  * Native Tree-sitter language accepted by the parser runtime.
  */
 type TreeSitterLanguage = object;
@@ -236,6 +241,17 @@ const SCALA_DECLARATIONS = declarationFields({
   var_declaration: ["name"],
 });
 
+const KOTLIN_DECLARATIONS = declarationFields({});
+
+const KOTLIN_DECLARATION_NAME_PATHS = declarationNamePaths({
+  class_declaration: [["type_identifier"]],
+  enum_entry: [["simple_identifier"]],
+  function_declaration: [["simple_identifier"]],
+  object_declaration: [["type_identifier"]],
+  property_declaration: [["variable_declaration", "simple_identifier"]],
+  type_alias: [["type_identifier"]],
+});
+
 /**
  * Tree-sitter adapter for one grammar and extension family.
  */
@@ -265,6 +281,11 @@ export class TreeSitterLanguageAdapter implements LanguageEvidenceAdapter {
    */
   private readonly declarations: DeclarationNameFields;
 
+  /**
+   * Named-child paths for declaration grammars without field metadata.
+   */
+  private readonly declarationNamePaths: DeclarationNamePaths;
+
   constructor(options: {
     /**
      * Stable adapter identifier included in persisted evidence versions.
@@ -292,6 +313,11 @@ export class TreeSitterLanguageAdapter implements LanguageEvidenceAdapter {
      * @default JavaScript and TypeScript declaration rules.
      */
     declarations?: DeclarationNameFields;
+
+    /**
+     * Language-specific named-child paths used when a grammar omits fields.
+     */
+    declarationNamePaths?: DeclarationNamePaths;
   }) {
     const id = options.id.trim();
     if (!id) {
@@ -334,6 +360,7 @@ export class TreeSitterLanguageAdapter implements LanguageEvidenceAdapter {
         return language;
       });
     this.declarations = options.declarations ?? JAVASCRIPT_DECLARATIONS;
+    this.declarationNamePaths = options.declarationNamePaths ?? new Map();
   }
 
   /**
@@ -358,6 +385,11 @@ export class TreeSitterLanguageAdapter implements LanguageEvidenceAdapter {
      */
     symbol: string;
   }): Promise<SymbolResolution | null> {
+    if (input.source.includes("\0")) {
+      throw new EvidenceParseError(
+        `Tree-sitter cannot safely parse null bytes in ${input.path}`,
+      );
+    }
     const parser = await this.getParser();
     let tree: Parser.Tree;
     try {
@@ -384,6 +416,7 @@ export class TreeSitterLanguageAdapter implements LanguageEvidenceAdapter {
       tree.rootNode,
       input.source,
       this.declarations,
+      this.declarationNamePaths,
     );
     const exact = candidates.filter(
       (candidate) => candidate.qualifiedName === input.symbol,
@@ -452,12 +485,14 @@ interface DeclarationCandidate {
  * @param root - Parsed syntax-tree root.
  * @param source - Complete source text.
  * @param declarations - Language-specific declaration-name rules.
+ * @param declarationNamePaths - Named-child paths for fieldless grammars.
  * @returns Stable source-order declaration candidates.
  */
 function collectDeclarations(
   root: Parser.SyntaxNode,
   source: string,
   declarations: DeclarationNameFields,
+  declarationNamePaths: DeclarationNamePaths,
 ): DeclarationCandidate[] {
   const candidates: DeclarationCandidate[] = [];
 
@@ -468,7 +503,11 @@ function collectDeclarations(
    * @param ancestors - Logical containing declarations.
    */
   function visit(node: Parser.SyntaxNode, ancestors: readonly string[]): void {
-    const nameNode = findDeclarationName(node, declarations);
+    const nameNode = findDeclarationName(
+      node,
+      declarations,
+      declarationNamePaths,
+    );
     const name = nameNode
       ? normalizeLogicalName(
           source.slice(nameNode.startIndex, nameNode.endIndex),
@@ -498,23 +537,58 @@ function collectDeclarations(
  *
  * @param node - Candidate syntax node.
  * @param declarations - Language-specific declaration-name rules.
+ * @param declarationNamePaths - Named-child paths for fieldless grammars.
  * @returns Declaration name node, or `null` for non-declarations.
  */
 function findDeclarationName(
   node: Parser.SyntaxNode,
   declarations: DeclarationNameFields,
+  declarationNamePaths: DeclarationNamePaths,
 ): Parser.SyntaxNode | null {
   const fields = declarations.get(node.type);
-  if (!fields) {
-    return null;
+  if (fields) {
+    for (const field of fields) {
+      const nameNode = findLogicalNameNode(node.childForFieldName(field));
+      if (nameNode) {
+        return nameNode;
+      }
+    }
   }
-  for (const field of fields) {
-    const nameNode = findLogicalNameNode(node.childForFieldName(field));
-    if (nameNode) {
-      return nameNode;
+
+  const paths = declarationNamePaths.get(node.type);
+  if (paths) {
+    for (const path of paths) {
+      const nameNode = findNamedChildPath(node, path);
+      if (nameNode) {
+        return nameNode;
+      }
     }
   }
   return null;
+}
+
+/**
+ * Follows a sequence of direct named-child node types to a declaration name.
+ *
+ * @param node - Declaration node at the start of the path.
+ * @param path - Ordered direct named-child types.
+ * @returns Logical declaration name node, or `null` when the path is absent.
+ */
+function findNamedChildPath(
+  node: Parser.SyntaxNode,
+  path: readonly string[],
+): Parser.SyntaxNode | null {
+  let current = node;
+  for (const childType of path) {
+    const child = current.namedChildren.find(
+      (candidate) => candidate.type === childType,
+    );
+    if (!child) {
+      return null;
+    }
+    current = child;
+  }
+  return findLogicalNameNode(current);
 }
 
 /**
@@ -617,6 +691,18 @@ function declarationFields(
   fields: Readonly<Record<string, readonly string[]>>,
 ): DeclarationNameFields {
   return new Map(Object.entries(fields));
+}
+
+/**
+ * Converts declaration child paths into an immutable lookup.
+ *
+ * @param paths - Declaration node types and possible named-child paths.
+ * @returns Lookup consumed by fieldless language grammars.
+ */
+function declarationNamePaths(
+  paths: Readonly<Record<string, readonly (readonly string[])[]>>,
+): DeclarationNamePaths {
+  return new Map(Object.entries(paths));
 }
 
 /**
@@ -765,6 +851,17 @@ export function createBuiltInLanguageEvidenceAdapters(): LanguageEvidenceAdapter
       declarations: JAVA_DECLARATIONS,
       loadLanguage: async () =>
         defaultLanguage(await import("tree-sitter-java"), "tree-sitter-java"),
+    }),
+    new TreeSitterLanguageAdapter({
+      id: "kotlin-v1",
+      extensions: [".kt", ".kts"],
+      declarations: KOTLIN_DECLARATIONS,
+      declarationNamePaths: KOTLIN_DECLARATION_NAME_PATHS,
+      loadLanguage: async () =>
+        defaultLanguage(
+          await import("tree-sitter-kotlin"),
+          "tree-sitter-kotlin",
+        ),
     }),
     new TreeSitterLanguageAdapter({
       id: "c-sharp-v1",

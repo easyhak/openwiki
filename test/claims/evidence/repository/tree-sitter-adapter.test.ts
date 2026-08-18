@@ -109,6 +109,8 @@ describe("TreeSitterLanguageAdapter", () => {
       "<?php class Service { public function run(): int { return 1; } }",
       "Service.run",
     ],
+    ["Fixture.kt", "class Service {\n  fun run(): Int = 1\n}\n", "Service.run"],
+    ["fixture.kts", "fun configure(): Int = 1\n", "configure"],
     ["fixture.scala", "class Service { def run(): Int = 1 }", "Service.run"],
   ])(
     "resolves representative declarations in %s",
@@ -143,6 +145,8 @@ describe("TreeSitterLanguageAdapter", () => {
         ".java",
         ".js",
         ".jsx",
+        ".kt",
+        ".kts",
         ".mjs",
         ".mts",
         ".php",
@@ -159,7 +163,24 @@ describe("TreeSitterLanguageAdapter", () => {
       ]),
     );
     expect(extensions.has(".h")).toBe(false);
-    expect(extensions.has(".kt")).toBe(false);
+  });
+
+  test.each([
+    ["class", "class Service\n", "Service"],
+    ["object", "object Registry\n", "Registry"],
+    [
+      "property",
+      'class Service {\n  val endpoint = "/"\n}\n',
+      "Service.endpoint",
+    ],
+    ["type alias", "typealias Identifier = String\n", "Identifier"],
+    ["enum entry", "enum class Mode { FAST, SAFE }\n", "Mode.FAST"],
+  ])("resolves a Kotlin %s", async (_kind, source, symbol) => {
+    const resolved = await resolveRequired("Fixture.kt", source, symbol);
+
+    expect(resolved.content).toContain(
+      symbol.slice(symbol.lastIndexOf(".") + 1),
+    );
   });
 
   test("loads a deferred grammar once on first use", async () => {
