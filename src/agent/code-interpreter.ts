@@ -25,7 +25,14 @@ import { createCodeInterpreterMiddleware } from "@langchain/quickjs";
 /**
  * Tools exposed inside the REPL.
  *
- * Read-only discovery plus `task`. Authoring stays on the direct surface: a
+ * Read-only discovery only. `task` is deliberately absent: the middleware exposes
+ * it as a top-level `task()` global inside the REPL already, with subagentType
+ * and responseSchema support, and listing it in `ptc` is rejected outright
+ * because a second dispatch path through `tools.*` would drop responseSchema.
+ * Fan-out therefore works without being requested here - and rather better,
+ * since a schema lets an author return structured propositions.
+ *
+ * Authoring stays on the direct surface: a
  * page's prose has to come out of a model turn, so routing write_file through
  * the REPL would only mean emitting every page's body inside one code string.
  * Fan-out is how authoring scales instead - each subagent spends its own turns.
@@ -39,7 +46,7 @@ import { createCodeInterpreterMiddleware } from "@langchain/quickjs";
  * a schema-validated tool call rather than a shell escape, widening that
  * boundary is the author's decision to make, not a side effect of this change.
  */
-const PTC_TOOLS = ["ls", "glob", "grep", "read_file", "task"] as const;
+const PTC_TOOLS = ["ls", "glob", "grep", "read_file"] as const;
 
 /**
  * Wall-clock budget for one `eval`.
