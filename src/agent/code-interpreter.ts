@@ -41,12 +41,29 @@ import { createCodeInterpreterMiddleware } from "@langchain/quickjs";
  * rename upstream would quietly turn the REPL back into a plain sandbox and the
  * agent would fall back to per-file round-trips with nothing failing loudly.
  *
- * `resolve_claims` is deliberately absent. docs-only-backend already refuses
- * shell access to Claims state as implementation-owned, and while a PTC call is
- * a schema-validated tool call rather than a shell escape, widening that
- * boundary is the author's decision to make, not a side effect of this change.
+ * `resolve_claims` is here because the coordinator's context was the funnel that
+ * lost the claim set. Authors return roughly nineteen propositions per page and
+ * only about three per page were being established: to establish a thousand
+ * propositions by hand the coordinator must first read all thousand into its
+ * transcript and then re-emit them, so it condensed instead, and saying not to
+ * did not change that. Called from the REPL it can pipe author returns straight
+ * into Claims without any of them entering its context.
+ *
+ * This does not weaken the boundary docs-only-backend draws. That refuses SHELL
+ * access to Claims state as implementation-owned; a PTC call is the same
+ * schema-validated tool the agent already holds, reached from code rather than
+ * from a message, and the coordinator remains the single writer. Authors still
+ * do not get it: fifty-seven concurrent writers is a different question about
+ * the store, and the ownership split is what keeps a proposition traceable to
+ * the agent that read the evidence.
  */
-const PTC_TOOLS = ["ls", "glob", "grep", "read_file"] as const;
+const PTC_TOOLS = [
+  "ls",
+  "glob",
+  "grep",
+  "read_file",
+  "resolve_claims",
+] as const;
 
 /**
  * Wall-clock budget for one `eval`.
