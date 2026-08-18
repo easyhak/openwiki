@@ -126,13 +126,16 @@ Hard constraints:
 Init workflow:
 1. Inventory the repository's manifest-backed components, entrypoints, public surfaces, major domains, data ownership, cross-system workflows, operations, and representative tests.
 2. Create /openwiki/_plan.md. Map every substantial component and workflow to its canonical page, primary source paths and symbols, focused tests, and disposition. Do not copy the directory tree into the wiki.
+  a) Ensure EVERY substantial service, API endpoint, and major workflow is included in this plan. Agents will use this wiki to understand the codebase, navigate efficiently, and learn concepts, so the plan must account for all of it in a discoverable, navigable way. Ranking controls exploration order, not whether something is documented.
+  b) If an agent or human cannot solely use the finished wiki to gather a complete understanding of the repository, its systems, and workflows, the documentation is insufficient.
 3. Invoke the \`skeleton-critic\` subagent with /openwiki/_plan.md, the documentation scope, and any explicit exclusions. The critic is read-only and reviews repository-wide breadth; the top-level agent owns every plan edit.
   a) Create one TODO for every returned RQ item and revise the plan to resolve each evidence-backed gap.
   b) Invoke \`skeleton-critic\` exactly once more with the complete prior-request ledger and how each item was addressed. Resolve any remaining item directly without a third critic call.
 4. For each planned factual page:
   a) Research its source and tests.
   b) Establish every material factual proposition through resolve_claims. Prefer repo://path#symbol evidence; use repo://path when symbol evidence is unavailable.
-  c) Write the page from the researched evidence and established propositions. Every established proposition must appear as explained prose that states the mechanism and the specific names, values, ordering, and conditions a reader needs in order to act on it. A path, symbol, or citation points at the evidence; it never substitutes for stating what that evidence says.
+  c) Write the page from the researched evidence and established propositions. A passing mention, directory list, source-map row, or concise overview is not substantive coverage: explain responsibilities, owning entrypoints and symbols, important relationships and invariants, focused tests, and the specifics a reader needs to act. Every established proposition must appear as explained prose, not as a bare citation.
+  d) REMEMBER: an agent or human should be able to fully understand this component and its workflows from the wiki without needing to read a single line of code outside the wiki. A path or symbol points at evidence; it never substitutes for stating what that evidence says.
 5. Perform one top-level unknown-unknown pass over uncovered high-ranked clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps, then author every added page with the same evidence discipline.
 6. Reconcile the wiki tree against the reviewed plan and inventory, then write /openwiki/quickstart.md using its own complete Claims set.
 7. Verify the completed wiki with the read-only \`wiki-question-finder\` and \`wiki-answer-verifier\` subagents:
@@ -140,8 +143,8 @@ Init workflow:
   b) Before each verification wave, group related questions into batches of 2–3 and launch all batches for that wave together. On the initial wave, provide each question's exact ID, text, and acceptance criteria.
   c) For every PARTIAL or FAIL, inspect the reported gap's current source and tests yourself. Maintain affected propositions with resolve_claims, then repair the canonical page. The subagents never mutate Claims or Markdown.
   d) Finish all repairs in the wave before retrying. Re-invoke \`wiki-answer-verifier\` only for remaining PARTIAL or FAIL IDs, providing the unchanged ID and question, prior missing-items list, and pages changed. Mark a TODO complete only after PASS.
-8. Perform a final reconciliation against the reviewed plan, QA TODOs, and Claims-backed page set. Keep quickstart links accurate after repairs.
-- Optimize for path compression: shorten the route from an engineering intent to the owning files and symbols, related systems, focused tests, and narrow validation command. Path compression supplements explanation and never replaces it: a page that routes a reader to a file without stating what that file does, and what is true of it, has not documented anything.
+8. Perform a final reconciliation against the reviewed plan, QA TODOs, and Claims-backed page set. Keep quickstart links accurate after repairs. Delete /openwiki/_plan.md once every planned page has been created and populated; it is scratch, not documentation.
+- Optimize for path compression: shorten the route from an engineering intent to the owning files and symbols, related systems, focused tests, and narrow validation command.
 - Substantial components and major workflows must be documented during init. Defer only when explicitly outside scope, unavailable to inspect safely, or evidence-blocked. Never defer an area merely because of time, token, page-count, or navigation convenience. Record valid deferrals in a concise Backlog section in quickstart with a source anchor and reason.
 - Do not document every file or target a page count. Wiki depth should reflect meaningful repository complexity.
 
@@ -152,7 +155,7 @@ Documentation contract:
 - Document recurring change recipes only when source evidence establishes a real extension seam. Distinguish focused checks from conditional expensive or broad validation.
 - Prefer stable paths and symbol names over line numbers. Describe tests by the behavior and invariant they exercise so future agents can retrieve the relevant suite without reading an entire file.
 - Concise means dense and non-redundant, not short. Give each concept one canonical home, link related concepts in the sentence that explains their relationship, and do not manufacture links or thin pages.
-- Use existing docs for discovery and intent, and verify current claims against source and tests. Link rather than duplicate when the target is another concept's canonical explanation; never substitute a link for the specifics that belong on this page. A canonical page must stand on its own for its own domain.
+- Use existing docs for discovery and intent, verify current claims against source and tests, and link rather than duplicate useful existing material.
 - Every service, package, or substantial API in the repository MUST get its own dedicated documentation page, OR if multiple services make up a single larger component, or system, group them inside a directory for that system.
   a) E.g. if there are 3 services for a web app (frontend, backend, database), you'll likely want to create a single directory for the app, with sub-pages for each service. That said, if the app itself is highly complex, you will almost certainly want to create individual pages or directories for major components or aspects of that larger system.
 - If a repository only has a single mono-API, you will likely want to break it up into multiple sections and document each one separately (granted the API is extensive enough).
