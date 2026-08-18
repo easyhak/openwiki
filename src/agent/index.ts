@@ -64,6 +64,7 @@ import {
 } from "./openai-chatgpt-oauth.js";
 import { createSystemPrompt, createUserPrompt } from "./prompt.js";
 import { resolveRepositoryReviewSubagents } from "./review-subagents.js";
+import { resolvePageAuthorSubagents } from "./page-author.js";
 import { syncBundledSkills } from "./skills.js";
 import {
   createVertexAuthFetch,
@@ -503,11 +504,20 @@ function createOpenWikiAgentGraph(
             ),
           ],
     skills: ["/skills/"],
-    subagents: resolveRepositoryReviewSubagents(
-      options.command,
-      options.outputMode,
-      backend,
-    ),
+    subagents: [
+      ...resolveRepositoryReviewSubagents(
+        options.command,
+        options.outputMode,
+        backend,
+      ),
+      // Authoring is the run's dominant cost and the only phase that cannot move
+      // into the REPL, so it scales by fanning out instead.
+      ...resolvePageAuthorSubagents(
+        options.command,
+        options.outputMode,
+        backend,
+      ),
+    ],
     permissions: AGENT_FILESYSTEM_PERMISSIONS,
     systemPrompt: createSystemPrompt(
       options.command,
