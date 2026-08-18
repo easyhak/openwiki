@@ -65,7 +65,6 @@ import {
 import { createSystemPrompt, createUserPrompt } from "./prompt.js";
 import { resolveRepositoryReviewSubagents } from "./review-subagents.js";
 import { resolvePageAuthorSubagents } from "./page-author.js";
-import { resolveSubtreeSurveyorSubagents } from "./subtree-surveyor.js";
 import { syncBundledSkills } from "./skills.js";
 import {
   createVertexAuthFetch,
@@ -507,13 +506,6 @@ function createOpenWikiAgentGraph(
     skills: ["/skills/"],
     subagents: [
       ...resolveRepositoryReviewSubagents(
-        options.command,
-        options.outputMode,
-        backend,
-      ),
-      // Planning a large repository does not fit one context: survey its subtrees
-      // in parallel and merge, rather than comprehending the whole at once.
-      ...resolveSubtreeSurveyorSubagents(
         options.command,
         options.outputMode,
         backend,
