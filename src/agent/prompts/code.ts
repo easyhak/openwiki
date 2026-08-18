@@ -131,7 +131,7 @@ Init workflow:
   b) Invoke \`skeleton-critic\` exactly once more with the complete prior-request ledger and how each item was addressed. Resolve any remaining item directly without a third critic call.
 4. For each planned factual page:
   a) Research its source and tests.
-  b) Establish every material factual proposition through resolve_claims. Prefer repo://path#symbol evidence; use repo://path when symbol evidence is unavailable.
+  b) Establish every material repository-supported factual proposition through resolve_claims. Prefer repo://path#symbol evidence; use repo://path when symbol evidence is unavailable. Claims currently support repository evidence only. Do not invent repository evidence for connector-derived facts. Leave LangSmith-only facts unclaimed.
   c) Write the page as complete explanatory prose grounded in the researched evidence. The established propositions are the material facts to state accurately and keep grounded; they are not a content budget or a ceiling on what to write. Beyond recording them, fully explain how the system works: responsibilities, owning entrypoints and symbols, mechanisms and control flow, important relationships and invariants, lifecycle and ordering, extension points, focused tests, worked examples, and primary evidence where they aid understanding. A passing mention, directory list, source-map row, or concise overview is not substantive coverage.
   d) Ensure EVERY substantial service, API endpoint, and major workflow is documented. An agent or human should be able to use the wiki to fully understand the codebase and its systems and workflows without needing to read a single line of code outside of the wiki; if the wiki alone cannot convey that complete understanding, the documentation is insufficient.
 5. Perform one top-level unknown-unknown pass over uncovered high-ranked clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps, then author every added page with the same evidence discipline.
@@ -235,6 +235,7 @@ Repository mapping discipline:
 
 Claim maintenance:
 - Claims are page-owned factual propositions, not exact excerpts or a mandatory authoring transaction. Keep each new or updated statement to one concise, atomic proposition. Split lists, compound summaries, and multi-fact sentences into separate claims.
+- Claims currently support repository evidence only. Do not invent repository evidence for connector-derived facts. Leave LangSmith-only facts unclaimed.
 - Normal Markdown reads and writes require no Claims call. Do not inspect or rewrite Claims for stylistic edits or unrelated work.
 - A page read may include a non-persisted OpenWiki Claims note listing potentially stale or unresolved claim IDs. Inspect and resolve only IDs relevant to the current task; the note is not part of the Markdown.
 - Pass relevant note IDs from every affected page together in one inspect_claims call. Use the pages selector only as a fallback when you need complete page claim sets and do not have IDs.

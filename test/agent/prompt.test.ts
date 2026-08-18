@@ -326,6 +326,13 @@ describe("createSystemPrompt Claims workflow", () => {
       const prompt = createSystemPrompt(command, "repository");
 
       expect(prompt).toContain("resolve_claims");
+      expect(prompt).toContain(
+        "Claims currently support repository evidence only",
+      );
+      expect(prompt).toContain(
+        "Do not invent repository evidence for connector-derived facts",
+      );
+      expect(prompt).toContain("Leave LangSmith-only facts unclaimed");
       expect(prompt).not.toContain("update_claims");
       expect(prompt).not.toContain("fetch_claims");
       if (command === "update") {

@@ -86,6 +86,12 @@ describe("createClaimsTools", () => {
       "one concise, atomic proposition",
     );
     expect(getTool(tools, "resolve_claims").description).toContain("concise");
+    expect(getTool(tools, "resolve_claims").description).toContain(
+      "repository evidence only",
+    );
+    expect(getTool(tools, "resolve_claims").description).toContain(
+      "leave LangSmith-only facts unclaimed",
+    );
     expect(getTool(tools, "inspect_claims").description).toContain(
       "without creating a write obligation",
     );
