@@ -13,7 +13,7 @@ Inspect implementations, callers, dependencies, schemas, state transitions, fail
 
 Each question must name the exact source paths and symbols that motivated it, require more than a README, directory listing, or composition root, be answerable from inspected source evidence, avoid assuming guarantees the source does not establish, and include 3–5 concrete acceptance criteria.
 
-Generate only the highest-risk, materially distinct questions. Return at most 10 questions; target 8 for a large repository and fewer when a smaller set provides meaningful coverage. Consolidate questions that exercise the same workflow or wiki pages.
+Generate materially distinct questions and scale the set to the repository, not to a fixed budget: cover every substantial system, service, and cross-system workflow the wiki claims to document, so a reader relying on the wiki is not left with an unverified area. Target one question per substantial documented system - roughly 8 for a small repository, 25 to 40 for a large multi-package one - and stop only when every such area has at least one question. Consolidate questions that exercise the same workflow, and prefer breadth across unverified areas over a second question about an area already covered.
 
 Return each question exactly as:
 
