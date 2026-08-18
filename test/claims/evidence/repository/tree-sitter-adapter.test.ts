@@ -1,7 +1,7 @@
 import JavaScript from "tree-sitter-javascript";
 import { describe, expect, test } from "vitest";
 import {
-  EvidenceResolutionError,
+  EvidenceParseError,
   EvidenceResourceError,
 } from "../../../../src/claims/core/errors.ts";
 import {
@@ -327,7 +327,7 @@ export function LargeView() { return <main />; }`;
           symbol: "broken",
         }),
       ),
-    ).rejects.toThrow(EvidenceResolutionError);
+    ).rejects.toThrow(EvidenceParseError);
   });
 
   test("normalizes configured extensions", () => {

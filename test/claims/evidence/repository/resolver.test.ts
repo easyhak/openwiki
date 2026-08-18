@@ -6,9 +6,13 @@ import { OpenWikiIgnore } from "../../../../src/agent/openwiki-ignore.ts";
 import {
   EvidenceResolutionError,
   EvidenceResourceError,
+  EvidenceSecurityError,
 } from "../../../../src/claims/core/errors.ts";
 import { RepositoryEvidenceResolver } from "../../../../src/claims/evidence/repository/resolver.ts";
-import type { LanguageEvidenceAdapter } from "../../../../src/claims/evidence/repository/tree-sitter-adapter.ts";
+import {
+  TreeSitterLanguageAdapter,
+  type LanguageEvidenceAdapter,
+} from "../../../../src/claims/evidence/repository/tree-sitter-adapter.ts";
 
 /**
  * Creates a minimal injected language adapter for registration tests.
@@ -139,13 +143,67 @@ describe("RepositoryEvidenceResolver", () => {
     expect(resolved?.content).toContain("def run");
   });
 
-  test("rejects malformed supported source", async () => {
+  test("falls back once per file when supported source cannot be parsed", async () => {
     await writeFixture("fixture.ts", "export const broken =");
-    const resolver = new RepositoryEvidenceResolver({ rootDir });
+    const warnings: string[] = [];
+    const resolver = new RepositoryEvidenceResolver({
+      rootDir,
+      onWarning: (warning) => warnings.push(warning),
+    });
 
-    await expect(resolver.resolve("repo://fixture.ts#broken")).rejects.toThrow(
-      EvidenceResolutionError,
+    const first = await resolver.resolve("repo://fixture.ts#broken");
+    const second = await resolver.resolve("repo://fixture.ts#other");
+
+    expect(first?.evidence.resource).toBe("repo://fixture.ts#broken");
+    expect(first?.evidence.version).toMatch(
+      /^repo-file-v1:sha256:[a-f0-9]{64}$/u,
     );
+    expect(first?.content).toBe("export const broken =");
+    expect(second?.evidence.version).toBe(first?.evidence.version);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("Fell back to whole-file evidence");
+  });
+
+  test("does not hide non-parse adapter failures", async () => {
+    await writeFixture("fixture.custom", "source");
+    const failure = new EvidenceResolutionError("resolver unavailable");
+    const resolver = new RepositoryEvidenceResolver({
+      rootDir,
+      adapters: [
+        {
+          id: "custom-v1",
+          extensions: [".custom"],
+          resolveSymbol: () => Promise.reject(failure),
+        },
+      ],
+    });
+
+    await expect(resolver.resolve("repo://fixture.custom#symbol")).rejects.toBe(
+      failure,
+    );
+  });
+
+  test("falls back when a supported grammar cannot initialize", async () => {
+    await writeFixture("fixture.broken", "source");
+    const warnings: string[] = [];
+    const resolver = new RepositoryEvidenceResolver({
+      rootDir,
+      adapters: [
+        new TreeSitterLanguageAdapter({
+          id: "broken-v1",
+          extensions: [".broken"],
+          loadLanguage: () => Promise.reject(new Error("grammar unavailable")),
+        }),
+      ],
+      onWarning: (warning) => warnings.push(warning),
+    });
+
+    const resolved = await resolver.resolve("repo://fixture.broken#symbol");
+
+    expect(resolved?.evidence.version).toMatch(
+      /^repo-file-v1:sha256:[a-f0-9]{64}$/u,
+    );
+    expect(warnings[0]).toContain("grammar unavailable");
   });
 
   test("rejects ignored evidence", async () => {
@@ -166,7 +224,7 @@ describe("RepositoryEvidenceResolver", () => {
     const resolver = new RepositoryEvidenceResolver({ rootDir });
 
     await expect(resolver.resolve("repo://link.ts#target")).rejects.toThrow(
-      EvidenceResolutionError,
+      EvidenceSecurityError,
     );
   });
 

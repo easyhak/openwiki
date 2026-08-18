@@ -3,15 +3,20 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { OpenWikiIgnore } from "../../../agent/openwiki-ignore.js";
 import {
+  EvidenceParseError,
   EvidenceResolutionError,
   EvidenceResourceError,
+  EvidenceSecurityError,
 } from "../../core/errors.js";
 import {
   formatRepositoryEvidenceResource,
   parseRepositoryEvidenceResource,
 } from "./resource.js";
 import type { EvidenceResolver, ResolvedEvidence } from "../../core/types.js";
-import type { LanguageEvidenceAdapter } from "./tree-sitter-adapter.js";
+import type {
+  LanguageEvidenceAdapter,
+  SymbolResolution,
+} from "./tree-sitter-adapter.js";
 import { createBuiltInLanguageEvidenceAdapters } from "./tree-sitter-adapter.js";
 
 /**
@@ -36,6 +41,13 @@ export interface RepositoryEvidenceResolverOptions {
    * @default the built-in supported-language adapters.
    */
   adapters?: LanguageEvidenceAdapter[];
+
+  /**
+   * Receives one diagnostic when precise parsing degrades to whole-file evidence.
+   *
+   * @default warnings are not emitted.
+   */
+  onWarning?: (message: string) => void;
 }
 
 /**
@@ -64,6 +76,16 @@ export class RepositoryEvidenceResolver implements EvidenceResolver {
    */
   private readonly adapters: Map<string, LanguageEvidenceAdapter>;
 
+  /**
+   * Optional diagnostic sink for conservative evidence fallback.
+   */
+  private readonly onWarning?: (message: string) => void;
+
+  /**
+   * Source paths already reported during this resolver's run.
+   */
+  private readonly warnedFallbackPaths = new Set<string>();
+
   constructor(options: RepositoryEvidenceResolverOptions) {
     if (!path.isAbsolute(options.rootDir)) {
       throw new EvidenceResourceError(
@@ -73,6 +95,7 @@ export class RepositoryEvidenceResolver implements EvidenceResolver {
 
     this.rootDir = path.resolve(options.rootDir);
     this.openWikiIgnore = options.openWikiIgnore ?? new OpenWikiIgnore([]);
+    this.onWarning = options.onWarning;
     this.adapters = new Map();
 
     for (const adapter of options.adapters ??
@@ -120,7 +143,7 @@ export class RepositoryEvidenceResolver implements EvidenceResolver {
     try {
       const metadata = await lstat(absolutePath);
       if (metadata.isSymbolicLink()) {
-        throw new EvidenceResolutionError(
+        throw new EvidenceSecurityError(
           `Evidence cannot reference a symbolic link: ${parsed.path}`,
         );
       }
@@ -134,7 +157,7 @@ export class RepositoryEvidenceResolver implements EvidenceResolver {
         !isPathInside(realRootDir, physicalPath) ||
         physicalPath !== expectedPhysicalPath
       ) {
-        throw new EvidenceResolutionError(
+        throw new EvidenceSecurityError(
           `Evidence path traverses a symbolic link or filesystem alias: ${parsed.path}`,
         );
       }
@@ -152,33 +175,30 @@ export class RepositoryEvidenceResolver implements EvidenceResolver {
     }
 
     if (!parsed.symbol) {
-      return {
-        evidence: {
-          resource: canonicalResource,
-          version: version("repo-file-v1", source),
-        },
-        content: source,
-      };
+      return wholeFileEvidence(canonicalResource, source);
     }
 
     const adapter = this.adapters.get(
       path.posix.extname(parsed.path).toLowerCase(),
     );
     if (!adapter) {
-      return {
-        evidence: {
-          resource: canonicalResource,
-          version: version("repo-file-v1", source),
-        },
-        content: source,
-      };
+      return wholeFileEvidence(canonicalResource, source);
     }
 
-    const resolved = await adapter.resolveSymbol({
-      path: parsed.path,
-      source,
-      symbol: parsed.symbol,
-    });
+    let resolved: SymbolResolution | null;
+    try {
+      resolved = await adapter.resolveSymbol({
+        path: parsed.path,
+        source,
+        symbol: parsed.symbol,
+      });
+    } catch (error) {
+      if (!(error instanceof EvidenceParseError)) {
+        throw error;
+      }
+      this.warnParseFallback(parsed.path, error);
+      return wholeFileEvidence(canonicalResource, source);
+    }
     if (!resolved) {
       return null;
     }
@@ -221,13 +241,53 @@ export class RepositoryEvidenceResolver implements EvidenceResolver {
   private async getRealRootDir(): Promise<string> {
     this.realRootDirPromise ??= realpath(this.rootDir).catch(
       (error: unknown) => {
-        throw new EvidenceResolutionError(
+        throw new EvidenceSecurityError(
           `Unable to resolve repository root ${this.rootDir}: ${toErrorMessage(error)}`,
         );
       },
     );
     return this.realRootDirPromise;
   }
+
+  /**
+   * Reports one parse fallback per source path without making diagnostics fatal.
+   *
+   * @param sourcePath - Repository-relative source path.
+   * @param error - Parser failure responsible for the fallback.
+   */
+  private warnParseFallback(
+    sourcePath: string,
+    error: EvidenceParseError,
+  ): void {
+    if (this.warnedFallbackPaths.has(sourcePath)) {
+      return;
+    }
+    this.warnedFallbackPaths.add(sourcePath);
+    try {
+      this.onWarning?.(
+        `Fell back to whole-file evidence for ${sourcePath}: ${error.message}`,
+      );
+    } catch {
+      // A diagnostic sink must never turn a safe evidence fallback into failure.
+    }
+  }
+}
+
+/**
+ * Builds conservative whole-file evidence while preserving the requested URI.
+ *
+ * @param resource - Canonical repository evidence resource, including a symbol.
+ * @param source - Complete source text.
+ * @returns Whole-file-backed resolved evidence.
+ */
+function wholeFileEvidence(resource: string, source: string): ResolvedEvidence {
+  return {
+    evidence: {
+      resource,
+      version: version("repo-file-v1", source),
+    },
+    content: source,
+  };
 }
 
 /**

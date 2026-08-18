@@ -183,7 +183,14 @@ export async function runOpenWikiAgent(
 
   const claimsRuntime = await inStage(
     "build",
-    () => prepareClaimsRuntime(command, outputMode, runtimeCwd, openWikiIgnore),
+    () =>
+      prepareClaimsRuntime(
+        command,
+        outputMode,
+        runtimeCwd,
+        openWikiIgnore,
+        (message) => emitClaimsWarning(options, message),
+      ),
     { errorClass: "build_error", errorDetail: "claims_preflight" },
   );
   emitDebug(
@@ -378,6 +385,7 @@ export async function createOpenWikiAgent(
     options.outputMode,
     options.cwd,
     openWikiIgnore,
+    (message) => emitClaimsWarning(options, message),
   );
   const checkpointer = await createCheckpointer(
     resolveCheckpointTarget(options.command),
@@ -1025,6 +1033,29 @@ function emitDebug(options: OpenWikiRunOptions, message: string): void {
     type: "debug",
     message,
   });
+}
+
+/**
+ * Surfaces non-fatal Claims degradation without exposing credential text.
+ *
+ * @param options - Current run callbacks.
+ * @param message - Claims-owned warning detail.
+ */
+function emitClaimsWarning(
+  options: Pick<OpenWikiRunOptions, "onEvent">,
+  message: string,
+): void {
+  const warning = `OpenWiki Claims warning: ${sanitizeDiagnosticText(message)}`;
+  try {
+    options.onEvent?.({ type: "text", text: `${warning}\n` });
+  } catch {
+    // A user-owned event callback must not make safe Claims fallback fatal.
+  }
+  try {
+    process.stderr.write(`${warning}\n`);
+  } catch {
+    // Closed diagnostic streams do not change Claims correctness.
+  }
 }
 
 function ensureProviderCredentials(provider: OpenWikiProvider): void {

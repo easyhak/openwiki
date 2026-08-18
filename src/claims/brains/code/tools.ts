@@ -320,8 +320,8 @@ export function createClaimsDeleteFileTool(
 /**
  * Executes a model-facing Claims operation with recoverable input failures.
  *
- * Operational evidence, filesystem, parser, and unexpected failures are
- * intentionally rethrown so they cannot be mistaken for agent input errors.
+ * Non-fallback evidence, filesystem, and unexpected failures are intentionally
+ * rethrown so they cannot be mistaken for agent input errors.
  *
  * @param operation - Parsed Claims operation to execute.
  * @returns Compact JSON for either success or a retryable input failure.

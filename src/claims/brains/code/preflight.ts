@@ -26,9 +26,9 @@ export interface ClaimsPreflightResult {
 /**
  * Runs global claim freshness checks without creating mandatory agent work.
  *
- * Each evidence resource resolves once per preflight. Resolution errors are
- * intentionally allowed to propagate so a parser or filesystem failure cannot
- * be mistaken for deleted evidence.
+ * Each evidence resource resolves once per preflight. The repository resolver
+ * handles safe parser fallback; remaining resolution errors propagate so they
+ * cannot be mistaken for deleted evidence.
  *
  * @param store - Repository claim persistence.
  * @param resolver - Repository evidence resolver.
