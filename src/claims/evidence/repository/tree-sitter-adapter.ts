@@ -1,5 +1,6 @@
 import Parser from "tree-sitter";
 import {
+  EvidenceParseError,
   EvidenceResolutionError,
   EvidenceResourceError,
 } from "../../core/errors.js";
@@ -368,13 +369,13 @@ export class TreeSitterLanguageAdapter implements LanguageEvidenceAdapter {
         bufferSize: input.source.length + 1,
       });
     } catch (error) {
-      throw new EvidenceResolutionError(
+      throw new EvidenceParseError(
         `Tree-sitter failed to parse ${input.path}: ${toErrorMessage(error)}`,
       );
     }
 
     if (tree.rootNode.hasError) {
-      throw new EvidenceResolutionError(
+      throw new EvidenceParseError(
         `Tree-sitter produced a syntax error for ${input.path}`,
       );
     }

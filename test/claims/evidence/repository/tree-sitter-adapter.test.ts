@@ -1,6 +1,7 @@
 import JavaScript from "tree-sitter-javascript";
 import { describe, expect, test } from "vitest";
 import {
+  EvidenceParseError,
   EvidenceResolutionError,
   EvidenceResourceError,
 } from "../../../../src/claims/core/errors.ts";
@@ -328,6 +329,22 @@ export function LargeView() { return <main />; }`;
         }),
       ),
     ).rejects.toThrow(EvidenceResolutionError);
+  });
+
+  test("reports an unparseable file as a parse failure, not an outage", async () => {
+    // LangChainPlus commits a literal NUL inside a template literal in
+    // .github/scripts/ci-blocker/signature.ts. tree-sitter cannot parse it and
+    // never will, so it has to cost that page's claims rather than every page
+    // batched with it - which is what the subclass buys at the tool seam.
+    await expect(
+      Promise.resolve().then(() =>
+        adapterFor("fixture.ts").resolveSymbol({
+          path: "fixture.ts",
+          source: "export const key = (c: C) => `${c.a}\u0000${c.b}`;",
+          symbol: "key",
+        }),
+      ),
+    ).rejects.toThrow(EvidenceParseError);
   });
 
   test("normalizes configured extensions", () => {

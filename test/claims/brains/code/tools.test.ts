@@ -1,6 +1,9 @@
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { describe, expect, test, vi } from "vitest";
-import { EvidenceResolutionError } from "../../../../src/claims/core/errors.ts";
+import {
+  EvidenceParseError,
+  EvidenceResolutionError,
+} from "../../../../src/claims/core/errors.ts";
 import type {
   EvidenceResolver,
   ResolvedEvidence,
@@ -424,6 +427,111 @@ describe("createClaimsTools", () => {
     expect(output.failed?.[0]).toMatchObject({ page: other, retryable: true });
     // The seeded claim plus the one this call added: the successful page's
     // mutation applied even though its neighbour in the same call failed.
+    expect(session.inspectClaims(PAGE)).toHaveLength(2);
+  });
+
+  test("an unparseable file costs its page, not the batch", async () => {
+    // The failure that made this necessary: one committed NUL byte in one
+    // TypeScript file took down every page batched with it, and the coordinator
+    // answered by writing its own evidence filter into the retry path.
+    const other = "/openwiki/other.md";
+    const session = createSession({
+      resolver: {
+        resolve: (resource: string) => {
+          if (resource.includes("unparseable")) {
+            return Promise.reject(
+              new EvidenceParseError(
+                "Tree-sitter produced a syntax error for src/unparseable.ts",
+              ),
+            );
+          }
+          return Promise.resolve({
+            evidence: { resource, version: "revision:2" },
+            content: "c",
+          });
+        },
+      },
+    });
+    const resolve = getTool(createClaimsTools(session), "resolve_claims");
+    const output = parseResolve(
+      await resolve.invoke({
+        pages: [
+          {
+            page: PAGE,
+            operations: [
+              {
+                op: "add",
+                statement: "This page cites a file that parses.",
+                evidence: [{ resource: "repo://src/fine.ts#thing" }],
+              },
+            ],
+          },
+          {
+            page: other,
+            operations: [
+              {
+                op: "add",
+                statement: "This one cites the file with the NUL byte.",
+                evidence: [{ resource: "repo://src/unparseable.ts#key" }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(output.pages).toHaveLength(1);
+    expect(output.pages?.[0]?.page).toBe(PAGE);
+    expect(output.failed).toHaveLength(1);
+    expect(output.failed?.[0]).toMatchObject({ page: other, retryable: true });
+    expect(output.failed?.[0]?.error).toContain("syntax error");
+  });
+
+  test("keeps applied pages when a later page fails operationally", async () => {
+    // Throwing would discard `pages`, whose mutations already applied. A total
+    // failure reported over applied state is the same lie the batch-wide error
+    // told, so a partial failure is reported instead - not retryable, because
+    // replaying it will not produce a different answer.
+    const other = "/openwiki/other.md";
+    const session = createSession({
+      resolver: {
+        resolve: (resource: string) =>
+          resource.includes("broken")
+            ? Promise.reject(new EvidenceResolutionError("resolver unavailable"))
+            : Promise.resolve({
+                evidence: { resource, version: "revision:2" },
+                content: "c",
+              }),
+      },
+    });
+    const resolve = getTool(createClaimsTools(session), "resolve_claims");
+    const output = parseResolve(
+      await resolve.invoke({
+        pages: [
+          {
+            page: PAGE,
+            operations: [
+              {
+                op: "add",
+                statement: "This page resolved before the resolver went down.",
+                evidence: [{ resource: "repo://src/fine.ts" }],
+              },
+            ],
+          },
+          {
+            page: other,
+            operations: [
+              {
+                op: "add",
+                statement: "This one hit the failure.",
+                evidence: [{ resource: "repo://src/broken.ts" }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(output.pages).toHaveLength(1);
+    expect(output.failed?.[0]).toMatchObject({ page: other, retryable: false });
     expect(session.inspectClaims(PAGE)).toHaveLength(2);
   });
 

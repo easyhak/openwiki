@@ -4,7 +4,11 @@ import {
 } from "@langchain/core/tools";
 import type { DeleteResult } from "deepagents";
 import { z } from "zod";
-import { ClaimSessionError, EvidenceResourceError } from "../../core/errors.js";
+import {
+  ClaimSessionError,
+  EvidenceParseError,
+  EvidenceResourceError,
+} from "../../core/errors.js";
 import type { ClaimOperation } from "../../core/types.js";
 import {
   isGroundedWikiPage,
@@ -384,10 +388,31 @@ async function resolvePagesIndependently(
         pages.push(outcome.value);
         continue;
       }
-      // A page that failed for a reason the model cannot act on is still a bug
-      // in this run, not a result to report: rethrow it as the call's failure.
       if (!isRecoverableClaimsToolError(outcome.reason)) {
-        throw outcome.reason;
+        // An operational failure - a missing grammar, an unreadable tree - is
+        // not a result to report, and rethrowing is how it stays visible rather
+        // than becoming quietly ungrounded pages. But throwing discards every
+        // page in `pages`, and those pages' mutations HAVE applied: the session
+        // swapped their claim sets before this one failed. Reporting a total
+        // failure over applied state is the same lie the batch-wide error told.
+        //
+        // So it only throws when nothing succeeded, which is the shape a real
+        // operational failure has anyway - a broken resolver fails every page,
+        // not the third one. A partial failure is reported, marked not
+        // retryable so the model does not replay it expecting a different
+        // answer.
+        if (pages.length === 0) {
+          throw outcome.reason;
+        }
+        failed.push({
+          page: window[offset][0],
+          error:
+            outcome.reason instanceof Error
+              ? outcome.reason.message
+              : String(outcome.reason),
+          retryable: false,
+        });
+        continue;
       }
       failed.push({
         page: window[offset][0],
@@ -423,10 +448,18 @@ async function runClaimsTool(
  */
 function isRecoverableClaimsToolError(
   error: unknown,
-): error is ClaimSessionError | EvidenceResourceError | z.ZodError {
+): error is
+  | ClaimSessionError
+  | EvidenceResourceError
+  | EvidenceParseError
+  | z.ZodError {
   return (
     error instanceof ClaimSessionError ||
     error instanceof EvidenceResourceError ||
+    // One unparseable file, not a broken resolver. Its own page's claims are
+    // lost and the model can cite the path without a #symbol or cite something
+    // else; the other pages in the call have nothing to do with it.
+    error instanceof EvidenceParseError ||
     error instanceof z.ZodError
   );
 }
@@ -438,7 +471,11 @@ function isRecoverableClaimsToolError(
  * @returns Human-readable correction guidance.
  */
 function formatRecoverableClaimsToolError(
-  error: ClaimSessionError | EvidenceResourceError | z.ZodError,
+  error:
+    | ClaimSessionError
+    | EvidenceResourceError
+    | EvidenceParseError
+    | z.ZodError,
 ): string {
   if (error instanceof z.ZodError) {
     return error.issues
