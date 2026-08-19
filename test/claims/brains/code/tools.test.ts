@@ -92,6 +92,12 @@ describe("createClaimsTools", () => {
       "connect multiple components",
     );
     expect(getTool(tools, "resolve_claims").description).toContain(
+      "completeness takes priority over minimizing Claim count",
+    );
+    expect(getTool(tools, "resolve_claims").description).toContain(
+      "only after establishing coverage",
+    );
+    expect(getTool(tools, "resolve_claims").description).toContain(
       "repository evidence only",
     );
     expect(getTool(tools, "resolve_claims").description).toContain(

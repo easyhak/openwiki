@@ -337,6 +337,12 @@ describe("createSystemPrompt Claims workflow", () => {
       expect(prompt).toContain("connect multiple components");
       expect(prompt).toContain("materiality test");
       expect(prompt).toContain("architectural model");
+      expect(prompt).toContain(
+        "Completeness takes priority over minimizing Claim count",
+      );
+      expect(prompt).toContain(
+        "same function or component already supports another Claim",
+      );
       expect(prompt).toContain("semantically duplicate Claims");
       expect(prompt).not.toContain("update_claims");
       expect(prompt).not.toContain("fetch_claims");
