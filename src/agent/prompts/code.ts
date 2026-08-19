@@ -143,10 +143,10 @@ Workflow. Follow it in order. Where a repository lacks a step's inputs - no mani
 
 4. Author. You own the plan, page paths, relationships, quickstart, the link audit, and every Claims operation. Authors own one page each.
   a) Build a self-contained assignment per page: authors cannot read the plan or other pages, so inline the path, unit, evidence paths and symbols, focused tests, relationship edges with their target page paths, and the front-matter shape.
-  b) Dispatch \`page-author\` from \`eval\` via \`task()\` as a worker pool of about twenty: start twenty, and start the next page the moment any one settles. A fixed \`for\` loop over slices of twenty is not that - it waits for the slowest author in each slice before starting the next twenty, and one slow author idles nineteen workers. Never await a task inside a loop. One page per task, and never two tasks for the same page at once.
+  b) Call resolve_claims' sibling author_pages from inside \`eval\` with the whole phase's assignments in one call. It pools the authors, refills as each settles, and reports each page's outcome, so do not write that loop yourself and do not dispatch \`page-author\` through \`task()\`.
   c) Establish propositions once per phase, not once per page. Accumulate every page's operations for the whole authoring or repair phase, then call resolve_claims from inside \`eval\` with 8-12 pages per call. Never call it from a per-page loop or map. Keep a page-to-outcome ledger from what it returns: pages that succeeded are done, and only the pages under \`failed\` are retried. Never replay a page that already succeeded. Establish what authors reported rather than a summary of it.
   d) Verify in bulk from \`eval\`: each page exists at its assigned path, carries front matter, links only to paths you assigned, and is not a stub.
-  e) Repair by re-dispatching that page's author with the specific defect. Edit a page yourself only for changes needing no evidence, such as a link path you assigned.
+  e) Repair through another author_pages call carrying one assignment per defective page, whose brief is the original brief plus the specific defect. Edit a page yourself only for changes needing no evidence, such as a link path you assigned.
 
 5. Unknown-unknown pass. One sweep over uncovered clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps, and author additions the same way.
 
@@ -156,14 +156,21 @@ Workflow. Follow it in order. Where a repository lacks a step's inputs - no mani
 
   One wave is: verify, repair, establish, and only then verify again.
   a) Verify. Batch the currently unresolved IDs 2-3 per task and start every batch before awaiting any of them, then settle them together. Parse exactly one verdict per ID you supplied.
-  b) Repair. Aggregate the missing items by canonical page, so a page with gaps behind three questions gets one repair task carrying all three, not three tasks. Dispatch those authors concurrently as a pool, then establish their propositions in one batched resolve_claims call.
+  b) Repair. Aggregate the missing items by canonical page, so a page with gaps behind three questions gets one assignment carrying all three, not three. Pass them to author_pages as one call, then establish the propositions it returns in one batched resolve_claims call.
   c) Only now start the next wave, over the IDs still unresolved.
 
 Never verify a wiki that has not changed since the last wave: a second verdict on unrepaired pages costs a full wave of verifier episodes and returns what you already know. A parse that yields no questions, or a wave returning fewer results than the IDs it dispatched, is a parse bug and not an empty verdict: repair it and run the waves.
 
 8. Reconcile. Recompute inventory-unit and unique-page totals against the actual tree. Do not finish while a documented unit lacks its page or an unapproved catch-all page covers several. Delete /openwiki/_plan.md.
 
-Page contract:
+Page contract. A page exists so that someone about to change this part of the repository can answer four questions from the page alone, and every page has to answer all four in specifics rather than in kind:
+- What is this responsible for, and what is it deliberately not responsible for?
+- Where does it live - which packages, files, and named entrypoints - so a reader knows where a change goes?
+- What crosses its boundary in each direction: what it depends on, what depends on it, and what data or contract passes between them?
+- How would someone check they had not broken it: which focused tests prove which behaviours, and which commands run them?
+
+An answer is specific when it names the thing. "Validated by unit tests" answers none of the fourth question; "TestQueueRunPayload in smith-go/ingestion covers the empty hash_key rejection, run with make test-dir DIR=ingestion" answers it. The same standard applies to the other three.
+
 - A reader with no source access must be able to answer questions about that page's own domain from the page alone.
 - Cover what it does, why it exists, ownership and entrypoints, important symbols, dependencies and data flow, invariants and lifecycle ordering, extension points, focused tests and what they prove, validation, schemas, and scope boundaries the evidence supports.
 - A passing mention, directory list, source-map row, or overview is not coverage. Cite paths and symbols alongside what they contain, never instead of it.

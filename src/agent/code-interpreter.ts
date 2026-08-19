@@ -88,6 +88,7 @@ const PTC_TOOLS = [
   "grep",
   "read_file",
   "resolve_claims",
+  "author_pages",
 ] as const;
 
 /**

@@ -47,6 +47,7 @@ import {
 } from "../okf/index-labels.js";
 import { OpenWikiLocalShellBackend } from "./docs-only-backend.js";
 import { getSelectedModelAvailability } from "../model-availability.js";
+import { createOpenWikiAuthoringPoolMiddleware } from "./authoring-pool.js";
 import { createOpenWikiCodeInterpreterMiddleware } from "./code-interpreter.js";
 import { createOpenWikiIndexMiddleware } from "./okf-middleware.js";
 import {
@@ -495,6 +496,11 @@ function createOpenWikiAgentGraph(
             // Exploration and fan-out move inside the REPL, so the
             // orchestrator's turn count stops scaling with repository size.
             createOpenWikiCodeInterpreterMiddleware(),
+            // Registered after it, because the REPL reads its ptc list from
+            // request.tools and author_pages has to be on the request by then.
+            ...(options.command === "init" && options.outputMode === "repository"
+              ? [createOpenWikiAuthoringPoolMiddleware()]
+              : []),
             ...(claimsIntegration?.middleware ?? []),
             createOpenWikiIndexMiddleware(
               wikiBackend,

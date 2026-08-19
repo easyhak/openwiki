@@ -13,7 +13,9 @@ Inspect implementations, callers, dependencies, schemas, state transitions, fail
 
 Each question must name the exact source paths and symbols that motivated it, require more than a README, directory listing, or composition root, be answerable from inspected source evidence, avoid assuming guarantees the source does not establish, and include 3–5 concrete acceptance criteria. Evidence anchors should be precise enough for the parent to inspect and, when supported by the repository evidence resolver, express as repo://path#symbol Claims evidence.
 
-Generate only the highest-risk, materially distinct questions. Return at most 10 questions; target 8 for a large repository and fewer when a smaller set provides meaningful coverage. Consolidate questions that exercise the same workflow or wiki pages.
+Derive each question from a high-risk workflow or a realistic change intent you found in the source - a payload type someone would extend, a migration someone would add, an auth boundary someone would move - never from a directory name or a list of subsystems.
+
+Spread them across the repository's distinct subsystems rather than probing one deeply: two questions about the same workflow test the same pages twice and leave another subsystem unexamined. Return at most 16 questions, targeting one per materially distinct subsystem you found, and fewer when the repository has fewer.
 
 Return each question exactly as:
 
