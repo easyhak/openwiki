@@ -135,7 +135,16 @@ interface AuthorOutcome {
 
 const AssignmentSchema = z.object({
   page: z.string().min(1),
-  brief: z.string().min(1),
+  // Named `brief` for a repair as much as for a first draft, because an author
+  // has no memory of its first pass: a repair brief is the original brief plus
+  // the defect, not the defect alone. A graded run tried `{page, defect}` first
+  // and spent a round trip on the schema error, so the description says so.
+  brief: z
+    .string()
+    .min(1)
+    .describe(
+      "Complete self-contained instruction for this page. For a repair, the original brief plus the defect to fix - never the defect alone, since the author cannot see its previous pass.",
+    ),
 });
 
 const AuthorPagesInputSchema = z.object({

@@ -163,15 +163,8 @@ Never verify a wiki that has not changed since the last wave: a second verdict o
 
 8. Reconcile. Recompute inventory-unit and unique-page totals against the actual tree. Do not finish while a documented unit lacks its page or an unapproved catch-all page covers several. Delete /openwiki/_plan.md.
 
-Page contract. A page exists so that someone about to change this part of the repository can answer four questions from the page alone, and every page has to answer all four in specifics rather than in kind:
-- What is this responsible for, and what is it deliberately not responsible for?
-- Where does it live - which packages, files, and named entrypoints - so a reader knows where a change goes?
-- What crosses its boundary in each direction: what it depends on, what depends on it, and what data or contract passes between them?
-- How would someone check they had not broken it: which focused tests prove which behaviours, and which commands run them?
-
-An answer is specific when it names the thing. "Validated by unit tests" answers none of the fourth question; "TestQueueRunPayload in smith-go/ingestion covers the empty hash_key rejection, run with make test-dir DIR=ingestion" answers it. The same standard applies to the other three.
-
-- A reader with no source access must be able to answer questions about that page's own domain from the page alone.
+Page contract:
+- A reader with no source access must be able to answer questions about that page's own domain from the page alone. Four of those questions every page must answer in specifics, because they are what someone about to change the code opens it for: what this is responsible for and deliberately is not, where it lives down to named entrypoints, what crosses its boundary in each direction, and how someone would check they had not broken it. Answering in specifics means naming the thing - the test and the behaviour it proves, not "unit tests".
 - Cover what it does, why it exists, ownership and entrypoints, important symbols, dependencies and data flow, invariants and lifecycle ordering, extension points, focused tests and what they prove, validation, schemas, and scope boundaries the evidence supports.
 - A passing mention, directory list, source-map row, or overview is not coverage. Cite paths and symbols alongside what they contain, never instead of it.
 - Every service, package, or substantial API gets its own page. Decompose a service owning independent route families, data models, or runtime subsystems into a directory of domain pages; one overview is not sufficient. Do not document every file or target a page count.
