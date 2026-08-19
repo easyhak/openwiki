@@ -89,19 +89,8 @@ const EXECUTION_TIMEOUT_MS = 900_000;
  */
 const MAX_RESULT_CHARS = 32_000;
 
-/**
- * Heap ceiling per REPL session.
- *
- * The coordinator gets room for a tree walk over a large repository, which the
- * 64 MiB default cannot hold. An author gets far less, because there is one of
- * it per author and roughly twenty run at once: sized like the coordinator that
- * is up to 5 GiB of WASM heaps inside a 16 GiB sandbox, and the first trial with
- * authors holding interpreters died with nothing written and no error recorded,
- * which is what an out-of-memory kill looks like from outside. An author's job
- * here is to locate and extract passages, not to hold a repository in memory.
- */
-const COORDINATOR_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
-const AUTHOR_MEMORY_LIMIT_BYTES = 48 * 1024 * 1024;
+/** A tree walk over a large repository holds far more than the 64 MiB default. */
+const MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 
 /**
  * Creates the Code Interpreter middleware for init and update runs.
@@ -109,15 +98,11 @@ const AUTHOR_MEMORY_LIMIT_BYTES = 48 * 1024 * 1024;
  * @returns Middleware exposing an `eval` tool with the discovery and fan-out
  *   tools callable from inside it.
  */
-export function createOpenWikiCodeInterpreterMiddleware(
-  { concurrent = false }: { concurrent?: boolean } = {},
-) {
+export function createOpenWikiCodeInterpreterMiddleware() {
   return createCodeInterpreterMiddleware({
     ptc: [...PTC_TOOLS],
     executionTimeoutMs: EXECUTION_TIMEOUT_MS,
     maxResultChars: MAX_RESULT_CHARS,
-    memoryLimitBytes: concurrent
-      ? AUTHOR_MEMORY_LIMIT_BYTES
-      : COORDINATOR_MEMORY_LIMIT_BYTES,
+    memoryLimitBytes: MEMORY_LIMIT_BYTES,
   });
 }
