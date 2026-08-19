@@ -28,7 +28,6 @@ import {
   type AnyBackendProtocol,
   type FsToolName,
 } from "deepagents";
-import { z } from "zod";
 import type { OpenWikiCommand, OpenWikiOutputMode } from "./types.js";
 
 /**
@@ -81,45 +80,28 @@ Establish the claims first, then write the page from them:
 - Begin the file with OKF v0.1 front matter as your assignment specifies.
 
 Reporting:
-- Return every proposition you established, with its evidence, in the structured response. That return is how they reach the wiki's claim set: the coordinator owns all Claims operations and establishes what you report, so a proposition you leave out of the response is one the wiki cannot later re-verify, however well the prose reads.
+- Return every proposition you established, with its evidence, as a single JSON object in your final message: {"page": "...", "propositions": [{"statement": "...", "evidence": ["repo://..."]}], "undocumented": ["..."]}. No prose around it. That return is how they reach the wiki's claim set: the coordinator owns all Claims operations and establishes what you report, so a proposition you leave out of the response is one the wiki cannot later re-verify, however well the prose reads.
 - Report any assigned unit you could not document from evidence, and why, rather than writing an unsupported page.`;
 
 /**
  * The author's return contract.
  *
- * Enforced as a schema rather than asked for in prose, because asking did not
- * work: in the first fan-out run 50 of 60 authors returned no propositions at
- * all and the coordinator ended up inventing most of the claim set itself,
- * which is backwards - the author is the one holding the evidence.
+ * Described here rather than attached as `responseFormat`, which cost far more
+ * than it bought. Measured locally on two otherwise identical agents: without a
+ * responseFormat, turn 1 is cold and every later turn caches ~99%; with one,
+ * every turn is cold. In the fan-out run that made page-author the only agent
+ * at 0% cache while the coordinator sat at 92%, and it burned 15.9M of the
+ * run's 18.1M prompt tokens uncached - 88% of the bill.
+ *
+ * It was not buying much either: only 3 of 57 authors produced a parsed
+ * structuredResponse, while the other 54 returned exactly this shape as JSON in
+ * their final message, which the coordinator reads without difficulty. So the
+ * schema stays as the documented contract and the field goes.
  */
-const PAGE_AUTHOR_RESPONSE = z.object({
-  page: z.string().describe("The canonical page path you were assigned."),
-  propositions: z
-    .array(
-      z.object({
-        statement: z
-          .string()
-          .describe(
-            "One concise atomic material proposition, stating a mechanism rather than naming a location.",
-          ),
-        evidence: z
-          .array(z.string())
-          .describe(
-            "repo://path or repo://path#symbol resources you inspected that establish this statement.",
-          ),
-      }),
-    )
-    .describe("Every proposition you established for this page."),
-  undocumented: z
-    .array(z.string())
-    .describe("Anything assigned that evidence did not support, and why."),
-});
-
 const PAGE_AUTHOR_SUBAGENT: SubAgent = {
   name: "page-author",
   description: PAGE_AUTHOR_DESCRIPTION,
   systemPrompt: PAGE_AUTHOR_SYSTEM_PROMPT,
-  responseFormat: PAGE_AUTHOR_RESPONSE,
 };
 
 /**
