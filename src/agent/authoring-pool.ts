@@ -29,6 +29,7 @@ import type { ClaimSession } from "../claims/brains/code/session.js";
 import { resolvePagesIndependently } from "../claims/brains/code/tools.js";
 import type { ClaimOperation } from "../claims/core/types.js";
 import { z } from "zod";
+import { normalizeWikiPage } from "./plan-ledger.js";
 import { dispatchSubagent, type TaskToolLike } from "./subagent-dispatch.js";
 
 /**
@@ -303,10 +304,15 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
               .filter((result) => result.propositions.length > 0)
               .map(
                 (result) =>
-                  [result.page, toClaimOperations(result.propositions)] as [
-                    string,
-                    ClaimOperation[],
-                  ],
+                  [
+                    // The claim store requires an absolute /openwiki/ path and
+                    // throws a recoverable ClaimSessionError otherwise, so a
+                    // relative assignment path failed every page's claims while
+                    // its Markdown wrote fine. A run saw claimsFailed on all of
+                    // them and re-authored the entire wiki to redo Claims.
+                    `/${normalizeWikiPage(result.page)}`,
+                    toClaimOperations(result.propositions),
+                  ] as [string, ClaimOperation[]],
               ),
           )
         : null;

@@ -152,6 +152,39 @@ describe("author_pages", () => {
     );
   });
 
+  test("establishes claims under an absolute wiki path", async () => {
+    // The claim store throws unless the page starts with /openwiki/, and that
+    // throw is recoverable, so a relative assignment path failed every page's
+    // claims quietly while its Markdown wrote fine. A run saw claimsFailed on
+    // all of them and re-authored the whole wiki to redo Claims.
+    const pages: string[] = [];
+    const session = {
+      resolveClaims: (input: { page: string }) => {
+        pages.push(input.page);
+        return Promise.resolve({ page: input.page, results: [] });
+      },
+    } as unknown as Parameters<
+      typeof createOpenWikiAuthoringPoolMiddleware
+    >[0];
+    const middleware = createOpenWikiAuthoringPoolMiddleware(session);
+    const tools = (
+      middleware as { tools: { invoke: (i: unknown) => Promise<unknown> }[] }
+    ).tools;
+    const task = {
+      name: "task",
+      invoke: () => Promise.resolve(report("a.md", 2)),
+    };
+    (
+      middleware as {
+        wrapModelCall: (r: unknown, h: (r: unknown) => unknown) => unknown;
+      }
+    ).wrapModelCall({ tools: [task] }, (r) => r);
+    await tools[0].invoke({
+      assignments: [{ page: "architecture/a.md", brief: "b" }],
+    });
+    expect(pages).toEqual(["/openwiki/architecture/a.md"]);
+  });
+
   test("reads a report the author wrapped in prose", async () => {
     const authorPages = authorPagesWith(
       fakeTaskTool((description) =>
