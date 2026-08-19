@@ -28,6 +28,7 @@ import {
   type AnyBackendProtocol,
   type FsToolName,
 } from "deepagents";
+import { createOpenWikiCodeInterpreterMiddleware } from "./code-interpreter.js";
 import type { OpenWikiCommand, OpenWikiOutputMode } from "./types.js";
 
 /**
@@ -67,6 +68,7 @@ Hard constraints:
 - Write only the single page path you were assigned. Never create, edit, or delete another page, an index, quickstart, or the plan file. Another author owns each of those concurrently.
 - Do not read /openwiki/_plan.md or any other wiki page. Your assignment is complete by construction: if something you need is missing from it, say so in your report rather than going to look for it. The plan is large, every author reading it multiplies that cost, and your neighbours' pages are being written while you work, so what you would read is half-finished.
 - Read repository source and tests as evidence, starting from the paths and symbols your assignment names. Never document a secret, credential, token, or .env value.
+- Gather evidence through the \`eval\` tool where you can: one call that locates and extracts the passages you need beats a read_file per path, and only what you return enters your context. Extract passages verbatim - names, ordering, conditions, error strings - rather than summarising them, because a proposition you cannot state exactly is one you have not established.
 - Prefer grep and targeted reads over reading a large file whole. Everything you read stays in your context for the rest of your turns, so a wide read costs every later step, not just the one that made it.
 - Do not invent files, modules, APIs, or behavior. Every material proposition must be supported by source or tests you inspected.
 
@@ -130,6 +132,13 @@ export function resolvePageAuthorSubagents(
       ...PAGE_AUTHOR_SUBAGENT,
       middleware: [
         ...(PAGE_AUTHOR_SUBAGENT.middleware ?? []),
+        // An author reads more of the repository than anyone else in the run -
+        // roughly nineteen files each, one turn apiece, every result then carried
+        // in its context for the rest of its turns. The REPL lets it gather that
+        // evidence in one call and keep only what it quotes. resolve_claims is on
+        // the shared PTC list but an author does not hold that tool, and
+        // resolveToolList drops names an agent lacks, so it stays coordinator-only.
+        createOpenWikiCodeInterpreterMiddleware(),
         createFilesystemMiddleware({
           backend,
           tools: [...AUTHOR_FILESYSTEM_TOOLS],
