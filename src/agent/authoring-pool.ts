@@ -29,6 +29,7 @@ import type { ClaimSession } from "../claims/brains/code/session.js";
 import { resolvePagesIndependently } from "../claims/brains/code/tools.js";
 import type { ClaimOperation } from "../claims/core/types.js";
 import { z } from "zod";
+import { dispatchSubagent, type TaskToolLike } from "./subagent-dispatch.js";
 
 /**
  * Authors in flight at once.
@@ -202,9 +203,7 @@ const AuthorPagesInputSchema = z.object({
 export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
   // Narrow to what dispatch needs, because the request's tool union includes
   // shapes without `invoke` and this only ever calls one tool by name.
-  let taskTool: {
-    invoke: (input: unknown, config?: unknown) => Promise<unknown>;
-  } | null = null;
+  let taskTool: TaskToolLike | null = null;
 
   const authorPages = tool(
     async (rawInput, config) => {
@@ -236,8 +235,10 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
         MAX_AUTHOR_CONCURRENCY,
       );
       const outcomes = await pool(assignments, limit, async (assignment) => {
-        const output = await dispatch.invoke(
-          { description: assignment.brief, subagent_type: "page-author" },
+        const output = await dispatchSubagent(
+          dispatch,
+          "page-author",
+          assignment.brief,
           config,
         );
         return { assignment, output };

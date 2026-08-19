@@ -31,6 +31,7 @@
 import { tool } from "@langchain/core/tools";
 import { createMiddleware } from "langchain";
 import { z } from "zod";
+import { dispatchSubagent, type TaskToolLike } from "./subagent-dispatch.js";
 
 /** How a run's semantic QA ended. Distinct so zero QA cannot read as success. */
 export type QaStatus =
@@ -148,9 +149,7 @@ export function parseVerdicts(
  * @returns Middleware exposing `verify_wiki`.
  */
 export function createOpenWikiVerificationMiddleware(gate: QaGate) {
-  let taskTool: {
-    invoke: (input: unknown, config?: unknown) => Promise<unknown>;
-  } | null = null;
+  let taskTool: TaskToolLike | null = null;
   let questions: Question[] | null = null;
 
   const dispatch = async (
@@ -161,12 +160,7 @@ export function createOpenWikiVerificationMiddleware(gate: QaGate) {
     if (!taskTool) {
       throw new Error("verify_wiki requires the subagent task tool.");
     }
-    return String(
-      await taskTool.invoke(
-        { description, subagent_type: subagentType },
-        config,
-      ),
-    );
+    return dispatchSubagent(taskTool, subagentType, description, config);
   };
 
   const verifyWiki = tool(
