@@ -5,12 +5,14 @@ import {
 import type { DeleteResult } from "deepagents";
 import { z } from "zod";
 import { ClaimSessionError, EvidenceResourceError } from "../../core/errors.js";
+import type { ClaimOperation } from "../../core/types.js";
 import {
   isGroundedWikiPage,
   normalizeClaimsToolPagePath,
   normalizeWikiToolPagePath,
 } from "./paths.js";
 import { ClaimSession } from "./session.js";
+import type { ResolveClaimsResult } from "./types.js";
 
 /**
  * Runtime validator for canonical non-empty identity strings.
@@ -129,7 +131,7 @@ export function createClaimsTools(
     new DynamicStructuredTool({
       name: "resolve_claims",
       description:
-        "Maintain material factual propositions for one or more wiki pages in one call. Put every affected page in pages; each page's operations are applied atomically. Keep each statement to one concise, atomic proposition—not an excerpt, list, compound summary, or paragraph. Split compound facts into separate claims. Use confirm when a claim remains true, update to change its statement or evidence, retract when it is obsolete, and add for a new material fact. Normal Markdown edits need no Claims call. Evidence uses repo://path or repo://path#symbol resources.",
+        "Maintain material factual propositions for one or more wiki pages in one call. Put every affected page in pages - a whole authoring or repair phase belongs in one call, and calling this once per page in a loop is always wrong. Each page's operations are applied atomically and each page succeeds or fails on its own: successful pages come back under pages, and any page that failed comes back under failed with its own error, so retry only those and never replay a page that already succeeded. Keep each statement to one concise, atomic proposition—not an excerpt, list, compound summary, or paragraph. Split compound facts into separate claims. Use confirm when a claim remains true, update to change its statement or evidence, retract when it is obsolete, and add for a new material fact. Normal Markdown edits need no Claims call. Evidence uses repo://path or repo://path#symbol resources.",
       schema: {
         type: "object",
         properties: {
@@ -222,13 +224,7 @@ export function createClaimsTools(
               operationsByPage.set(page, [...pageInput.operations]);
             }
           }
-          return {
-            pages: await Promise.all(
-              [...operationsByPage].map(([page, operations]) =>
-                session.resolveClaims({ page, operations }),
-              ),
-            ),
-          };
+          return resolvePagesIndependently(session, [...operationsByPage]);
         }),
     }),
     new DynamicStructuredTool({
@@ -326,6 +322,83 @@ export function createClaimsDeleteFileTool(
  * @param operation - Parsed Claims operation to execute.
  * @returns Compact JSON for either success or a retryable input failure.
  */
+/**
+ * Pages a single `resolve_claims` call may resolve at once.
+ *
+ * Every page's operations resolve their evidence against the repository, so an
+ * unbounded fan-out over a large monorepo's worth of pages puts one resolver
+ * request in flight per page. Eight keeps a phase-sized call - the batching the
+ * tool description asks for - from becoming a thundering herd, while still
+ * finishing a 60-page phase in eight rounds rather than sixty.
+ */
+const RESOLVE_CLAIMS_PAGE_CONCURRENCY = 8;
+
+/**
+ * Resolves each page independently, so one page's failure is one page's failure.
+ *
+ * `Promise.all` rejected the whole call when any single page did, and
+ * `runClaimsTool` then turned that into one batch-wide `{error, retryable}`.
+ * The pages that had already succeeded were invisible in that response while
+ * their mutations had in fact applied, so the model could neither tell which
+ * page was at fault nor safely retry: replaying the batch duplicated every add
+ * that worked the first time.
+ *
+ * The coordinator's answer, observed in a graded run, was to stop batching -
+ * `for (const p of payloads) await resolveClaims({pages: [p]})`, one call per
+ * page, 108 calls where 8 would do, with a hand-rolled evidence filter in the
+ * catch. It was not wrong to do that: per-page calls were the only way to learn
+ * which page failed. Reporting per page removes the reason.
+ *
+ * Per-page atomicity is unchanged and comes from the session, which serializes
+ * each page's mutations and swaps its claim set in one step.
+ *
+ * @param session - Run-scoped authoritative claim state.
+ * @param entries - Deduplicated page and operation pairs from one call.
+ * @returns Successful pages under `pages`, and any failures under `failed`.
+ */
+async function resolvePagesIndependently(
+  session: ClaimSession,
+  entries: readonly [string, ClaimOperation[]][],
+): Promise<{
+  pages: ResolveClaimsResult[];
+  failed?: { page: string; error: string; retryable: boolean }[];
+}> {
+  const pages: ResolveClaimsResult[] = [];
+  const failed: { page: string; error: string; retryable: boolean }[] = [];
+  for (
+    let index = 0;
+    index < entries.length;
+    index += RESOLVE_CLAIMS_PAGE_CONCURRENCY
+  ) {
+    const window = entries.slice(
+      index,
+      index + RESOLVE_CLAIMS_PAGE_CONCURRENCY,
+    );
+    const settled = await Promise.allSettled(
+      window.map(([page, operations]) =>
+        session.resolveClaims({ page, operations }),
+      ),
+    );
+    for (const [offset, outcome] of settled.entries()) {
+      if (outcome.status === "fulfilled") {
+        pages.push(outcome.value);
+        continue;
+      }
+      // A page that failed for a reason the model cannot act on is still a bug
+      // in this run, not a result to report: rethrow it as the call's failure.
+      if (!isRecoverableClaimsToolError(outcome.reason)) {
+        throw outcome.reason;
+      }
+      failed.push({
+        page: window[offset][0],
+        error: formatRecoverableClaimsToolError(outcome.reason),
+        retryable: true,
+      });
+    }
+  }
+  return failed.length > 0 ? { pages, failed } : { pages };
+}
+
 async function runClaimsTool(
   operation: () => Promise<unknown>,
 ): Promise<string> {

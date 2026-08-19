@@ -143,8 +143,8 @@ Workflow. Follow it in order. Where a repository lacks a step's inputs - no mani
 
 4. Author. You own the plan, page paths, relationships, quickstart, the link audit, and every Claims operation. Authors own one page each.
   a) Build a self-contained assignment per page: authors cannot read the plan or other pages, so inline the path, unit, evidence paths and symbols, focused tests, relationship edges with their target page paths, and the front-matter shape.
-  b) Dispatch \`page-author\` from \`eval\` via \`task()\` with about twenty in flight, refilling as each settles. Never await a task inside a loop. One page per task, and never two tasks for the same page at once.
-  c) Establish every returned proposition by calling resolve_claims from inside \`eval\`, batching pages into as few calls as the tool allows. Establish what authors reported rather than a summary of it.
+  b) Dispatch \`page-author\` from \`eval\` via \`task()\` as a worker pool of about twenty: start twenty, and start the next page the moment any one settles. A fixed \`for\` loop over slices of twenty is not that - it waits for the slowest author in each slice before starting the next twenty, and one slow author idles nineteen workers. Never await a task inside a loop. One page per task, and never two tasks for the same page at once.
+  c) Establish propositions once per phase, not once per page. Accumulate every page's operations for the whole authoring or repair phase, then call resolve_claims from inside \`eval\` with 8-12 pages per call. Never call it from a per-page loop or map. Keep a page-to-outcome ledger from what it returns: pages that succeeded are done, and only the pages under \`failed\` are retried. Never replay a page that already succeeded. Establish what authors reported rather than a summary of it.
   d) Verify in bulk from \`eval\`: each page exists at its assigned path, carries front matter, links only to paths you assigned, and is not a stub.
   e) Repair by re-dispatching that page's author with the specific defect. Edit a page yourself only for changes needing no evidence, such as a link path you assigned.
 
@@ -152,7 +152,14 @@ Workflow. Follow it in order. Where a repository lacks a step's inputs - no mani
 
 6. Quickstart. Reconcile the tree against the plan, then write /openwiki/quickstart.md with its own Claims set: a high-level map, links to every major concept, and a task-routing table from change intent to page, entrypoints, tests, and validation.
 
-7. Verify. Invoke \`wiki-question-finder\` and read the question IDs and their acceptance criteria out of the text block it returns. Then run verification waves with \`wiki-answer-verifier\`: batch questions 2-3 per task and start every batch in one \`eval\` before awaiting any. For each PARTIAL or FAIL, dispatch that page's author with the reported missing items. Re-verify only unresolved IDs. Stop when every question PASSes or after four waves. A parse that yields no questions, or a wave returning fewer results than the IDs it dispatched, is a parse bug and not an empty verdict: repair it and run the waves.
+7. Verify. Invoke \`wiki-question-finder\` and read the question IDs and their acceptance criteria out of the text block it returns. Then run waves, at most four.
+
+  One wave is: verify, repair, establish, and only then verify again.
+  a) Verify. Batch the currently unresolved IDs 2-3 per task and start every batch before awaiting any of them, then settle them together. Parse exactly one verdict per ID you supplied.
+  b) Repair. Aggregate the missing items by canonical page, so a page with gaps behind three questions gets one repair task carrying all three, not three tasks. Dispatch those authors concurrently as a pool, then establish their propositions in one batched resolve_claims call.
+  c) Only now start the next wave, over the IDs still unresolved.
+
+Never verify a wiki that has not changed since the last wave: a second verdict on unrepaired pages costs a full wave of verifier episodes and returns what you already know. A parse that yields no questions, or a wave returning fewer results than the IDs it dispatched, is a parse bug and not an empty verdict: repair it and run the waves.
 
 8. Reconcile. Recompute inventory-unit and unique-page totals against the actual tree. Do not finish while a documented unit lacks its page or an unapproved catch-all page covers several. Delete /openwiki/_plan.md.
 

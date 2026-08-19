@@ -360,7 +360,7 @@ describe("createSystemPrompt Claims workflow", () => {
         expect(prompt).toContain("wiki-answer-verifier");
         expect(prompt).toContain("page-author");
         expect(prompt).toContain(
-          "Establish every returned proposition by calling resolve_claims",
+          "Establish propositions once per phase, not once per page",
         );
         // The coordinator is the single Claims writer. Each subagent is told so
         // in its own system prompt, asserted in claims-agent-integration.

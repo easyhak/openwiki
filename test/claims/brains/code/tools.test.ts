@@ -74,6 +74,18 @@ function parse(output: unknown): Record<string, unknown> {
   return JSON.parse(String(output)) as Record<string, unknown>;
 }
 
+/** Shape `resolve_claims` returns: successes per page, failures per page. */
+interface ResolveToolOutput {
+  pages?: { page: string }[];
+  failed?: { page: string; error: string; retryable: boolean }[];
+  error?: string;
+  retryable?: boolean;
+}
+
+function parseResolve(output: unknown): ResolveToolOutput {
+  return JSON.parse(String(output)) as ResolveToolOutput;
+}
+
 describe("createClaimsTools", () => {
   test("exposes the compact resolve and inspect API", () => {
     const tools = createClaimsTools(createSession());
@@ -313,9 +325,14 @@ describe("createClaimsTools", () => {
       createClaimsTools(createSession()),
       "resolve_claims",
     );
-    expect(parse(await resolve.invoke(input))).toMatchObject({
-      retryable: true,
-    });
+    const output = parseResolve(await resolve.invoke(input));
+    // A page path that will not normalize fails the whole call, because there is
+    // no page to attribute it to. Anything that fails while resolving one page's
+    // operations is reported against that page, so the other pages in the call
+    // keep their results and the model can retry just the one.
+    expect(
+      output.retryable === true || output.failed?.[0]?.retryable === true,
+    ).toBe(true);
   });
 
   test("rejects an empty partial update through the public schema", async () => {
@@ -342,7 +359,7 @@ describe("createClaimsTools", () => {
       ),
       "resolve_claims",
     );
-    const output = parse(
+    const output = parseResolve(
       await resolve.invoke({
         pages: [
           {
@@ -352,8 +369,62 @@ describe("createClaimsTools", () => {
         ],
       }),
     );
-    expect(output).toMatchObject({ retryable: true });
-    expect(output.error).toContain("Evidence does not resolve");
+    expect(output.pages).toEqual([]);
+    expect(output.failed).toHaveLength(1);
+    expect(output.failed?.[0]).toMatchObject({ page: PAGE, retryable: true });
+    expect(output.failed?.[0]?.error).toContain("Evidence does not resolve");
+  });
+
+  test("one page's evidence failure leaves the other pages resolved", async () => {
+    // The batch-wide error this replaced is why a graded coordinator abandoned
+    // batching and called the tool once per page, 108 times in one run: a single
+    // failure hid every success, so per-page calls were the only way to learn
+    // which page was at fault.
+    const other = "/openwiki/other.md";
+    const session = createSession({
+      resolver: {
+        resolve: (resource: string) =>
+          Promise.resolve(
+            resource.includes("missing")
+              ? null
+              : { evidence: { resource, version: "revision:2" }, content: "c" },
+          ),
+      },
+    });
+    const resolve = getTool(createClaimsTools(session), "resolve_claims");
+    const output = parseResolve(
+      await resolve.invoke({
+        pages: [
+          {
+            page: PAGE,
+            operations: [
+              {
+                op: "add",
+                statement: "The resolvable page states one fact.",
+                evidence: [{ resource: "repo://src/present.ts" }],
+              },
+            ],
+          },
+          {
+            page: other,
+            operations: [
+              {
+                op: "add",
+                statement: "This one cites evidence that does not resolve.",
+                evidence: [{ resource: "repo://src/missing.ts" }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(output.pages).toHaveLength(1);
+    expect(output.pages?.[0]?.page).toBe(PAGE);
+    expect(output.failed).toHaveLength(1);
+    expect(output.failed?.[0]).toMatchObject({ page: other, retryable: true });
+    // The seeded claim plus the one this call added: the successful page's
+    // mutation applied even though its neighbour in the same call failed.
+    expect(session.inspectClaims(PAGE)).toHaveLength(2);
   });
 
   test("does not hide operational resolver failures", async () => {
