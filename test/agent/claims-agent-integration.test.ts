@@ -117,6 +117,25 @@ describe("Claims agent graph integration", () => {
       expect(options.middleware.map((middleware) => middleware.name)).toContain(
         "OpenWikiClaimsReadNoteMiddleware",
       );
+      // The REPL resolves its ptc list by name and SILENTLY drops a name that
+      // matches no registered tool, which would turn author_pages back into
+      // model-written scheduling with nothing failing. So the registration is
+      // asserted here, per command, rather than trusted.
+      const middlewareNames = options.middleware.map(
+        (middleware: { name: string }) => middleware.name,
+      );
+      if (command === "init") {
+        expect(middlewareNames).toContain("OpenWikiAuthoringPoolMiddleware");
+        const pool = options.middleware.find(
+          (middleware: { name: string }) =>
+            middleware.name === "OpenWikiAuthoringPoolMiddleware",
+        ) as { tools: { name: string }[] };
+        expect(pool.tools.map((pooled) => pooled.name)).toEqual([
+          "author_pages",
+        ]);
+      } else {
+        expect(middlewareNames).not.toContain("OpenWikiAuthoringPoolMiddleware");
+      }
       expect(
         options.middleware.map((middleware) => middleware.name),
       ).not.toContain("OpenWikiClaimsCompletionMiddleware");
