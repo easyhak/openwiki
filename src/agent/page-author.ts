@@ -56,8 +56,11 @@ export const AUTHOR_FILESYSTEM_TOOLS = [
   "edit_file",
 ] as const satisfies readonly FsToolName[];
 
-const PAGE_AUTHOR_DESCRIPTION =
-  "Writes one assigned wiki page from a supplied evidence brief and relationship edges, then returns the material propositions it established with repo:// evidence. Dispatch these concurrently from eval, one per planned page. Give each call exactly one page path.";
+const PAGE_AUTHOR_DESCRIPTION = [
+  "Writes one assigned wiki page from a supplied evidence brief and relationship edges, then returns the propositions it established with repo:// evidence.",
+  "Dispatch concurrently from eval, one page per task. Pass this responseSchema byte-identical on every call - the title is what keeps the extraction tool name stable, and a name that changes per call defeats prompt caching:",
+  '{"title":"openwiki_page_author_result_v1","type":"object","properties":{"propositions":{"type":"array","items":{"type":"object","properties":{"statement":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}}},"required":["statement","evidence"]}},"ok":{"type":"boolean"}},"required":["propositions","ok"]}',
+].join(" ");
 
 const PAGE_AUTHOR_SYSTEM_PROMPT = `You author exactly one wiki page and report what you established.
 
