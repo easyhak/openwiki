@@ -139,7 +139,7 @@ describe("Claims agent graph integration", () => {
       expect(
         options.middleware.map((middleware) => middleware.name),
       ).not.toContain("OpenWikiClaimsCompletionMiddleware");
-      expect(options.subagents).toHaveLength(command === "init" ? 4 : 0);
+      expect(options.subagents).toHaveLength(command === "init" ? 5 : 0);
       if (command === "init") {
         expect(
           options.subagents.map(
@@ -149,6 +149,7 @@ describe("Claims agent graph integration", () => {
           "skeleton-critic",
           "wiki-question-finder",
           "wiki-answer-verifier",
+          "repo-surveyor",
           "page-author",
         ]);
         // The coordinator is the single Claims writer, and every subagent is
@@ -165,6 +166,7 @@ describe("Claims agent graph integration", () => {
           "skeleton-critic",
           "wiki-question-finder",
           "wiki-answer-verifier",
+          "repo-surveyor",
         ]) {
           expect(promptFor(name)).toContain(
             "Never call or propose Claims mutations",

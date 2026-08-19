@@ -1,40 +1,48 @@
 /**
- * Plan ledger and completion gate.
+ * Survey fan-out, plan ledger, and completion gate.
  *
- * A ten-trial run scored 0.358 on average and 0.290 at the bottom, and the
- * bottom trial was not a quality failure. Its plan reconciled at 65 inventory
- * units and 62 planned pages; 41 authors were dispatched; 33 pages reached
- * disk. Nothing noticed. The workflow's own reconciliation step is an
- * instruction, and an instruction cannot refuse to finish.
+ * Three failures from graded runs meet here.
  *
- * So the plan becomes a structure rather than a Markdown table the model writes
- * and then re-parses - one graded run really did recover its own plan with
- * `planText.split("\n").filter(x => x.startsWith("| "))` - and finishing
- * becomes a gate that reads that structure. `_plan.md` is rendered from the
- * ledger for the reader's benefit, not consumed as data.
+ * Planning a 17,444-file monorepo in one context does not work, so the survey
+ * fans out: one `repo-surveyor` per top-level directory, pooled the way authors
+ * are, each owning its subtree. The ledger is assembled here from what they
+ * return, so no surveyor's output passes through the coordinator's context.
  *
- * The gate is a floor, never a target. Ten trials say reward correlates with
- * page count at +0.52 across the whole sample and at -0.42 once the one
- * collapsed trial is dropped: below the floor, breadth collapse destroys the
- * score; above it, more pages buy nothing. A gate that demanded a page count
- * would be fitting one repository's median and would push every run into the
- * region where breadth stops paying.
+ * Coverage is the guarantee code can make, and the only one it should try to.
+ * An earlier version enumerated units by rule and produced 213 of them for this
+ * repository - every CI workflow file, every benchmark fixture's Dockerfile -
+ * because no rule distinguishes a fixture from a service. Directories it can be
+ * certain of. So every non-test top-level directory must appear in the ledger,
+ * with pages or with a stated reason for none; a subtree nobody mentions is
+ * indistinguishable from a subtree nobody read.
+ *
+ * And finishing is a gate rather than an instruction. A trial reconciled at 62
+ * planned pages, dispatched 41 authors, wrote 33 pages, and reported success,
+ * because reconciliation was step 8 of a workflow and an instruction cannot
+ * refuse to finish.
+ *
+ * The gate is a floor, never a target. Reward correlates with page count at
+ * +0.52 across ten trials and at -0.42 once the collapsed one is dropped: below
+ * the floor breadth collapse destroys the score, above it more pages buy
+ * nothing.
  */
 
 import { tool } from "@langchain/core/tools";
 import { createMiddleware } from "langchain";
 import { z } from "zod";
-import { collectInventory } from "./repo-inventory.js";
+import { pool } from "./authoring-pool.js";
+import {
+  collectSurveyTargets,
+  type ListingBackend,
+} from "./repo-inventory.js";
 import { qaFinalizationProblem, type QaGate } from "./wiki-verification.js";
 
-/** Dispositions a unit may be given, beyond being assigned its own page. */
-const GROUPED = "grouped";
-const EXCLUDED = "excluded";
+/** Surveyors in flight. Each reads a whole subtree, so this is real work. */
+const SURVEY_CONCURRENCY = 10;
 
 const EntrySchema = z.object({
-  unitId: z.string().min(1),
-  disposition: z.enum(["page", GROUPED, EXCLUDED]),
-  page: z.string().min(1).optional(),
+  directory: z.string().min(1),
+  pages: z.array(z.string().min(1)),
   reason: z.string().min(1).optional(),
 });
 
@@ -42,59 +50,63 @@ const SubmitPlanSchema = z.object({
   entries: z.array(EntrySchema).min(1),
 });
 
+type PlanEntry = z.infer<typeof EntrySchema>;
+
 /** What the ledger holds once a plan is accepted. */
 export interface PlanLedger {
-  entries: z.infer<typeof EntrySchema>[];
+  entries: PlanEntry[];
   plannedPages: string[];
 }
 
 /**
- * Validates a submitted ledger against the mechanical inventory.
+ * Validates a ledger against the directories that must be accounted for.
  *
- * @param entries - Model-supplied dispositions.
- * @param unitIds - Every mechanically discovered unit ID.
+ * @param entries - Plan entries, one per surveyed directory.
+ * @param targets - Every survey target's path.
  * @returns Human-readable rejections, empty when the ledger is acceptable.
  */
 export function validatePlan(
-  entries: z.infer<typeof EntrySchema>[],
-  unitIds: readonly string[],
+  entries: PlanEntry[],
+  targets: readonly string[],
 ): string[] {
   const problems: string[] = [];
-  const known = new Set(unitIds);
-  const seen = new Set<string>();
+  const covered = new Set<string>();
 
   for (const entry of entries) {
-    if (!known.has(entry.unitId)) {
-      problems.push(`Unknown unit: ${entry.unitId}`);
-      continue;
-    }
-    if (seen.has(entry.unitId)) {
-      problems.push(`Duplicate disposition for unit: ${entry.unitId}`);
-      continue;
-    }
-    seen.add(entry.unitId);
-    if (entry.disposition === "page" && !entry.page) {
-      problems.push(`Unit ${entry.unitId} is dispositioned page with no page`);
-    }
-    // Grouping and exclusion are the two ways breadth quietly disappears, so
-    // each one costs an explicit reason rather than being free.
-    if (entry.disposition !== "page" && !entry.reason) {
+    if (!targets.includes(entry.directory)) {
       problems.push(
-        `Unit ${entry.unitId} is ${entry.disposition} with no reason`,
+        `Entry for a directory that is not a survey target: ${entry.directory}`,
       );
+      continue;
     }
-    if (entry.disposition === GROUPED && !entry.page) {
+    covered.add(entry.directory);
+    if (entry.pages.length === 0 && !entry.reason) {
       problems.push(
-        `Unit ${entry.unitId} is grouped but names no page to group into`,
+        `Directory ${entry.directory} plans no pages and gives no reason`,
       );
     }
   }
 
-  const missing = unitIds.filter((id) => !seen.has(id));
+  const missing = targets.filter((target) => !covered.has(target));
   if (missing.length > 0) {
     problems.push(
-      `${missing.length} unit(s) have no disposition: ${missing.slice(0, 10).join(", ")}${missing.length > 10 ? ", ..." : ""}`,
+      `${missing.length} directory(ies) have no plan entry: ${missing.slice(0, 15).join(", ")}${missing.length > 15 ? ", ..." : ""}`,
     );
+  }
+
+  const owners = new Map<string, string>();
+  for (const entry of entries) {
+    for (const page of entry.pages) {
+      const owner = owners.get(page);
+      if (owner && owner !== entry.directory) {
+        // Two directories planning one page means two authors racing on one
+        // write_file, and the loser's evidence disappearing.
+        problems.push(
+          `Page ${page} is claimed by both ${owner} and ${entry.directory}`,
+        );
+      }
+      owners.set(page, entry.directory);
+    }
   }
   return problems;
 }
@@ -106,39 +118,45 @@ export function validatePlan(
  * @returns Markdown for `/openwiki/_plan.md`.
  */
 export function renderPlanMarkdown(ledger: PlanLedger): string {
-  const rows = ledger.entries
-    .map(
-      (entry) =>
-        `| ${entry.unitId} | ${entry.disposition} | ${entry.page ?? ""} | ${entry.reason ?? ""} |`,
-    )
-    .join("\n");
   return [
     "# Plan",
     "",
-    `Units: ${ledger.entries.length}. Planned pages: ${ledger.plannedPages.length}.`,
+    `Directories: ${ledger.entries.length}. Planned pages: ${ledger.plannedPages.length}.`,
     "",
-    "| Unit | Disposition | Page | Reason |",
-    "| --- | --- | --- | --- |",
-    rows,
+    "| Directory | Pages | Note |",
+    "| --- | --- | --- |",
+    ...ledger.entries.map(
+      (entry) =>
+        `| ${entry.directory} | ${entry.pages.join("<br>") || "-"} | ${entry.reason ?? ""} |`,
+    ),
     "",
   ].join("\n");
 }
 
+/**
+ * Extracts one surveyor's proposed pages from its text block.
+ *
+ * @param output - Raw surveyor output.
+ * @returns Page paths, normalized without a leading slash.
+ */
+export function parseSurvey(output: string): string[] {
+  return [...output.matchAll(/<page\s+path="([^"]+)"/gu)].map((match) =>
+    match[1].replace(/^\/+/u, ""),
+  );
+}
+
 /** Backend capabilities the ledger tools need. */
-interface LedgerBackend {
-  ls(dirPath: string): Promise<{
-    error?: string;
-    files?: { path: string; is_dir?: boolean }[];
-  }>;
+interface LedgerBackend extends ListingBackend {
   write(filePath: string, content: string): Promise<{ error?: string }>;
 }
 
 /**
- * Creates the plan-ledger middleware.
+ * Creates the survey, plan, and finalization middleware.
  *
  * @param backend - Repository filesystem backend.
+ * @param qaGate - Shared QA state, consulted when finishing.
  * @param wikiRoot - Directory generated pages live under.
- * @returns Middleware exposing `submit_plan` and `finalize_wiki`.
+ * @returns Middleware exposing survey_repository, submit_plan, finalize_wiki.
  */
 export function createOpenWikiPlanLedgerMiddleware(
   backend: LedgerBackend,
@@ -146,43 +164,102 @@ export function createOpenWikiPlanLedgerMiddleware(
   wikiRoot = "/openwiki",
 ) {
   let ledger: PlanLedger | null = null;
+  let taskTool: {
+    invoke: (input: unknown, config?: unknown) => Promise<unknown>;
+  } | null = null;
+
+  const setLedger = async (entries: PlanEntry[]) => {
+    const plannedPages = [
+      ...new Set(entries.flatMap((entry) => entry.pages)),
+    ].map((page) => page.replace(/^\/+/u, ""));
+    ledger = { entries, plannedPages };
+    const written = await backend.write(
+      `${wikiRoot}/_plan.md`,
+      renderPlanMarkdown(ledger),
+    );
+    return { plannedPages, planWritten: !written.error };
+  };
+
+  const surveyRepository = tool(
+    async (_input, config) => {
+      if (!taskTool) {
+        throw new Error("survey_repository requires the subagent task tool.");
+      }
+      const dispatch = taskTool;
+      const targets = await collectSurveyTargets(backend);
+
+      const outcomes = await pool(targets, SURVEY_CONCURRENCY, async (target) =>
+        String(
+          await dispatch.invoke(
+            {
+              description: `Survey the directory ${target.path} of this repository and report the wiki pages its subtree needs, in your documented <survey> format. Its immediate subdirectories are: ${target.children.join(", ") || "none"}. Propose page paths under openwiki/ and do not report pages for any other directory.`,
+              subagent_type: "repo-surveyor",
+            },
+            config,
+          ),
+        ),
+      );
+
+      const entries: PlanEntry[] = [];
+      const failed: string[] = [];
+      for (const [index, outcome] of outcomes.entries()) {
+        const target = targets[index];
+        if (outcome.status === "rejected") {
+          failed.push(target.path);
+          continue;
+        }
+        const pages = parseSurvey(outcome.value);
+        entries.push({
+          directory: target.path,
+          pages,
+          ...(pages.length === 0
+            ? { reason: "Surveyor proposed no pages for this directory." }
+            : {}),
+        });
+      }
+
+      const { plannedPages, planWritten } = await setLedger(entries);
+      return JSON.stringify({
+        directoriesSurveyed: entries.length,
+        directoriesFailed: failed,
+        plannedPages: plannedPages.length,
+        planWritten,
+        emptyDirectories: entries
+          .filter((entry) => entry.pages.length === 0)
+          .map((entry) => entry.directory),
+      });
+    },
+    {
+      name: "survey_repository",
+      description:
+        "Survey every non-test top-level directory concurrently, one repo-surveyor each, and build the plan from what they report. Call this once, before authoring. It writes /openwiki/_plan.md from the result, so do not write or parse that file yourself. Each surveyor owns its subtree and proposes the pages it needs, so you do not plan directory contents yourself: your job afterwards is reconciling names, cross-directory relationships, and anything the surveys missed, through submit_plan.",
+      schema: z.object({}),
+    },
+  );
 
   const submitPlan = tool(
     async (rawInput) => {
       const input = SubmitPlanSchema.parse(rawInput);
-      const units = await collectInventory(backend);
+      const targets = await collectSurveyTargets(backend);
       const problems = validatePlan(
         input.entries,
-        units.map((unit) => unit.id),
+        targets.map((target) => target.path),
       );
       if (problems.length > 0) {
         return JSON.stringify({ accepted: false, problems });
       }
-      const plannedPages = [
-        ...new Set(
-          input.entries
-            .filter((entry) => entry.disposition === "page")
-            .map((entry) => entry.page as string),
-        ),
-      ];
-      ledger = { entries: input.entries, plannedPages };
-      const written = await backend.write(
-        `${wikiRoot}/_plan.md`,
-        renderPlanMarkdown(ledger),
-      );
+      const { plannedPages, planWritten } = await setLedger(input.entries);
       return JSON.stringify({
         accepted: true,
-        units: units.length,
+        directories: input.entries.length,
         plannedPages: plannedPages.length,
-        grouped: input.entries.filter((e) => e.disposition === GROUPED).length,
-        excluded: input.entries.filter((e) => e.disposition === EXCLUDED).length,
-        planWritten: !written.error,
+        planWritten,
       });
     },
     {
       name: "submit_plan",
       description:
-        "Submit the unit-to-page ledger for the whole repository. Every unit inventory_repository returned needs exactly one entry: disposition 'page' with its canonical page, or 'grouped' into a named page with a reason, or 'excluded' with a reason. A ledger missing units, repeating one, or grouping without a reason is rejected with the problems listed, and nothing is recorded until it is accepted. /openwiki/_plan.md is rendered from the accepted ledger, so do not write it yourself and do not parse it back - ask for the ledger instead.",
+        "Replace the plan with a complete ledger: one entry per surveyed directory, listing the pages it owns, or an explicit reason for planning none. Use it to amend what survey_repository produced - renaming pages, adding a page the surveys missed, resolving two directories that claimed the same page. Every non-test top-level directory must appear, and a ledger missing one is rejected with the list rather than partially applied.",
       schema: SubmitPlanSchema,
     },
   );
@@ -192,7 +269,9 @@ export function createOpenWikiPlanLedgerMiddleware(
       if (!ledger) {
         return JSON.stringify({
           complete: false,
-          problems: ["No plan has been accepted; call submit_plan first."],
+          problems: [
+            "No plan exists; call survey_repository before finishing.",
+          ],
         });
       }
       const problems: string[] = [];
@@ -212,21 +291,12 @@ export function createOpenWikiPlanLedgerMiddleware(
       };
       await collect(wikiRoot, 0);
 
-      const absent = ledger.plannedPages.filter((page) => {
-        const normalized = page.replace(/^\/+/u, "");
-        return !existing.has(normalized);
-      });
+      const absent = ledger.plannedPages.filter((page) => !existing.has(page));
       if (absent.length > 0) {
         problems.push(
           `${absent.length} planned page(s) were never written: ${absent.slice(0, 10).join(", ")}${absent.length > 10 ? ", ..." : ""}`,
         );
       }
-      // QA blocks finishing only in full mode, and only for a documentation
-      // defect. `off` finalizes with the outcome recorded as not_triggered, so
-      // an ablation has a clean control rather than a mode that cannot end. And
-      // an infrastructure failure never blocks: a run that authored sixty pages
-      // has done real work, and refusing to let it finish because the QA
-      // plumbing broke would burn every token that produced them.
       const qaProblem = qaGate ? qaFinalizationProblem(qaGate) : null;
       if (qaProblem) {
         problems.push(qaProblem);
@@ -236,22 +306,27 @@ export function createOpenWikiPlanLedgerMiddleware(
         complete: problems.length === 0,
         plannedPages: ledger.plannedPages.length,
         pagesOnDisk: existing.size,
-        ...(qaGate
-          ? { qaMode: qaGate.mode, qaStatus: qaGate.status }
-          : {}),
+        ...(qaGate ? { qaMode: qaGate.mode, qaStatus: qaGate.status } : {}),
         problems,
       });
     },
     {
       name: "finalize_wiki",
       description:
-        "Check the wiki against the accepted plan before you finish. It reports any planned page that was never written. You may not end the run while it reports problems: author the missing pages and call it again. It reads the ledger rather than your summary of it, because a run that lost an authoring report once finished with 33 of 62 planned pages and reported success.",
+        "Check the wiki against the plan before you finish, and against semantic QA when it is enabled. It reports any planned page that was never written. You may not end the run while it reports problems: author the missing pages through author_pages and call it again. It reads the ledger rather than your summary of it, because a run that lost an authoring report once finished with 33 of 62 planned pages and reported success.",
       schema: z.object({}),
     },
   );
 
   return createMiddleware({
     name: "OpenWikiPlanLedgerMiddleware",
-    tools: [submitPlan, finalizeWiki],
+    tools: [surveyRepository, submitPlan, finalizeWiki],
+    wrapModelCall: (request, handler) => {
+      const found = (request.tools ?? []).find(
+        (candidate: { name?: string }) => candidate.name === "task",
+      );
+      taskTool ??= (found as unknown as typeof taskTool) ?? null;
+      return handler(request);
+    },
   });
 }

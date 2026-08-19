@@ -56,7 +56,7 @@ const MAX_AUTHOR_CONCURRENCY = 32;
  * @param worker - Per-item async operation.
  * @returns Settled outcomes in the order `items` were supplied.
  */
-async function pool<TItem, TResult>(
+export async function pool<TItem, TResult>(
   items: readonly TItem[],
   limit: number,
   worker: (item: TItem, index: number) => Promise<TResult>,

@@ -367,7 +367,8 @@ describe("createSystemPrompt Claims workflow", () => {
         expect(prompt).toContain("finalize_wiki");
         expect(prompt).toContain("verify_wiki");
         expect(prompt).toContain("submit_plan");
-        expect(prompt).toContain("inventory_repository");
+        expect(prompt).toContain("survey_repository");
+        expect(prompt).toContain("repo-surveyor");
         // The coordinator is the single Claims writer. Each subagent is told so
         // in its own system prompt, asserted in claims-agent-integration.
         expect(prompt).toContain("every Claims operation");

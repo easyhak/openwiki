@@ -1,69 +1,94 @@
 import { describe, expect, test } from "vitest";
 import {
   createOpenWikiPlanLedgerMiddleware,
+  parseSurvey,
   renderPlanMarkdown,
   validatePlan,
 } from "../../src/agent/plan-ledger.ts";
 import { createQaGate } from "../../src/agent/wiki-verification.ts";
 
-const UNITS = ["python-package:/svc-a", "go-module:/svc-b", "ci-workflow:/ci"];
+const TARGETS = ["/", "/smith-go", "/smith-backend"];
 
 describe("validatePlan", () => {
-  test("accepts a ledger that dispositions every unit", () => {
+  test("accepts a ledger covering every surveyed directory", () => {
     expect(
       validatePlan(
         [
-          { unitId: UNITS[0], disposition: "page", page: "a.md" },
-          { unitId: UNITS[1], disposition: "page", page: "b.md" },
+          { directory: "/", pages: ["openwiki/workspace.md"] },
+          { directory: "/smith-go", pages: ["openwiki/go.md"] },
           {
-            unitId: UNITS[2],
-            disposition: "excluded",
-            reason: "CI config, documented in operations",
+            directory: "/smith-backend",
+            pages: [],
+            reason: "Covered by the API pages owned by /smith-go",
           },
         ],
-        UNITS,
+        TARGETS,
       ),
     ).toEqual([]);
   });
 
-  test("rejects a unit left without a disposition", () => {
-    // The failure this exists for: a plan that silently covers part of the
-    // repository reads exactly like one that covers all of it.
-    const problems = validatePlan(
-      [{ unitId: UNITS[0], disposition: "page", page: "a.md" }],
-      UNITS,
-    );
-    expect(problems.join(" ")).toContain("2 unit(s) have no disposition");
+  test("rejects a directory nobody planned", () => {
+    // A subtree nobody mentions is indistinguishable from one nobody read.
+    expect(
+      validatePlan([{ directory: "/", pages: ["openwiki/a.md"] }], TARGETS).join(
+        " ",
+      ),
+    ).toContain("2 directory(ies) have no plan entry");
   });
 
-  test("rejects unknown, duplicated, and unexplained entries", () => {
+  test("rejects an empty directory with no reason, and an unknown one", () => {
     const problems = validatePlan(
       [
-        { unitId: UNITS[0], disposition: "page", page: "a.md" },
-        { unitId: UNITS[0], disposition: "page", page: "a.md" },
-        { unitId: "invented:/nowhere", disposition: "page", page: "x.md" },
-        { unitId: UNITS[1], disposition: "grouped", page: "a.md" },
-        { unitId: UNITS[2], disposition: "excluded" },
+        { directory: "/", pages: [] },
+        { directory: "/smith-go", pages: ["openwiki/go.md"] },
+        { directory: "/smith-backend", pages: ["openwiki/be.md"] },
+        { directory: "/invented", pages: ["openwiki/x.md"] },
       ],
-      UNITS,
+      TARGETS,
     ).join(" ");
-    expect(problems).toContain("Duplicate disposition");
-    expect(problems).toContain("Unknown unit");
-    expect(problems).toContain("grouped with no reason");
-    expect(problems).toContain("excluded with no reason");
+    expect(problems).toContain("plans no pages and gives no reason");
+    expect(problems).toContain("not a survey target: /invented");
+  });
+
+  test("rejects two directories claiming one page", () => {
+    // Two authors on one page race on write_file and the loser's evidence is
+    // gone, so the collision has to fail at plan time.
+    expect(
+      validatePlan(
+        [
+          { directory: "/", pages: ["openwiki/shared.md"] },
+          { directory: "/smith-go", pages: ["openwiki/shared.md"] },
+          { directory: "/smith-backend", pages: [], reason: "none needed" },
+        ],
+        TARGETS,
+      ).join(" "),
+    ).toContain("claimed by both");
   });
 
   test("renders the plan from the ledger rather than the other way round", () => {
-    const markdown = renderPlanMarkdown({
-      entries: [{ unitId: UNITS[0], disposition: "page", page: "a.md" }],
-      plannedPages: ["a.md"],
-    });
-    expect(markdown).toContain("| Unit | Disposition | Page | Reason |");
-    expect(markdown).toContain(UNITS[0]);
+    expect(
+      renderPlanMarkdown({
+        entries: [{ directory: "/smith-go", pages: ["openwiki/go.md"] }],
+        plannedPages: ["openwiki/go.md"],
+      }),
+    ).toContain("| Directory | Pages | Note |");
+  });
+
+  test("reads a surveyor's proposed pages out of its text block", () => {
+    expect(
+      parseSurvey(
+        `<survey directory="/smith-go">
+           <page path="openwiki/go/api.md"><responsibility>x</responsibility></page>
+           <page path="/openwiki/go/worker.md"></page>
+           <excluded path="testdata">fixtures</excluded>
+         </survey>`,
+      ),
+    ).toEqual(["openwiki/go/api.md", "openwiki/go/worker.md"]);
+    expect(parseSurvey("I could not survey this directory.")).toEqual([]);
   });
 });
 
-/** Backend stub: a repository with two manifests and a wiki tree we control. */
+/** Repository with one real directory, a test directory, and a wiki tree. */
 function stubBackend(wikiFiles: string[]) {
   const written: Record<string, string> = {};
   return {
@@ -73,17 +98,17 @@ function stubBackend(wikiFiles: string[]) {
       if (clean === "/") {
         return Promise.resolve({
           files: [
-            { path: "svc-a", is_dir: true },
-            { path: "openwiki", is_dir: true },
+            { path: "smith-go", is_dir: true },
+            { path: "tests", is_dir: true },
+            { path: "node_modules", is_dir: true },
+            { path: "README.md", is_dir: false },
           ],
         });
       }
-      if (clean === "/svc-a") {
-        return Promise.resolve({
-          files: [{ path: "svc-a/pyproject.toml", is_dir: false }],
-        });
+      if (clean === "/smith-go") {
+        return Promise.resolve({ files: [{ path: "api", is_dir: true }] });
       }
-      if (clean === "/openwiki" || clean === "openwiki") {
+      if (clean === "/openwiki") {
         return Promise.resolve({
           files: wikiFiles.map((path) => ({ path, is_dir: false })),
         });
@@ -97,85 +122,96 @@ function stubBackend(wikiFiles: string[]) {
   };
 }
 
-function toolsOf(middleware: unknown) {
-  const list = (middleware as { tools: { name: string; invoke: (i: unknown) => Promise<unknown> }[] })
-    .tools;
-  return Object.fromEntries(list.map((t) => [t.name, t]));
+function wire(backend: ReturnType<typeof stubBackend>, gate?: ReturnType<typeof createQaGate>, respond?: (d: string) => Promise<string>) {
+  const middleware = createOpenWikiPlanLedgerMiddleware(backend, gate);
+  const tools = Object.fromEntries(
+    (middleware as { tools: { name: string; invoke: (i: unknown) => Promise<unknown> }[] }).tools.map(
+      (t) => [t.name, t],
+    ),
+  );
+  if (respond) {
+    const task = {
+      name: "task",
+      invoke: (input: unknown) =>
+        respond((input as { description: string }).description),
+    };
+    (middleware as { wrapModelCall: (r: unknown, h: (r: unknown) => unknown) => unknown })
+      .wrapModelCall({ tools: [task] }, (r) => r);
+  }
+  const call = async (name: string, args: unknown = {}) =>
+    JSON.parse(String(await tools[name].invoke(args))) as Record<string, unknown>;
+  return { call };
 }
 
-describe("finalize_wiki", () => {
-  test("refuses to complete while a planned page is missing", async () => {
-    // The 0.290 trial: 62 planned pages, 33 on disk, reported success.
-    const backend = stubBackend(["openwiki/present.md"]);
-    const tools = toolsOf(createOpenWikiPlanLedgerMiddleware(backend));
-    const submitted = JSON.parse(
-      String(
-        await tools.submit_plan.invoke({
-          entries: [
-            {
-              unitId: "python-package:/svc-a",
-              disposition: "page",
-              page: "openwiki/present.md",
-            },
-          ],
-        }),
+describe("survey_repository", () => {
+  test("surveys every non-test top-level directory and builds the plan", async () => {
+    const backend = stubBackend([]);
+    const { call } = wire(backend, undefined, (description) =>
+      Promise.resolve(
+        description.includes("/smith-go")
+          ? `<survey><page path="openwiki/go/api.md"/></survey>`
+          : `<survey><page path="openwiki/workspace.md"/></survey>`,
       ),
-    ) as { accepted: boolean };
-    expect(submitted.accepted).toBe(true);
-    expect(backend.written["/openwiki/_plan.md"]).toContain("| Unit |");
-
-    const ok = JSON.parse(
-      String(await tools.finalize_wiki.invoke({})),
-    ) as { complete: boolean };
-    expect(ok.complete).toBe(true);
-
-    // Same ledger, a page that never landed.
-    const missing = stubBackend([]);
-    const tools2 = toolsOf(createOpenWikiPlanLedgerMiddleware(missing));
-    await tools2.submit_plan.invoke({
-      entries: [
-        {
-          unitId: "python-package:/svc-a",
-          disposition: "page",
-          page: "openwiki/present.md",
-        },
-      ],
-    });
-    const gated = JSON.parse(
-      String(await tools2.finalize_wiki.invoke({})),
-    ) as { complete: boolean; problems: string[] };
-    expect(gated.complete).toBe(false);
-    expect(gated.problems.join(" ")).toContain("never written");
+    );
+    const out = await call("survey_repository");
+    // "/" for the root's own files and "/smith-go"; tests and node_modules are
+    // excluded as subjects, not as evidence.
+    expect(out.directoriesSurveyed).toBe(2);
+    expect(out.plannedPages).toBe(2);
+    expect(backend.written["/openwiki/_plan.md"]).toContain("| Directory |");
   });
 
-  test("blocks on QA only in full mode, and never on an infrastructure failure", async () => {
-    const plan = {
-      entries: [
-        {
-          unitId: "python-package:/svc-a",
-          disposition: "page" as const,
-          page: "openwiki/present.md",
-        },
-      ],
-    };
-    const finalize = async (gate: ReturnType<typeof createQaGate> | undefined) => {
-      const tools = toolsOf(
-        createOpenWikiPlanLedgerMiddleware(stubBackend(["openwiki/present.md"]), gate),
+  test("records a directory whose surveyor proposed nothing", async () => {
+    const { call } = wire(stubBackend([]), undefined, () =>
+      Promise.resolve("<survey></survey>"),
+    );
+    const out = await call("survey_repository");
+    expect(out.emptyDirectories).toEqual(["/", "/smith-go"]);
+  });
+});
+
+describe("finalize_wiki", () => {
+  test("refuses while a planned page is missing, and passes once written", async () => {
+    // The 0.290 trial: 62 planned pages, 33 on disk, reported success.
+    const missing = wire(stubBackend([]), undefined, () =>
+      Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
+    );
+    await missing.call("survey_repository");
+    const blocked = await missing.call("finalize_wiki");
+    expect(blocked.complete).toBe(false);
+    expect(String(blocked.problems)).toContain("never written");
+
+    const present = wire(stubBackend(["openwiki/a.md"]), undefined, () =>
+      Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
+    );
+    await present.call("survey_repository");
+    expect((await present.call("finalize_wiki")).complete).toBe(true);
+  });
+
+  test("refuses completion when no plan exists", async () => {
+    const { call } = wire(stubBackend([]));
+    const out = await call("finalize_wiki");
+    expect(out.complete).toBe(false);
+    expect(String(out.problems)).toContain("survey_repository");
+  });
+
+  test("blocks on QA only in full mode, never on infrastructure or a spent budget", async () => {
+    const finalize = async (gate: ReturnType<typeof createQaGate>) => {
+      const { call } = wire(stubBackend(["openwiki/a.md"]), gate, () =>
+        Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
       );
-      await tools.submit_plan.invoke(plan);
-      return JSON.parse(String(await tools.finalize_wiki.invoke({}))) as {
-        complete: boolean;
-        problems: string[];
-      };
+      await call("survey_repository");
+      return call("finalize_wiki");
     };
 
-    const notRun = createQaGate("full");
-    expect((await finalize(notRun)).problems.join(" ")).toContain("verify_wiki");
+    expect(String((await finalize(createQaGate("full"))).problems)).toContain(
+      "verify_wiki",
+    );
 
     const failed = createQaGate("full");
     failed.status = "failed";
     failed.unresolved = ["Q-02"];
-    expect((await finalize(failed)).problems.join(" ")).toContain("Q-02");
+    expect(String((await finalize(failed)).problems)).toContain("Q-02");
 
     const passed = createQaGate("full");
     passed.status = "passed";
@@ -185,27 +221,15 @@ describe("finalize_wiki", () => {
     expect((await finalize(createQaGate("off"))).complete).toBe(true);
 
     // A run that authored its pages is not thrown away because QA plumbing
-    // broke: that would burn every token that produced them to learn nothing.
+    // broke, nor deadlocked by its own spent wave budget.
     const broken = createQaGate("full");
     broken.status = "infrastructure_error";
     expect((await finalize(broken)).complete).toBe(true);
 
-    // Nor is it deadlocked by its own wave budget. `failed` with both waves
-    // spent has no remaining action, so blocking on it would leave every trial
-    // burning to its timeout with a complete wiki already on disk.
     const spent = createQaGate("full");
     spent.status = "failed";
     spent.unresolved = ["Q-02"];
     spent.wavesRun = 2;
     expect((await finalize(spent)).complete).toBe(true);
-  });
-
-  test("refuses completion when no plan was ever accepted", async () => {
-    const tools = toolsOf(createOpenWikiPlanLedgerMiddleware(stubBackend([])));
-    const result = JSON.parse(
-      String(await tools.finalize_wiki.invoke({})),
-    ) as { complete: boolean; problems: string[] };
-    expect(result.complete).toBe(false);
-    expect(result.problems.join(" ")).toContain("submit_plan");
   });
 });

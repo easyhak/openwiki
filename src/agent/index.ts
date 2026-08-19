@@ -49,7 +49,6 @@ import { OpenWikiLocalShellBackend } from "./docs-only-backend.js";
 import { getSelectedModelAvailability } from "../model-availability.js";
 import { createOpenWikiAuthoringPoolMiddleware } from "./authoring-pool.js";
 import { createOpenWikiPlanLedgerMiddleware } from "./plan-ledger.js";
-import { createOpenWikiInventoryMiddleware } from "./repo-inventory.js";
 import {
   createOpenWikiVerificationMiddleware,
   createQaGate,
@@ -72,6 +71,7 @@ import {
 import { createSystemPrompt, createUserPrompt } from "./prompt.js";
 import { resolveRepositoryReviewSubagents } from "./review-subagents.js";
 import { resolvePageAuthorSubagents } from "./page-author.js";
+import { resolveRepoSurveyorSubagents } from "./repo-surveyor.js";
 import { syncBundledSkills } from "./skills.js";
 import {
   createVertexAuthFetch,
@@ -518,7 +518,6 @@ function createOpenWikiAgentGraph(
                   // Enumeration, the ledger it feeds, and the gate that reads
                   // the ledger: breadth stops being something the workflow asks
                   // for and becomes something it cannot skip.
-                  createOpenWikiInventoryMiddleware(wikiBackend),
                   createOpenWikiVerificationMiddleware(qaGate),
                   createOpenWikiPlanLedgerMiddleware(wikiBackend, qaGate),
                 ]
@@ -538,6 +537,9 @@ function createOpenWikiAgentGraph(
         options.outputMode,
         backend,
       ),
+      // Planning a large repository does not fit one context either, so the
+      // survey fans out per directory the way authoring fans out per page.
+      ...resolveRepoSurveyorSubagents(options.command, options.outputMode),
       // Authoring is the run's dominant cost and the only phase that cannot move
       // into the REPL, so it scales by fanning out instead.
       ...resolvePageAuthorSubagents(
