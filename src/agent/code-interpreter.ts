@@ -39,18 +39,23 @@ import { createCodeInterpreterMiddleware } from "@langchain/quickjs";
  * whole subagent. The init prompt fixes one title for page-author; anything else
  * dispatching with a schema needs its own.
  *
- * A schema that does not bind fails SILENTLY, which is the more expensive half.
- * deepagents' task tool returns structuredResponse when the subagent produced
- * one and otherwise falls back to its final message, and the bridge here then
- * JSON.parses that text and hands back the raw string when it will not parse.
- * Nothing throws. Every OpenWiki subagent fixes its own return format in its
- * system prompt and follows that instead of calling the extraction tool, so a
- * caller's schema is decoration in all four cases: authors returned their
- * prompt's JSON rather than the caller's fields, and wiki-question-finder
- * returned its [Q-NN] text block to a coordinator whose code indexed it as an
- * array, which cost one whole run its verification waves. Each subagent's
- * description therefore names the shape it actually returns, and says that a
- * schema will not change it.
+ * A schema that does not take fails SILENTLY, which is the more expensive half.
+ * The schema is applied - deepagents recompiles the named spec with it as
+ * `responseFormat` - but application is not compliance: its task tool returns
+ * structuredResponse only when the subagent produced one, and otherwise falls
+ * back to the final message, whereupon the bridge here JSON.parses that text and
+ * hands back the raw string when it will not parse. Nothing throws at any step.
+ *
+ * That is a tendency rather than an invariant, and the tendency is strong,
+ * because every OpenWiki subagent fixes its own return format in its system
+ * prompt and answers in that instead of calling the extraction tool. Observed in
+ * all four: authors returned their prompt's JSON rather than the caller's fields,
+ * 3 of 57 in an earlier trace produced a parsed structuredResponse at all, and
+ * wiki-question-finder returned its [Q-NN] text block to a coordinator whose code
+ * indexed it as an array, which cost one whole run its verification waves. So
+ * each description names the shape that subagent actually returns and warns that
+ * a schema may not change it, and the prompt requires the coordinator to assert
+ * the shape after parsing rather than trust either channel.
  *
  * Authoring stays on the direct surface: a
  * page's prose has to come out of a model turn, so routing write_file through

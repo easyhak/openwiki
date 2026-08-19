@@ -2,7 +2,7 @@ import type { SubAgent } from "deepagents";
 import type { OpenWikiCommand, OpenWikiOutputMode } from "./types.js";
 
 const SKELETON_CRITIC_DESCRIPTION =
-  "Reviews the repository-wide OpenWiki plan before drafting. It independently inspects source and tests, compares that inventory with /openwiki/_plan.md, and returns either a pass or specific evidence-backed coverage changes. It is read-only and never authors Claims or Markdown. It returns TEXT - a <review status> block carrying <reconciliation>, <prior_requests>, and <new_requests> - so read the status and the request items out of that block. A responseSchema does not change the return; this subagent's own format wins and the schema is discarded without an error.";
+  "Reviews the repository-wide OpenWiki plan before drafting. It independently inspects source and tests, compares that inventory with /openwiki/_plan.md, and returns either a pass or specific evidence-backed coverage changes. It is read-only and never authors Claims or Markdown. It returns TEXT - a <review status> block carrying <reconciliation>, <prior_requests>, and <new_requests> - so read the status and the request items out of that block. A responseSchema does not reliably change that: deepagents recompiles the subagent with that response format, but when it answers in the format above nothing populates the structured response and you receive the text with no error raised.";
 
 const SKELETON_CRITIC_SYSTEM_PROMPT = `You are an independent architecture and documentation-coverage critic. Determine whether the proposed OpenWiki plan is complete and specific enough to guide substantive, Claims-grounded documentation of this repository before factual pages are drafted.
 

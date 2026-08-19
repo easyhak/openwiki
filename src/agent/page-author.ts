@@ -108,11 +108,11 @@ Reporting:
  * Which means the schema is documentation, not enforcement, and the shape it
  * declares has to be the shape THIS prompt asks for. It was not: the description
  * advertised {propositions, ok} while the reporting rule below asks for {page,
- * propositions, undocumented}. A caller-supplied responseSchema never binds here
- * - deepagents' task tool falls back to the final message whenever
- * structuredResponse is null, silently - so every author returned the prompt's
- * shape and every `ok` read as absent. Thirty-eight of thirty-eight, harmless
- * only because nothing branched on it.
+ * propositions, undocumented}. A caller-supplied responseSchema does not settle
+ * that: deepagents applies it, but its task tool falls back to the final message
+ * whenever structuredResponse is null and nothing raises, so every author
+ * returned the prompt's shape and every `ok` read as absent. Thirty-eight of
+ * thirty-eight, harmless only because nothing branched on it.
  *
  * It was not harmless one dispatch over. Advertising a schema here taught the
  * coordinator to pass one everywhere, including to subagents whose system

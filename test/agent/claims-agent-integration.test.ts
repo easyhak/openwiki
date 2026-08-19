@@ -120,7 +120,7 @@ describe("Claims agent graph integration", () => {
       expect(
         options.middleware.map((middleware) => middleware.name),
       ).not.toContain("OpenWikiClaimsCompletionMiddleware");
-      expect(options.subagents).toHaveLength(command === "init" ? 3 : 0);
+      expect(options.subagents).toHaveLength(command === "init" ? 4 : 0);
       if (command === "init") {
         expect(
           options.subagents.map(
@@ -130,7 +130,30 @@ describe("Claims agent graph integration", () => {
           "skeleton-critic",
           "wiki-question-finder",
           "wiki-answer-verifier",
+          "page-author",
         ]);
+        // The coordinator is the single Claims writer, and every subagent is
+        // told so in its own system prompt. The init prompt used to carry this
+        // as one blanket sentence; it moved here when the prompt was trimmed,
+        // where it is checked per subagent instead of asserted once in prose.
+        const promptFor = (name: string) =>
+          (
+            options.subagents.find(
+              (subagent) => (subagent as { name: string }).name === name,
+            ) as { systemPrompt: string }
+          ).systemPrompt;
+        for (const name of [
+          "skeleton-critic",
+          "wiki-question-finder",
+          "wiki-answer-verifier",
+        ]) {
+          expect(promptFor(name)).toContain(
+            "Never call or propose Claims mutations",
+          );
+        }
+        expect(promptFor("page-author")).toContain(
+          "the coordinator owns all Claims operations",
+        );
       }
     },
   );

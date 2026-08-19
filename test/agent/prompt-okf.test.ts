@@ -6,8 +6,11 @@ describe("createSystemPrompt OKF guidance", () => {
     const init = createSystemPrompt("init", "repository");
     const update = createSystemPrompt("update", "repository");
 
-    expect(init).toContain("Only type is required by OKF");
-    expect(init).toContain("timestamp: <optional ISO 8601 datetime>");
+    expect(init).toContain("Only `type` is required by OKF");
+    // The optional OKF fields left init with the prompt trim: `timestamp` is
+    // derivable and the formatter writes it, so spending init's budget on it
+    // bought nothing. update still documents the full set.
+    expect(update).toContain("timestamp: <Optional ISO 8601 datetime>");
     expect(init).toContain("index.md and log.md are reserved");
     expect(init).not.toContain(
       "Preserve all existing producer-defined front matter fields",

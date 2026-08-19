@@ -346,18 +346,25 @@ describe("createSystemPrompt Claims workflow", () => {
           "every page and its operations into one resolve_claims call",
         );
       }
+      // Same rule in both, worded for each: the init trim states it as a
+      // boundary rather than a prohibition, and update keeps the longer form.
       expect(prompt).toContain(
-        "Never use execute to create, edit, move, or delete generated wiki files",
+        command === "init"
+          ? "Use shell execute only to inspect source, never to mutate wiki files"
+          : "Never use execute to create, edit, move, or delete generated wiki files",
       );
       expect(prompt).not.toContain("_skeleton.md");
       if (command === "init") {
         expect(prompt).toContain("skeleton-critic");
         expect(prompt).toContain("wiki-question-finder");
         expect(prompt).toContain("wiki-answer-verifier");
+        expect(prompt).toContain("page-author");
         expect(prompt).toContain(
-          "Maintain affected propositions with resolve_claims",
+          "Establish every returned proposition by calling resolve_claims",
         );
-        expect(prompt).toContain("subagents never mutate Claims or Markdown");
+        // The coordinator is the single Claims writer. Each subagent is told so
+        // in its own system prompt, asserted in claims-agent-integration.
+        expect(prompt).toContain("every Claims operation");
       } else {
         expect(prompt).not.toContain("skeleton-critic");
         expect(prompt).not.toContain("wiki-question-finder");
