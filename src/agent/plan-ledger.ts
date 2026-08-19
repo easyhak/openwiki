@@ -30,17 +30,12 @@
 import { tool } from "@langchain/core/tools";
 import { createMiddleware } from "langchain";
 import { z } from "zod";
-import { pool } from "./authoring-pool.js";
 import {
   collectDirectoryTree,
-  nestedRootsWithin,
   uncoveredDirectories,
   type ListingBackend,
 } from "./repo-inventory.js";
 import { qaFinalizationProblem, type QaGate } from "./wiki-verification.js";
-
-/** Surveyors in flight. Each reads a whole subtree, so this is real work. */
-const SURVEY_CONCURRENCY = 10;
 
 const EntrySchema = z.object({
   directory: z.string().min(1),
@@ -69,19 +64,19 @@ export interface PlanLedger {
  */
 export function validatePlan(
   entries: PlanEntry[],
-  targets: readonly string[],
+  tree: readonly string[],
 ): string[] {
   const problems: string[] = [];
-  const covered = new Set<string>();
+  const directories = entries.map((entry) => entry.directory);
 
   for (const entry of entries) {
-    if (!targets.includes(entry.directory)) {
+    // A directory that is not in the tree is a typo, and a typo can leave the
+    // directory it meant uncovered while looking like it was planned.
+    if (!tree.includes(entry.directory)) {
       problems.push(
-        `Entry for a directory that is not a survey target: ${entry.directory}`,
+        `Entry names a directory that does not exist: ${entry.directory}`,
       );
-      continue;
     }
-    covered.add(entry.directory);
     if (entry.pages.length === 0 && !entry.reason) {
       problems.push(
         `Directory ${entry.directory} plans no pages and gives no reason`,
@@ -89,10 +84,13 @@ export function validatePlan(
     }
   }
 
-  const missing = targets.filter((target) => !covered.has(target));
-  if (missing.length > 0) {
+  // The one check code can make. Which granularity is right is a fact about how
+  // this repository is organised; that nothing went unlooked-at is not, and a
+  // subtree nobody plans is indistinguishable from one nobody read.
+  const uncovered = uncoveredDirectories(tree, directories);
+  if (uncovered.length > 0) {
     problems.push(
-      `${missing.length} directory(ies) have no plan entry: ${missing.slice(0, 15).join(", ")}${missing.length > 15 ? ", ..." : ""}`,
+      `${uncovered.length} director(ies) are covered by no entry: ${uncovered.slice(0, 20).join(", ")}${uncovered.length > 20 ? ", ..." : ""}`,
     );
   }
 
@@ -101,8 +99,8 @@ export function validatePlan(
     for (const page of entry.pages) {
       const owner = owners.get(page);
       if (owner && owner !== entry.directory) {
-        // Two directories planning one page means two authors racing on one
-        // write_file, and the loser's evidence disappearing.
+        // Two entries planning one page is two authors racing on one
+        // write_file, with the loser's evidence gone.
         problems.push(
           `Page ${page} is claimed by both ${owner} and ${entry.directory}`,
         );
@@ -135,18 +133,6 @@ export function renderPlanMarkdown(ledger: PlanLedger): string {
   ].join("\n");
 }
 
-/**
- * Extracts one surveyor's proposed pages from its text block.
- *
- * @param output - Raw surveyor output.
- * @returns Page paths, normalized without a leading slash.
- */
-export function parseSurvey(output: string): string[] {
-  return [...output.matchAll(/<page\s+path="([^"]+)"/gu)].map((match) =>
-    match[1].replace(/^\/+/u, ""),
-  );
-}
-
 /** Backend capabilities the ledger tools need. */
 interface LedgerBackend extends ListingBackend {
   write(filePath: string, content: string): Promise<{ error?: string }>;
@@ -166,9 +152,6 @@ export function createOpenWikiPlanLedgerMiddleware(
   wikiRoot = "/openwiki",
 ) {
   let ledger: PlanLedger | null = null;
-  let taskTool: {
-    invoke: (input: unknown, config?: unknown) => Promise<unknown>;
-  } | null = null;
 
   const setLedger = async (entries: PlanEntry[]) => {
     const plannedPages = [
@@ -195,125 +178,30 @@ export function createOpenWikiPlanLedgerMiddleware(
     },
   );
 
-  const SurveySchema = z.object({
-    roots: z.array(z.string().min(1)).min(1),
-  });
-
-  const surveyRepository = tool(
-    async (rawInput, config) => {
-      const input = SurveySchema.parse(rawInput);
-      if (!taskTool) {
-        throw new Error("survey_repository requires the subagent task tool.");
-      }
-      const dispatch = taskTool;
-      const roots = [
-        ...new Set(
-          input.roots.map(
-            (root) => `/${root.replace(/^\/+/u, "").replace(/\/+$/u, "")}`,
-          ),
-        ),
-      ];
-      const tree = await collectDirectoryTree(backend);
-
-      // The one check code can make: nothing goes unlooked-at. Which roots are
-      // right is a fact about how this repository is organised, and the agent
-      // proposing them has read it; noticing an omission is not judgement.
-      const uncovered = uncoveredDirectories(tree, roots);
-      if (uncovered.length > 0) {
-        return JSON.stringify({
-          surveyed: false,
-          problems: [
-            `${uncovered.length} director(ies) are covered by no root: ${uncovered.slice(0, 20).join(", ")}${uncovered.length > 20 ? ", ..." : ""}`,
-          ],
-        });
-      }
-
-      const outcomes = await pool(roots, SURVEY_CONCURRENCY, async (root) => {
-        const nested = nestedRootsWithin(root, roots);
-        return String(
-          await dispatch.invoke(
-            {
-              description: `Survey ${root} of this repository and report the wiki pages its subtree needs, in your documented <survey> format. ${
-                nested.length > 0
-                  ? `Another surveyor owns each of these, so do not report pages for them: ${nested.join(", ")}.`
-                  : "No other surveyor owns any part of it."
-              } Propose page paths under openwiki/.`,
-              subagent_type: "repo-surveyor",
-            },
-            config,
-          ),
-        );
-      });
-
-      const entries: PlanEntry[] = [];
-      const failed: string[] = [];
-      for (const [index, outcome] of outcomes.entries()) {
-        const root = roots[index];
-        if (outcome.status === "rejected") {
-          failed.push(root);
-          continue;
-        }
-        const pages = parseSurvey(outcome.value);
-        entries.push({
-          directory: root,
-          pages,
-          ...(pages.length === 0
-            ? { reason: "Surveyor proposed no pages for this root." }
-            : {}),
-        });
-      }
-
-      const { plannedPages, planWritten } = await setLedger(entries);
-      return JSON.stringify({
-        surveyed: true,
-        rootsSurveyed: entries.length,
-        rootsFailed: failed,
-        directoriesCovered: tree.length,
-        plannedPages: plannedPages.length,
-        planWritten,
-        emptyRoots: entries
-          .filter((entry) => entry.pages.length === 0)
-          .map((entry) => entry.directory),
-      });
-    },
-    {
-      name: "survey_repository",
-      description:
-        "Survey the repository by fanning a repo-surveyor out over the roots you supply, then build the plan from what they report. Explore first and choose roots that match how this repository is organised - one per service in a flat monorepo, one per package under a nested packages/ tree, or a handful for a small repository. Roots may nest: a directory belongs to its deepest covering root, so /src alongside /src/api gives /src its own files and /src/api its subtree. Every non-test directory must be covered by some root, and a partition that misses one is rejected with the paths rather than partially surveyed. It writes /openwiki/_plan.md from the result, so do not write or parse that file.",
-      schema: SurveySchema,
-    },
-  );
-
   const submitPlan = tool(
     async (rawInput) => {
       const input = SubmitPlanSchema.parse(rawInput);
-      if (!ledger) {
-        return JSON.stringify({
-          accepted: false,
-          problems: [
-            "No survey has run. Call survey_repository first; submit_plan amends its result rather than replacing it.",
-          ],
-        });
-      }
-      const problems = validatePlan(
-        input.entries,
-        ledger.entries.map((entry) => entry.directory),
-      );
+      const tree = await collectDirectoryTree(backend);
+      const problems = validatePlan(input.entries, tree);
       if (problems.length > 0) {
         return JSON.stringify({ accepted: false, problems });
       }
       const { plannedPages, planWritten } = await setLedger(input.entries);
       return JSON.stringify({
         accepted: true,
-        directories: input.entries.length,
+        directoriesCovered: tree.length,
+        entries: input.entries.length,
         plannedPages: plannedPages.length,
         planWritten,
+        emptyEntries: input.entries
+          .filter((entry) => entry.pages.length === 0)
+          .map((entry) => entry.directory),
       });
     },
     {
       name: "submit_plan",
       description:
-        "Replace the plan with a complete ledger: one entry per surveyed directory, listing the pages it owns, or an explicit reason for planning none. Use it to amend what survey_repository produced - renaming pages, adding a page the surveys missed, resolving two directories that claimed the same page. Every non-test top-level directory must appear, and a ledger missing one is rejected with the list rather than partially applied.",
+        "Submit the plan: one entry per area of the repository, each naming the directory it covers and the pages that document it, or an explicit reason for planning none. Choose entry directories to match how this repository is organised - one per service where services sit at the top level, one per package under a nested packages/ tree, a handful for a small repository. Entries may nest, and a directory belongs to its deepest entry. Every directory from list_repository_directories must be covered, and a plan missing one is rejected with the paths rather than partially applied. /openwiki/_plan.md is rendered from the accepted plan, so do not write or parse it yourself.",
       schema: SubmitPlanSchema,
     },
   );
@@ -324,7 +212,7 @@ export function createOpenWikiPlanLedgerMiddleware(
         return JSON.stringify({
           complete: false,
           problems: [
-            "No plan exists; call survey_repository before finishing.",
+            "No plan exists; call submit_plan before finishing.",
           ],
         });
       }
@@ -374,13 +262,6 @@ export function createOpenWikiPlanLedgerMiddleware(
 
   return createMiddleware({
     name: "OpenWikiPlanLedgerMiddleware",
-    tools: [listDirectories, surveyRepository, submitPlan, finalizeWiki],
-    wrapModelCall: (request, handler) => {
-      const found = (request.tools ?? []).find(
-        (candidate: { name?: string }) => candidate.name === "task",
-      );
-      taskTool ??= (found as unknown as typeof taskTool) ?? null;
-      return handler(request);
-    },
+    tools: [listDirectories, submitPlan, finalizeWiki],
   });
 }

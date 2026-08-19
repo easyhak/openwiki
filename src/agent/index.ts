@@ -71,7 +71,6 @@ import {
 import { createSystemPrompt, createUserPrompt } from "./prompt.js";
 import { resolveRepositoryReviewSubagents } from "./review-subagents.js";
 import { resolvePageAuthorSubagents } from "./page-author.js";
-import { resolveRepoSurveyorSubagents } from "./repo-surveyor.js";
 import { syncBundledSkills } from "./skills.js";
 import {
   createVertexAuthFetch,
@@ -537,9 +536,6 @@ function createOpenWikiAgentGraph(
         options.outputMode,
         backend,
       ),
-      // Planning a large repository does not fit one context either, so the
-      // survey fans out per directory the way authoring fans out per page.
-      ...resolveRepoSurveyorSubagents(options.command, options.outputMode),
       // Authoring is the run's dominant cost and the only phase that cannot move
       // into the REPL, so it scales by fanning out instead.
       ...resolvePageAuthorSubagents(

@@ -1,14 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
   createOpenWikiPlanLedgerMiddleware,
-  parseSurvey,
   renderPlanMarkdown,
   validatePlan,
 } from "../../src/agent/plan-ledger.ts";
-import {
-  nestedRootsWithin,
-  uncoveredDirectories,
-} from "../../src/agent/repo-inventory.ts";
+import { uncoveredDirectories } from "../../src/agent/repo-inventory.ts";
 import { createQaGate } from "../../src/agent/wiki-verification.ts";
 
 const TARGETS = ["/", "/smith-go", "/smith-backend"];
@@ -33,11 +29,14 @@ describe("validatePlan", () => {
 
   test("rejects a directory nobody planned", () => {
     // A subtree nobody mentions is indistinguishable from one nobody read.
+    // "/" is not used here because an entry on the root legitimately covers the
+    // whole tree - that is a coarse plan, not an incomplete one.
     expect(
-      validatePlan([{ directory: "/", pages: ["openwiki/a.md"] }], TARGETS).join(
-        " ",
-      ),
-    ).toContain("2 directory(ies) have no plan entry");
+      validatePlan(
+        [{ directory: "/smith-go", pages: ["openwiki/go.md"] }],
+        TARGETS,
+      ).join(" "),
+    ).toContain("covered by no entry");
   });
 
   test("rejects an empty directory with no reason, and an unknown one", () => {
@@ -51,7 +50,7 @@ describe("validatePlan", () => {
       TARGETS,
     ).join(" ");
     expect(problems).toContain("plans no pages and gives no reason");
-    expect(problems).toContain("not a survey target: /invented");
+    expect(problems).toContain("does not exist: /invented");
   });
 
   test("rejects two directories claiming one page", () => {
@@ -78,18 +77,6 @@ describe("validatePlan", () => {
     ).toContain("| Directory | Pages | Note |");
   });
 
-  test("reads a surveyor's proposed pages out of its text block", () => {
-    expect(
-      parseSurvey(
-        `<survey directory="/smith-go">
-           <page path="openwiki/go/api.md"><responsibility>x</responsibility></page>
-           <page path="/openwiki/go/worker.md"></page>
-           <excluded path="testdata">fixtures</excluded>
-         </survey>`,
-      ),
-    ).toEqual(["openwiki/go/api.md", "openwiki/go/worker.md"]);
-    expect(parseSurvey("I could not survey this directory.")).toEqual([]);
-  });
 });
 
 /** Repository with one real directory, a test directory, and a wiki tree. */
@@ -126,24 +113,23 @@ function stubBackend(wikiFiles: string[]) {
   };
 }
 
-function wire(backend: ReturnType<typeof stubBackend>, gate?: ReturnType<typeof createQaGate>, respond?: (d: string) => Promise<string>) {
+function wire(
+  backend: ReturnType<typeof stubBackend>,
+  gate?: ReturnType<typeof createQaGate>,
+) {
   const middleware = createOpenWikiPlanLedgerMiddleware(backend, gate);
   const tools = Object.fromEntries(
-    (middleware as { tools: { name: string; invoke: (i: unknown) => Promise<unknown> }[] }).tools.map(
-      (t) => [t.name, t],
-    ),
+    (
+      middleware as {
+        tools: { name: string; invoke: (i: unknown) => Promise<unknown> }[];
+      }
+    ).tools.map((t) => [t.name, t]),
   );
-  if (respond) {
-    const task = {
-      name: "task",
-      invoke: (input: unknown) =>
-        respond((input as { description: string }).description),
-    };
-    (middleware as { wrapModelCall: (r: unknown, h: (r: unknown) => unknown) => unknown })
-      .wrapModelCall({ tools: [task] }, (r) => r);
-  }
   const call = async (name: string, args: unknown = {}) =>
-    JSON.parse(String(await tools[name].invoke(args))) as Record<string, unknown>;
+    JSON.parse(String(await tools[name].invoke(args))) as Record<
+      string,
+      unknown
+    >;
   return { call };
 }
 
@@ -177,65 +163,55 @@ describe("partition coverage", () => {
     ]);
   });
 
-  test("tells a root which nested roots it does not own", () => {
-    expect(
-      nestedRootsWithin("/smith-go", ["/smith-go", "/smith-go/api", "/"]),
-    ).toEqual(["/smith-go/api"]);
-  });
 });
 
-describe("survey_repository", () => {
-  test("fans out over the supplied roots and builds the plan", async () => {
+describe("submit_plan", () => {
+  test("accepts a plan covering every directory and renders the plan file", async () => {
     const backend = stubBackend([]);
-    const { call } = wire(backend, undefined, (description) =>
-      Promise.resolve(
-        description.includes("/smith-go")
-          ? `<survey><page path="openwiki/go/api.md"/></survey>`
-          : `<survey><page path="openwiki/workspace.md"/></survey>`,
-      ),
-    );
-    const out = await call("survey_repository", {
-      roots: ["/", "/smith-go"],
+    const { call } = wire(backend);
+    const out = await call("submit_plan", {
+      entries: [
+        { directory: "/", pages: ["openwiki/workspace.md"] },
+        { directory: "/smith-go", pages: ["openwiki/go/api.md"] },
+      ],
     });
-    expect(out.surveyed).toBe(true);
-    expect(out.rootsSurveyed).toBe(2);
+    expect(out.accepted).toBe(true);
     expect(out.plannedPages).toBe(2);
     expect(backend.written["/openwiki/_plan.md"]).toContain("| Directory |");
   });
 
-  test("refuses a partition that leaves a directory uncovered", async () => {
-    const { call } = wire(stubBackend([]), undefined, () =>
-      Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
-    );
-    const out = await call("survey_repository", { roots: ["/smith-go"] });
-    expect(out.surveyed).toBe(false);
-    expect(String(out.problems)).toContain("covered by no root");
+  test("refuses a plan that leaves a directory uncovered", async () => {
+    const { call } = wire(stubBackend([]));
+    const out = await call("submit_plan", {
+      entries: [{ directory: "/smith-go", pages: ["openwiki/go.md"] }],
+    });
+    expect(out.accepted).toBe(false);
+    expect(String(out.problems)).toContain("covered by no entry");
   });
 
-  test("records a root whose surveyor proposed nothing", async () => {
-    const { call } = wire(stubBackend([]), undefined, () =>
-      Promise.resolve("<survey></survey>"),
-    );
-    const out = await call("survey_repository", { roots: ["/"] });
-    expect(out.emptyRoots).toEqual(["/"]);
+  test("lists the directories a plan must cover", async () => {
+    const { call } = wire(stubBackend([]));
+    const out = await call("list_repository_directories");
+    // tests/ and node_modules/ are excluded as subjects, not as evidence.
+    expect(out.tree).toEqual(["/", "/smith-go", "/smith-go/api"]);
   });
 });
 
 describe("finalize_wiki", () => {
   test("refuses while a planned page is missing, and passes once written", async () => {
     // The 0.290 trial: 62 planned pages, 33 on disk, reported success.
-    const missing = wire(stubBackend([]), undefined, () =>
-      Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
-    );
-    await missing.call("survey_repository", { roots: ["/"] });
+    const missing = wire(stubBackend([]));
+    await missing.call("submit_plan", {
+      entries: [{ directory: "/", pages: ["openwiki/a.md"] }],
+    });
     const blocked = await missing.call("finalize_wiki");
     expect(blocked.complete).toBe(false);
     expect(String(blocked.problems)).toContain("never written");
 
-    const present = wire(stubBackend(["openwiki/a.md"]), undefined, () =>
-      Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
-    );
-    await present.call("survey_repository", { roots: ["/"] });
+    const present = wire(stubBackend(["openwiki/a.md"]));
+    await present.call("submit_plan", {
+      entries: [{ directory: "/", pages: ["openwiki/a.md"] }],
+    });
     expect((await present.call("finalize_wiki")).complete).toBe(true);
   });
 
@@ -243,15 +219,15 @@ describe("finalize_wiki", () => {
     const { call } = wire(stubBackend([]));
     const out = await call("finalize_wiki");
     expect(out.complete).toBe(false);
-    expect(String(out.problems)).toContain("survey_repository");
+    expect(String(out.problems)).toContain("submit_plan");
   });
 
   test("blocks on QA only in full mode, never on infrastructure or a spent budget", async () => {
     const finalize = async (gate: ReturnType<typeof createQaGate>) => {
-      const { call } = wire(stubBackend(["openwiki/a.md"]), gate, () =>
-        Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
-      );
-      await call("survey_repository", { roots: ["/"] });
+      const { call } = wire(stubBackend(["openwiki/a.md"]), gate);
+      await call("submit_plan", {
+        entries: [{ directory: "/", pages: ["openwiki/a.md"] }],
+      });
       return call("finalize_wiki");
     };
 
