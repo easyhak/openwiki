@@ -58,13 +58,14 @@ const TEST_DIRECTORIES = new Set([
   "test",
   "tests",
   "testdata",
-  "__tests__",
+  "tests",
   "spec",
   "specs",
+  "fixture",
   "fixtures",
   "e2e",
   "benchmarks",
-  "__mocks__",
+  "mocks",
 ]);
 
 /** Backend capability needed to enumerate. */
@@ -92,7 +93,10 @@ const LISTING_DEPTH = 3;
  * @returns Whether it should be evidence rather than a subject.
  */
 export function isTestDirectory(name: string): boolean {
-  return TEST_DIRECTORIES.has(name.toLowerCase());
+  // Normalized so test_data, test-data, and testdata are one name. A run
+  // planned a page for /test_data because only the undelimited spelling was
+  // listed, which is a naming accident rather than a judgement.
+  return TEST_DIRECTORIES.has(name.toLowerCase().replace(/[-_]/gu, ""));
 }
 
 /**

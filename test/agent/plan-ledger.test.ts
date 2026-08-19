@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   createOpenWikiPlanLedgerMiddleware,
+  normalizeWikiPage,
   renderPlanMarkdown,
   validatePlan,
 } from "../../src/agent/plan-ledger.ts";
@@ -10,16 +11,25 @@ import { createQaGate } from "../../src/agent/wiki-verification.ts";
 const TREE = ["/", "/smith-go", "/smith-backend"];
 
 describe("validatePlan", () => {
-  test("accepts a ledger covering every surveyed directory", () => {
+  test("accepts the three dispositions as peers", () => {
     expect(
       validatePlan(
         [
-          { directory: "/", pages: ["openwiki/workspace.md"] },
-          { directory: "/smith-go", pages: ["openwiki/go.md"] },
           {
+            disposition: "document",
+            directory: "/",
+            pages: ["openwiki/workspace.md"],
+          },
+          {
+            disposition: "document",
+            directory: "/smith-go",
+            pages: ["openwiki/go.md"],
+          },
+          {
+            disposition: "covered_by",
             directory: "/smith-backend",
-            pages: [],
-            reason: "Covered by the API pages owned by /smith-go",
+            page: "openwiki/go.md",
+            reason: "Its API is documented on the Go page",
           },
         ],
         TREE,
@@ -28,114 +38,131 @@ describe("validatePlan", () => {
     ).toEqual([]);
   });
 
-  test("rejects a directory nobody planned", () => {
-    // A subtree nobody mentions is indistinguishable from one nobody read.
-    // "/" is not used here because an entry on the root legitimately covers the
-    // whole tree - that is a coarse plan, not an incomplete one.
-    expect(
-      validatePlan(
-        [{ directory: "/smith-go", pages: ["openwiki/go.md"] }],
-        TREE,
-        ["/", "/smith-backend"],
-      ).join(" "),
-    ).toContain("covered by no entry");
-  });
-
-  test("rejects an empty directory with no reason, and an unknown one", () => {
-    const problems = validatePlan(
-      [
-        { directory: "/", pages: [] },
-        { directory: "/smith-go", pages: ["openwiki/go.md"] },
-        { directory: "/smith-backend", pages: ["openwiki/be.md"] },
-        { directory: "/invented", pages: ["openwiki/x.md"] },
-      ],
-      TREE,
-      [],
-    ).join(" ");
-    expect(problems).toContain("plans no pages and gives no reason");
-    expect(problems).toContain("was not listed: /invented");
-  });
-
-  test("rejects two directories claiming one page", () => {
-    // Two authors on one page race on write_file and the loser's evidence is
-    // gone, so the collision has to fail at plan time.
+  test("accepts an exclusion as a normal outcome", () => {
+    // Not documenting a directory is a first-class answer. Making it awkward is
+    // how a run ended up planning pages for /secrets.example and /test_data.
     expect(
       validatePlan(
         [
-          { directory: "/", pages: ["openwiki/shared.md"] },
-          { directory: "/smith-go", pages: ["openwiki/shared.md"] },
-          { directory: "/smith-backend", pages: [], reason: "none needed" },
+          { disposition: "document", directory: "/", pages: ["openwiki/a.md"] },
+          {
+            disposition: "exclude",
+            directory: "/smith-go",
+            reason: "Fixtures only",
+          },
+          {
+            disposition: "exclude",
+            directory: "/smith-backend",
+            reason: "Generated output",
+          },
+        ],
+        TREE,
+        [],
+      ),
+    ).toEqual([]);
+  });
+
+  test("rejects covered_by pointing at a page nothing documents", () => {
+    // Otherwise covered_by is an exclusion wearing a more reassuring word.
+    expect(
+      validatePlan(
+        [
+          { disposition: "document", directory: "/", pages: ["openwiki/a.md"] },
+          {
+            disposition: "covered_by",
+            directory: "/smith-go",
+            page: "openwiki/ghost.md",
+            reason: "documented there",
+          },
+          {
+            disposition: "exclude",
+            directory: "/smith-backend",
+            reason: "fixtures",
+          },
         ],
         TREE,
         [],
       ).join(" "),
-    ).toContain("claimed by both");
+    ).toContain("which no entry documents");
   });
 
-  test("renders the plan from the ledger rather than the other way round", () => {
+  test("rejects a directory nobody planned, and one that does not exist", () => {
+    const problems = validatePlan(
+      [
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: ["openwiki/go.md"],
+        },
+        {
+          disposition: "exclude",
+          directory: "/invented",
+          reason: "nope",
+        },
+      ],
+      TREE,
+      ["/", "/smith-backend"],
+    ).join(" ");
+    expect(problems).toContain("covered by no entry");
+    expect(problems).toContain("was not listed: /invented");
+  });
+
+  test("rejects two entries owning one page, normalizing the prefix", () => {
+    // The two spellings are one page, and two authors on it race on write_file.
     expect(
-      renderPlanMarkdown({
-        entries: [{ directory: "/smith-go", pages: ["openwiki/go.md"] }],
-        plannedPages: ["openwiki/go.md"],
-      }),
-    ).toContain("| Directory | Pages | Note |");
+      validatePlan(
+        [
+          { disposition: "document", directory: "/", pages: ["shared.md"] },
+          {
+            disposition: "document",
+            directory: "/smith-go",
+            pages: ["openwiki/shared.md"],
+          },
+          {
+            disposition: "exclude",
+            directory: "/smith-backend",
+            reason: "fixtures",
+          },
+        ],
+        TREE,
+        [],
+      ).join(" "),
+    ).toContain("owned by both");
   });
 
+  test("renders the disposition and its counts", () => {
+    const markdown = renderPlanMarkdown({
+      entries: [
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: ["openwiki/go.md"],
+        },
+        {
+          disposition: "exclude",
+          directory: "/test_data",
+          reason: "Test fixtures",
+        },
+      ],
+      plannedPages: ["openwiki/go.md"],
+    });
+    expect(markdown).toContain("| Directory | Disposition | Pages | Note |");
+    expect(markdown).toContain("1 documented, 0 covered elsewhere, 1 excluded");
+  });
+
+  test("normalizes a page path to one wiki-root prefix", () => {
+    // The bug this prevents: the plan said architecture/overview.md, the disk
+    // walk said openwiki/architecture/overview.md, nothing matched, and a run
+    // that had written 72 pages was told all 70 planned ones were missing.
+    expect(normalizeWikiPage("architecture/overview.md")).toBe(
+      "openwiki/architecture/overview.md",
+    );
+    expect(normalizeWikiPage("/openwiki/architecture/overview.md")).toBe(
+      "openwiki/architecture/overview.md",
+    );
+    expect(normalizeWikiPage("openwiki/a.md")).toBe("openwiki/a.md");
+  });
 });
-
-/** Repository with one real directory, a test directory, and a wiki tree. */
-function stubBackend(wikiFiles: string[]) {
-  const written: Record<string, string> = {};
-  return {
-    written,
-    ls: (dirPath: string) => {
-      const clean = dirPath.replace(/\/+$/u, "") || "/";
-      if (clean === "/") {
-        return Promise.resolve({
-          files: [
-            { path: "smith-go", is_dir: true },
-            { path: "tests", is_dir: true },
-            { path: "node_modules", is_dir: true },
-            { path: "README.md", is_dir: false },
-          ],
-        });
-      }
-      if (clean === "/smith-go") {
-        return Promise.resolve({ files: [{ path: "api", is_dir: true }] });
-      }
-      if (clean === "/openwiki") {
-        return Promise.resolve({
-          files: wikiFiles.map((path) => ({ path, is_dir: false })),
-        });
-      }
-      return Promise.resolve({ files: [] });
-    },
-    write: (filePath: string, content: string) => {
-      written[filePath] = content;
-      return Promise.resolve({});
-    },
-  };
-}
-
-function wire(
-  backend: ReturnType<typeof stubBackend>,
-  gate?: ReturnType<typeof createQaGate>,
-) {
-  const middleware = createOpenWikiPlanLedgerMiddleware(backend, gate);
-  const tools = Object.fromEntries(
-    (
-      middleware as {
-        tools: { name: string; invoke: (i: unknown) => Promise<unknown> }[];
-      }
-    ).tools.map((t) => [t.name, t]),
-  );
-  const call = async (name: string, args: unknown = {}) =>
-    JSON.parse(String(await tools[name].invoke(args))) as Record<
-      string,
-      unknown
-    >;
-  return { call };
-}
 
 describe("coverage walk", () => {
   // A repository nested deeper than any display bound, to prove the check is
@@ -202,14 +229,76 @@ describe("coverage walk", () => {
   });
 });
 
+/** Repository with one real directory, a test directory, and a wiki tree. */
+function stubBackend(wikiFiles: string[]) {
+  const written: Record<string, string> = {};
+  return {
+    written,
+    ls: (dirPath: string) => {
+      const clean = dirPath.replace(/\/+$/u, "") || "/";
+      if (clean === "/") {
+        return Promise.resolve({
+          files: [
+            { path: "smith-go", is_dir: true },
+            { path: "tests", is_dir: true },
+            { path: "node_modules", is_dir: true },
+            { path: "README.md", is_dir: false },
+          ],
+        });
+      }
+      if (clean === "/smith-go") {
+        return Promise.resolve({ files: [{ path: "smith-go/api", is_dir: true }] });
+      }
+      if (clean === "/openwiki") {
+        return Promise.resolve({
+          files: wikiFiles.map((path) => ({ path, is_dir: false })),
+        });
+      }
+      return Promise.resolve({ files: [] });
+    },
+    write: (filePath: string, content: string) => {
+      written[filePath] = content;
+      return Promise.resolve({});
+    },
+  };
+}
+
+function wire(
+  backend: ReturnType<typeof stubBackend>,
+  gate?: ReturnType<typeof createQaGate>,
+) {
+  const middleware = createOpenWikiPlanLedgerMiddleware(backend, gate);
+  const tools = Object.fromEntries(
+    (
+      middleware as {
+        tools: { name: string; invoke: (i: unknown) => Promise<unknown> }[];
+      }
+    ).tools.map((t) => [t.name, t]),
+  );
+  const call = async (name: string, args: unknown = {}) =>
+    JSON.parse(String(await tools[name].invoke(args))) as Record<
+      string,
+      unknown
+    >;
+  return { call };
+}
+
 describe("submit_plan", () => {
   test("accepts a plan covering every directory and renders the plan file", async () => {
     const backend = stubBackend([]);
     const { call } = wire(backend);
     const out = await call("submit_plan", {
       entries: [
-        { directory: "/", pages: ["openwiki/workspace.md"] },
-        { directory: "/smith-go", pages: ["openwiki/go/api.md"] },
+        {
+          disposition: "document",
+          directory: "/",
+          pages: ["openwiki/workspace.md"],
+        },
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: ["openwiki/go/api.md"],
+        },
       ],
     });
     expect(out.accepted).toBe(true);
@@ -220,7 +309,13 @@ describe("submit_plan", () => {
   test("refuses a plan that leaves a directory uncovered", async () => {
     const { call } = wire(stubBackend([]));
     const out = await call("submit_plan", {
-      entries: [{ directory: "/smith-go", pages: ["openwiki/go.md"] }],
+      entries: [
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: ["openwiki/go.md"],
+        },
+      ],
     });
     expect(out.accepted).toBe(false);
     expect(String(out.problems)).toContain("covered by no entry");
@@ -239,7 +334,9 @@ describe("finalize_wiki", () => {
     // The 0.290 trial: 62 planned pages, 33 on disk, reported success.
     const missing = wire(stubBackend([]));
     await missing.call("submit_plan", {
-      entries: [{ directory: "/", pages: ["openwiki/a.md"] }],
+      entries: [
+        { disposition: "document", directory: "/", pages: ["openwiki/a.md"] },
+      ],
     });
     const blocked = await missing.call("finalize_wiki");
     expect(blocked.complete).toBe(false);
@@ -247,7 +344,9 @@ describe("finalize_wiki", () => {
 
     const present = wire(stubBackend(["openwiki/a.md"]));
     await present.call("submit_plan", {
-      entries: [{ directory: "/", pages: ["openwiki/a.md"] }],
+      entries: [
+        { disposition: "document", directory: "/", pages: ["openwiki/a.md"] },
+      ],
     });
     expect((await present.call("finalize_wiki")).complete).toBe(true);
   });
@@ -263,7 +362,9 @@ describe("finalize_wiki", () => {
     const finalize = async (gate: ReturnType<typeof createQaGate>) => {
       const { call } = wire(stubBackend(["openwiki/a.md"]), gate);
       await call("submit_plan", {
-        entries: [{ directory: "/", pages: ["openwiki/a.md"] }],
+        entries: [
+          { disposition: "document", directory: "/", pages: ["openwiki/a.md"] },
+        ],
       });
       return call("finalize_wiki");
     };

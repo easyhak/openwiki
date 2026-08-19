@@ -37,11 +37,43 @@ import {
 } from "./repo-inventory.js";
 import { qaFinalizationProblem, type QaGate } from "./wiki-verification.js";
 
-const EntrySchema = z.object({
-  directory: z.string().min(1),
-  pages: z.array(z.string().min(1)),
-  reason: z.string().min(1).optional(),
-});
+/**
+ * What a directory's documentation disposition is.
+ *
+ * The previous shape - `pages: []` with an optional reason - made "no page" an
+ * obscure edge of the schema, and a graded run took the hint: not one of 59
+ * entries used it. Every directory got a page manufactured for it, including
+ * /secrets.example, /test_data, and three personal scratch trees under
+ * /experimental, each consuming an author that a real subsystem needed.
+ *
+ * Making the three outcomes peers fixes the incentive. Not documenting a
+ * directory is a normal, first-class answer, and saying so costs a reason
+ * rather than an apology.
+ */
+const EntrySchema = z.discriminatedUnion("disposition", [
+  z
+    .object({
+      disposition: z.literal("document"),
+      directory: z.string().min(1),
+      pages: z.array(z.string().min(1)).min(1),
+    })
+    .strict(),
+  z
+    .object({
+      disposition: z.literal("covered_by"),
+      directory: z.string().min(1),
+      page: z.string().min(1),
+      reason: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      disposition: z.literal("exclude"),
+      directory: z.string().min(1),
+      reason: z.string().min(1),
+    })
+    .strict(),
+]);
 
 const SubmitPlanSchema = z.object({
   entries: z.array(EntrySchema).min(1),
@@ -56,6 +88,26 @@ export interface PlanLedger {
 }
 
 /**
+ * Normalizes a page path to exactly one wiki-root prefix.
+ *
+ * finalize_wiki compared plan paths against a walk of the wiki tree, and the
+ * plan wrote `architecture/overview.md` while the walk produced
+ * `openwiki/architecture/overview.md`. Nothing ever matched, so the gate told a
+ * run that had written 72 pages that all 70 of its planned pages were missing,
+ * and it authored every one of them a second time: 200 authors for 70 pages and
+ * twice the token spend of any other run. Both sides normalize through here now.
+ *
+ * @param page - Page path as planned or as found on disk.
+ * @param wikiRoot - Directory generated pages live under.
+ * @returns Path rooted at the wiki directory, without a leading slash.
+ */
+export function normalizeWikiPage(page: string, wikiRoot = "/openwiki"): string {
+  const root = wikiRoot.replace(/^\/+/u, "").replace(/\/+$/u, "");
+  const bare = page.replace(/^\/+/u, "");
+  return bare === root || bare.startsWith(`${root}/`) ? bare : `${root}/${bare}`;
+}
+
+/**
  * Validates a ledger against the directories that must be accounted for.
  *
  * @param entries - Plan entries, one per surveyed directory.
@@ -66,20 +118,46 @@ export function validatePlan(
   entries: PlanEntry[],
   tree: readonly string[],
   uncovered: readonly string[],
+  wikiRoot = "/openwiki",
 ): string[] {
   const problems: string[] = [];
+  const owners = new Map<string, string>();
 
   for (const entry of entries) {
-    // A directory that is not in the tree is a typo, and a typo can leave the
-    // directory it meant uncovered while looking like it was planned.
+    // A directory not in the tree is a typo, and a typo can leave the directory
+    // it meant uncovered while looking like it was planned.
     if (!tree.includes(entry.directory)) {
       problems.push(
         `Entry names a directory that does not exist or was not listed: ${entry.directory}`,
       );
     }
-    if (entry.pages.length === 0 && !entry.reason) {
+    if (entry.disposition !== "document") {
+      continue;
+    }
+    for (const page of entry.pages) {
+      const key = normalizeWikiPage(page, wikiRoot);
+      const owner = owners.get(key);
+      if (owner && owner !== entry.directory) {
+        // Two entries owning one page is two authors racing on one write_file,
+        // with the loser's evidence gone.
+        problems.push(
+          `Page ${key} is owned by both ${owner} and ${entry.directory}`,
+        );
+      }
+      owners.set(key, entry.directory);
+    }
+  }
+
+  // covered_by has to point at a page something actually writes, or it is an
+  // exclusion wearing a more reassuring word.
+  for (const entry of entries) {
+    if (entry.disposition !== "covered_by") {
+      continue;
+    }
+    const key = normalizeWikiPage(entry.page, wikiRoot);
+    if (!owners.has(key)) {
       problems.push(
-        `Directory ${entry.directory} plans no pages and gives no reason`,
+        `${entry.directory} is covered_by ${key}, which no entry documents`,
       );
     }
   }
@@ -88,21 +166,6 @@ export function validatePlan(
     problems.push(
       `${uncovered.length} director(ies) are covered by no entry: ${uncovered.slice(0, 20).join(", ")}${uncovered.length > 20 ? ", ..." : ""}`,
     );
-  }
-
-  const owners = new Map<string, string>();
-  for (const entry of entries) {
-    for (const page of entry.pages) {
-      const owner = owners.get(page);
-      if (owner && owner !== entry.directory) {
-        // Two entries planning one page is two authors racing on one
-        // write_file, with the loser's evidence gone.
-        problems.push(
-          `Page ${page} is claimed by both ${owner} and ${entry.directory}`,
-        );
-      }
-      owners.set(page, entry.directory);
-    }
   }
   return problems;
 }
@@ -114,17 +177,31 @@ export function validatePlan(
  * @returns Markdown for `/openwiki/_plan.md`.
  */
 export function renderPlanMarkdown(ledger: PlanLedger): string {
+  const counts = {
+    document: 0,
+    covered_by: 0,
+    exclude: 0,
+  };
+  for (const entry of ledger.entries) {
+    counts[entry.disposition] += 1;
+  }
   return [
     "# Plan",
     "",
-    `Directories: ${ledger.entries.length}. Planned pages: ${ledger.plannedPages.length}.`,
+    `${ledger.entries.length} directories: ${counts.document} documented, ${counts.covered_by} covered elsewhere, ${counts.exclude} excluded. ${ledger.plannedPages.length} pages.`,
     "",
-    "| Directory | Pages | Note |",
-    "| --- | --- | --- |",
-    ...ledger.entries.map(
-      (entry) =>
-        `| ${entry.directory} | ${entry.pages.join("<br>") || "-"} | ${entry.reason ?? ""} |`,
-    ),
+    "| Directory | Disposition | Pages | Note |",
+    "| --- | --- | --- | --- |",
+    ...ledger.entries.map((entry) => {
+      const pages =
+        entry.disposition === "document"
+          ? entry.pages.join("<br>")
+          : entry.disposition === "covered_by"
+            ? entry.page
+            : "-";
+      const note = entry.disposition === "document" ? "" : entry.reason;
+      return `| ${entry.directory} | ${entry.disposition} | ${pages} | ${note} |`;
+    }),
     "",
   ].join("\n");
 }
@@ -151,8 +228,12 @@ export function createOpenWikiPlanLedgerMiddleware(
 
   const setLedger = async (entries: PlanEntry[]) => {
     const plannedPages = [
-      ...new Set(entries.flatMap((entry) => entry.pages)),
-    ].map((page) => page.replace(/^\/+/u, ""));
+      ...new Set(
+        entries.flatMap((entry) =>
+          entry.disposition === "document" ? entry.pages : [],
+        ),
+      ),
+    ].map((page) => normalizeWikiPage(page, wikiRoot));
     ledger = { entries, plannedPages };
     const written = await backend.write(
       `${wikiRoot}/_plan.md`,
@@ -182,7 +263,7 @@ export function createOpenWikiPlanLedgerMiddleware(
         collectDirectoryTree(backend),
         findUncoveredDirectories(backend, directories),
       ]);
-      const problems = validatePlan(input.entries, tree, uncovered);
+      const problems = validatePlan(input.entries, tree, uncovered, wikiRoot);
       if (problems.length > 0) {
         return JSON.stringify({ accepted: false, problems });
       }
@@ -193,15 +274,19 @@ export function createOpenWikiPlanLedgerMiddleware(
         entries: input.entries.length,
         plannedPages: plannedPages.length,
         planWritten,
-        emptyEntries: input.entries
-          .filter((entry) => entry.pages.length === 0)
-          .map((entry) => entry.directory),
+        documented: input.entries.filter((e) => e.disposition === "document")
+          .length,
+        coveredElsewhere: input.entries.filter(
+          (e) => e.disposition === "covered_by",
+        ).length,
+        excluded: input.entries.filter((e) => e.disposition === "exclude")
+          .length,
       });
     },
     {
       name: "submit_plan",
       description:
-        "Submit the plan: one entry per area of the repository, each naming the directory it covers and the pages that document it, or an explicit reason for planning none. Choose entry directories to match how this repository is organised - one per service where services sit at the top level, one per package under a nested packages/ tree, a handful for a small repository. Entries may nest, and a directory belongs to its deepest entry. Every directory from list_repository_directories must be covered, and a plan missing one is rejected with the paths rather than partially applied. /openwiki/_plan.md is rendered from the accepted plan, so do not write or parse it yourself.",
+        "Submit the plan: one entry per area of the repository, each with a disposition. Use document with the pages it owns; covered_by naming another entry's page and why, when the area is relevant but belongs on that page; or exclude with a reason, when the area is not a documentation subject at all. Excluding is a normal outcome, not a failure - fixtures, test data, generated output, scratch and personal experiments usually deserve it, and a page manufactured for one costs an author a real subsystem needed. A dedicated page needs evidence of an independent responsibility, owner and entrypoint, lifecycle or state boundary, public extension surface, or meaningful validation surface; a directory existing is not on its own a reason to document it. Choose entry directories to match how the repository is organised, nest them where a directory has significant files beside significant subdirectories, and cover every directory from list_repository_directories - a plan missing one is rejected with the paths rather than partially applied. /openwiki/_plan.md is rendered from the accepted plan, so do not write or parse it yourself.",
       schema: SubmitPlanSchema,
     },
   );
@@ -227,7 +312,7 @@ export function createOpenWikiPlanLedgerMiddleware(
           if (file.is_dir) {
             await collect(file.path, depth + 1);
           } else if (file.path.endsWith(".md")) {
-            existing.add(file.path.replace(/^\/+/u, ""));
+            existing.add(normalizeWikiPage(file.path, wikiRoot));
           }
         }
       };

@@ -2,7 +2,7 @@ import type { SubAgent } from "deepagents";
 import type { OpenWikiCommand, OpenWikiOutputMode } from "./types.js";
 
 const SKELETON_CRITIC_DESCRIPTION =
-  "Reviews the repository-wide OpenWiki plan before drafting. It independently inspects source and tests, compares that inventory with /openwiki/_plan.md, and returns either a pass or specific evidence-backed coverage changes. It is read-only and never authors Claims or Markdown. It returns TEXT - a <review status> block carrying <reconciliation>, <prior_requests>, and <new_requests> - so read the status and the request items out of that block. A responseSchema does not reliably change that: deepagents recompiles the subagent with that response format, but when it answers in the format above nothing populates the structured response and you receive the text with no error raised.";
+  "Reviews the repository-wide OpenWiki plan before drafting. It independently inspects source and tests, compares that inventory with /openwiki/_plan.md, and returns either a pass or specific evidence-backed plan changes, each an ADD, REMOVE, MERGE, SPLIT, or EXCLUDE. It is read-only and never authors Claims or Markdown. It returns TEXT - a <review status> block carrying <reconciliation>, <prior_requests>, and <new_requests> - so read the status and the request items out of that block. A responseSchema does not reliably change that: deepagents recompiles the subagent with that response format, but when it answers in the format above nothing populates the structured response and you receive the text with no error raised.";
 
 const SKELETON_CRITIC_SYSTEM_PROMPT = `You are an independent architecture and documentation-coverage critic. Determine whether the proposed OpenWiki plan is complete and specific enough to guide substantive, Claims-grounded documentation of this repository before factual pages are drafted.
 
@@ -37,7 +37,7 @@ Return a concise review in exactly this structure:
   </prior_requests>
 
   <new_requests>
-    <item id="RQ-02">
+    <item id="RQ-02" action="ADD | REMOVE | MERGE | SPLIT | EXCLUDE">
       <gap>...</gap>
       <evidence>source paths, symbols, tests, and relationships proving the gap</evidence>
       <required_change>the canonical page or plan change needed</required_change>
@@ -45,12 +45,22 @@ Return a concise review in exactly this structure:
   </new_requests>
 </review>
 
+Judge the plan in both directions. A plan is defective when it omits a substantial unit, and equally when it spends a page on something that is not a documentation subject - a graded run planned pages for template secrets, test data, and three personal scratch directories, each one an author a real subsystem needed. Give every request an action:
+
+- ADD: a substantial unit has no canonical home.
+- REMOVE: a planned page has no substantive documentation subject.
+- MERGE: the material is real but belongs on an existing canonical page.
+- SPLIT: a real subsystem is hidden inside a catch-all page.
+- EXCLUDE: the directory is fixtures, test data, generated output, example or template configuration, or scratch and personal experiments, and should carry an exclusion rather than a page.
+
+A dedicated page has to earn itself on evidence of an independent responsibility, an owner and entrypoint, a lifecycle or state boundary, a public extension surface, or a meaningful validation surface. That a directory exists is not one of those. Template secrets and example configuration usually belong in a configuration page rather than their own; test data and personal experiments are normally exclusions. Do not exclude a directory merely for sitting under experimental/ - some experimental applications are real deployable services, and that is the judgement being asked of you.
+
 IMPORTANT:
 - Complete the entire repository-wide audit before responding; do not stop after the first gap.
 - Compute reconciliation counts from individually enumerated units; never infer completeness from the plan's claimed totals alone.
 - Reuse prior request IDs. Assign new IDs only to genuinely new findings.
 - Return PASS only when every prior request is verified, new_requests is empty, unresolved_units is zero, and the reconciliation arithmetic is correct.
-- Emit only gaps, not descriptions of adequately covered areas.
+- Emit only material plan defects, not descriptions of adequately covered areas. A defect is as often an unnecessary page as a missing one.
 - Do not write wiki prose or redesign adequate sections for stylistic preference.
 - Request only material, evidence-backed changes.
 - The parent agent owns all plan edits, Claims operations, and Markdown writes.`;
