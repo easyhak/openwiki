@@ -170,8 +170,11 @@ describe("Claims agent graph integration", () => {
             "Never call or propose Claims mutations",
           );
         }
+        // The author establishes its own page's claims now: it is the only
+        // participant that can repair bad evidence, because it has the file
+        // open. The read-only reviewers above still may not touch Claims.
         expect(promptFor("page-author")).toContain(
-          "the coordinator owns all Claims operations",
+          "You own your page's claim set",
         );
       }
     },

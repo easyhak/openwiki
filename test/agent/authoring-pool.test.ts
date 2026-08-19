@@ -1,15 +1,27 @@
 import { describe, expect, test } from "vitest";
 import { createOpenWikiAuthoringPoolMiddleware } from "../../src/agent/authoring-pool.ts";
 
-/** Minimal stand-in for the subagent task tool the middleware dispatches through. */
-function fakeTaskTool(
+/** Claim session stub: records what each page established. */
+function stubSession(claimsByPage: Record<string, number> = {}) {
+  return {
+    inspectClaims: (page: string) =>
+      Array.from({ length: claimsByPage[page] ?? 0 }, (_, i) => ({ id: `c${i}` })),
+  } as unknown as Parameters<typeof createOpenWikiAuthoringPoolMiddleware>[0];
+}
+
+/** Wires the middleware to a scripted task tool, as the agent supplies it. */
+function authorPagesWith(
   respond: (description: string) => Promise<unknown>,
+  session?: Parameters<typeof createOpenWikiAuthoringPoolMiddleware>[0],
   record?: { inFlight: number; peak: number },
 ) {
-  return {
+  const middleware = createOpenWikiAuthoringPoolMiddleware(session);
+  const seen: string[] = [];
+  const task = {
     name: "task",
     invoke: async (input: unknown) => {
       const { description } = input as { description: string };
+      seen.push(description);
       if (record) {
         record.inFlight += 1;
         record.peak = Math.max(record.peak, record.inFlight);
@@ -17,184 +29,115 @@ function fakeTaskTool(
       try {
         return await respond(description);
       } finally {
-        if (record) {
-          record.inFlight -= 1;
-        }
+        if (record) record.inFlight -= 1;
       }
     },
   };
-}
-
-/** Builds the middleware with a task tool injected the way the agent supplies it. */
-function authorPagesWith(
-  task: ReturnType<typeof fakeTaskTool>,
-): (input: unknown) => Promise<Record<string, unknown>> {
-  const middleware = createOpenWikiAuthoringPoolMiddleware();
-  const tools = (middleware as { tools: { invoke: (i: unknown) => unknown }[] })
-    .tools;
-  const wrap = (
+  const tools = (
+    middleware as { tools: { invoke: (i: unknown) => Promise<unknown> }[] }
+  ).tools;
+  (
     middleware as {
-      wrapModelCall: (
-        request: unknown,
-        handler: (request: unknown) => unknown,
-      ) => unknown;
+      wrapModelCall: (r: unknown, h: (r: unknown) => unknown) => unknown;
     }
-  ).wrapModelCall;
-  wrap({ tools: [task] }, (request) => request);
-  return async (input: unknown) =>
-    JSON.parse(String(await tools[0].invoke(input))) as Record<string, unknown>;
+  ).wrapModelCall({ tools: [task] }, (r) => r);
+  return {
+    seen,
+    run: async (input: unknown) =>
+      JSON.parse(String(await tools[0].invoke(input))) as Record<
+        string,
+        unknown
+      >,
+  };
 }
 
-const report = (page: string, count: number) =>
-  JSON.stringify({
-    page,
-    propositions: Array.from({ length: count }, (_, index) => ({
-      statement: `fact ${index}`,
-      evidence: ["repo://src/a.ts"],
-    })),
-    undocumented: [],
-  });
+const ok = () => Promise.resolve("Wrote the page and established its claims.");
 
 describe("author_pages", () => {
-  test("authors every assignment and totals their propositions", async () => {
-    const authorPages = authorPagesWith(
-      fakeTaskTool((description) => Promise.resolve(report(description, 3))),
+  test("counts claims from the store, not from what the author says", async () => {
+    // Asking the author to report its own count put the same payload through
+    // the same seam under a different name. A report can disagree with the
+    // store; the store cannot disagree with itself.
+    const h = authorPagesWith(
+      ok,
+      stubSession({ "/openwiki/a.md": 41, "/openwiki/b.md": 12 }),
     );
-    const output = await authorPages({
+    const out = await h.run({
       assignments: [
-        { page: "a.md", brief: "a.md" },
-        { page: "b.md", brief: "b.md" },
+        { page: "a.md", brief: "a" },
+        { page: "openwiki/b.md", brief: "b" },
       ],
     });
-    expect(output.authored).toBe(2);
-    expect(output.propositionTotal).toBe(6);
-    expect(output.failed).toEqual([]);
+    expect(out.authored).toBe(2);
+    expect(out.claimsEstablished).toBe(53);
+    expect(out.pagesWithNoClaims).toEqual([]);
+  });
+
+  test("surfaces a page that wrote prose it never grounded", async () => {
+    const h = authorPagesWith(ok, stubSession({ "/openwiki/a.md": 30 }));
+    const out = await h.run({
+      assignments: [
+        { page: "a.md", brief: "a" },
+        { page: "b.md", brief: "b" },
+      ],
+    });
+    expect(out.claimsEstablished).toBe(30);
+    expect(out.pagesWithNoClaims).toEqual(["/openwiki/b.md"]);
   });
 
   test("one author's failure costs its page, not the pool", async () => {
-    const authorPages = authorPagesWith(
-      fakeTaskTool((description) =>
-        description === "b.md"
-          ? Promise.reject(new Error("author died"))
-          : Promise.resolve(report(description, 2)),
-      ),
+    const h = authorPagesWith(
+      (d) =>
+        d === "b" ? Promise.reject(new Error("author died")) : ok(),
+      stubSession({ "/openwiki/a.md": 5, "/openwiki/c.md": 5 }),
     );
-    const output = await authorPages({
+    const out = await h.run({
       assignments: [
-        { page: "a.md", brief: "a.md" },
-        { page: "b.md", brief: "b.md" },
-        { page: "c.md", brief: "c.md" },
+        { page: "a.md", brief: "a" },
+        { page: "b.md", brief: "b" },
+        { page: "c.md", brief: "c" },
       ],
     });
-    expect(output.authored).toBe(2);
-    expect(output.failed).toHaveLength(1);
-    expect((output.failed as { page: string }[])[0].page).toBe("b.md");
+    expect(out.authored).toBe(2);
+    expect((out.failed as { page: string }[])[0].page).toBe("/openwiki/b.md");
   });
 
   test("refills as authors settle instead of waiting for a batch", async () => {
-    // The failure this replaces: a fixed slice of N waits for its slowest
-    // member, so one slow author idles the rest of the slice. A pool should keep
-    // the limit saturated while work remains.
+    // A fixed slice waits for its slowest member; a pool keeps the limit
+    // saturated while work remains.
     const record = { inFlight: 0, peak: 0 };
-    const authorPages = authorPagesWith(
-      fakeTaskTool(
-        (description) =>
-          new Promise((resolve) =>
-            setTimeout(
-              () => resolve(report(description, 1)),
-              description === "slow.md" ? 40 : 1,
-            ),
-          ),
-        record,
-      ),
+    const h = authorPagesWith(
+      (d) =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve("done"), d === "slow" ? 40 : 1),
+        ),
+      stubSession(),
+      record,
     );
-    const assignments = [
-      { page: "slow.md", brief: "slow.md" },
-      ...Array.from({ length: 8 }, (_, index) => ({
-        page: `p${index}.md`,
-        brief: `p${index}.md`,
-      })),
-    ];
-    const output = await authorPages({ assignments, concurrency: 2 });
-    expect(output.authored).toBe(9);
-    // Never exceeds the limit, and the fast items flow through beside the slow one.
+    const out = await h.run({
+      assignments: [
+        { page: "slow.md", brief: "slow" },
+        ...Array.from({ length: 8 }, (_, i) => ({
+          page: `p${i}.md`,
+          brief: `p${i}`,
+        })),
+      ],
+      concurrency: 2,
+    });
+    expect(out.authored).toBe(9);
     expect(record.peak).toBeLessThanOrEqual(2);
   });
 
   test("never runs two authors for one page", async () => {
-    const seen: string[] = [];
-    const authorPages = authorPagesWith(
-      fakeTaskTool((description) => {
-        seen.push(description);
-        return Promise.resolve(report(description, 1));
-      }),
-    );
-    const output = await authorPages({
+    // Two authors on one page race on write_file and the loser's work is gone.
+    const h = authorPagesWith(ok, stubSession());
+    const out = await h.run({
       assignments: [
-        { page: "a.md", brief: "a.md" },
-        { page: "a.md", brief: "a.md again" },
+        { page: "a.md", brief: "first" },
+        { page: "a.md", brief: "again" },
       ],
     });
-    expect(seen).toEqual(["a.md"]);
-    expect(output.duplicatePagesIgnored).toEqual(["a.md"]);
-  });
-
-  test("reports an author that returned no parseable report", async () => {
-    const authorPages = authorPagesWith(
-      fakeTaskTool(() => Promise.resolve("I could not find the evidence.")),
-    );
-    const output = await authorPages({
-      assignments: [{ page: "a.md", brief: "a.md" }],
-    });
-    expect(output.authored).toBe(0);
-    expect((output.failed as { error: string }[])[0].error).toContain(
-      "no parseable report",
-    );
-  });
-
-  test("establishes claims under an absolute wiki path", async () => {
-    // The claim store throws unless the page starts with /openwiki/, and that
-    // throw is recoverable, so a relative assignment path failed every page's
-    // claims quietly while its Markdown wrote fine. A run saw claimsFailed on
-    // all of them and re-authored the whole wiki to redo Claims.
-    const pages: string[] = [];
-    const session = {
-      resolveClaims: (input: { page: string }) => {
-        pages.push(input.page);
-        return Promise.resolve({ page: input.page, results: [] });
-      },
-    } as unknown as Parameters<
-      typeof createOpenWikiAuthoringPoolMiddleware
-    >[0];
-    const middleware = createOpenWikiAuthoringPoolMiddleware(session);
-    const tools = (
-      middleware as { tools: { invoke: (i: unknown) => Promise<unknown> }[] }
-    ).tools;
-    const task = {
-      name: "task",
-      invoke: () => Promise.resolve(report("a.md", 2)),
-    };
-    (
-      middleware as {
-        wrapModelCall: (r: unknown, h: (r: unknown) => unknown) => unknown;
-      }
-    ).wrapModelCall({ tools: [task] }, (r) => r);
-    await tools[0].invoke({
-      assignments: [{ page: "architecture/a.md", brief: "b" }],
-    });
-    expect(pages).toEqual(["/openwiki/architecture/a.md"]);
-  });
-
-  test("reads a report the author wrapped in prose", async () => {
-    const authorPages = authorPagesWith(
-      fakeTaskTool((description) =>
-        Promise.resolve(`Here is the page.\n\n${report(description, 2)}\n`),
-      ),
-    );
-    const output = await authorPages({
-      assignments: [{ page: "a.md", brief: "a.md" }],
-    });
-    expect(output.authored).toBe(1);
-    expect(output.propositionTotal).toBe(2);
+    expect(h.seen).toEqual(["first"]);
+    expect(out.duplicatePagesIgnored).toEqual(["a.md"]);
   });
 });

@@ -26,8 +26,6 @@
 import { tool } from "@langchain/core/tools";
 import { createMiddleware } from "langchain";
 import type { ClaimSession } from "../claims/brains/code/session.js";
-import { resolvePagesIndependently } from "../claims/brains/code/tools.js";
-import type { ClaimOperation } from "../claims/core/types.js";
 import { z } from "zod";
 import { normalizeWikiPage } from "./plan-ledger.js";
 import { dispatchSubagent, type TaskToolLike } from "./subagent-dispatch.js";
@@ -90,90 +88,10 @@ export async function pool<TItem, TResult>(
   return outcomes;
 }
 
-/**
- * Reads an author's report out of whatever it actually returned.
- *
- * page-author is told to end with one JSON object and usually does, but a
- * responseSchema does not bind it and a model may wrap the object in prose or a
- * fence. Parsing here rather than in REPL code means one implementation with one
- * set of failure modes, instead of a fresh regex per run.
- *
- * @param output - Raw subagent return value.
- * @returns The parsed report, or null when nothing JSON-shaped was found.
- */
-function parseAuthorReport(output: unknown): AuthorReport | null {
-  if (output !== null && typeof output === "object") {
-    return output;
-  }
-  if (typeof output !== "string") {
-    return null;
-  }
-  // Last balanced object wins: an author that explains itself before reporting
-  // puts the report at the end, and a fenced block leaves the fence outside it.
-  const start = output.indexOf("{");
-  const end = output.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    return null;
-  }
-  try {
-    return JSON.parse(output.slice(start, end + 1)) as AuthorReport;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Converts an author's reported propositions into claim add operations.
- *
- * Authors report evidence as bare `repo://` strings, which is the shape their
- * prompt asks for, while the claim store wants `{resource}` objects. Both are
- * accepted because a model asked for one shape supplies the other often enough
- * that rejecting it would drop real evidence on a technicality.
- *
- * @param propositions - Propositions as the author reported them.
- * @returns Add operations, skipping any proposition with no usable evidence.
- */
-function toClaimOperations(
-  propositions: { statement: string; evidence: unknown[] }[],
-): ClaimOperation[] {
-  const operations: ClaimOperation[] = [];
-  for (const proposition of propositions) {
-    const evidence = (proposition.evidence ?? [])
-      .map((entry) =>
-        typeof entry === "string"
-          ? { resource: entry }
-          : entry !== null &&
-              typeof entry === "object" &&
-              typeof (entry as { resource?: unknown }).resource === "string"
-            ? { resource: (entry as { resource: string }).resource }
-            : null,
-      )
-      .filter((entry): entry is { resource: string } => entry !== null);
-    if (evidence.length === 0 || !proposition.statement) {
-      continue;
-    }
-    operations.push({
-      op: "add",
-      statement: proposition.statement,
-      evidence,
-    });
-  }
-  return operations;
-}
-
-/** One author's structured report. */
-interface AuthorReport {
-  page?: string;
-  propositions?: { statement: string; evidence: unknown[] }[];
-  undocumented?: string[];
-}
-
 /** One page's authoring outcome, as the REPL receives it. */
 interface AuthorOutcome {
   page: string;
-  ok: boolean;
-  propositions: { statement: string; evidence: unknown[] }[];
-  undocumented: string[];
+  claims: number;
   error?: string;
 }
 
@@ -245,96 +163,45 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
         return { assignment, output };
       });
 
+      // Counts come from the claim session, which is the authority on what was
+      // established. Asking the author to report them put the same payload
+      // through the same seam under a different name, and a report can disagree
+      // with the store while the store cannot disagree with itself.
       const results: AuthorOutcome[] = outcomes.map((outcome, index) => {
-        const page = assignments[index].page;
+        const page = `/${normalizeWikiPage(assignments[index].page)}`;
         if (outcome.status === "rejected") {
           return {
             page,
-            ok: false,
-            propositions: [],
-            undocumented: [],
+            claims: 0,
             error:
               outcome.reason instanceof Error
                 ? outcome.reason.message
                 : String(outcome.reason),
           };
         }
-        const report = parseAuthorReport(outcome.value.output);
-        if (!report) {
-          return {
-            page,
-            ok: false,
-            propositions: [],
-            undocumented: [],
-            error: "Author returned no parseable report.",
-          };
-        }
-        return {
-          page,
-          ok: true,
-          propositions: report.propositions ?? [],
-          undocumented: report.undocumented ?? [],
-        };
+        return { page, claims: session ? session.inspectClaims(page).length : 0 };
       });
 
-      const authored = results.filter((result) => result.ok);
-      const propositionTotal = authored.reduce(
-        (total, result) => total + result.propositions.length,
-        0,
+      const failed = results.filter((result) => result.error);
+      const withoutClaims = results.filter(
+        (result) => !result.error && result.claims === 0,
       );
 
-      // Establish here rather than handing the propositions back.
-      //
-      // Returning them was the bug that cost a graded run its worst score. Fifty
-      // pages of roughly twenty propositions each, with evidence, is far past
-      // any tool-result limit: the middleware offloaded it, the offload write
-      // was refused, and the coordinator never learned which pages had been
-      // written. Offloading works now, but a payload whose only consumer is
-      // resolve_claims has no reason to travel through the REPL and the model's
-      // context to get there.
-      //
-      // It also retires the batching instruction. "Accumulate the phase, 8-12
-      // pages per call, never per page" produced 108 calls in one run, 16 in the
-      // next, and 7 in the run that collapsed. Establishing from here makes the
-      // batching a property of the code instead of a thing to ask for.
-      const claims = session
-        ? await resolvePagesIndependently(
-            session,
-            authored
-              .filter((result) => result.propositions.length > 0)
-              .map(
-                (result) =>
-                  [
-                    // The claim store requires an absolute /openwiki/ path and
-                    // throws a recoverable ClaimSessionError otherwise, so a
-                    // relative assignment path failed every page's claims while
-                    // its Markdown wrote fine. A run saw claimsFailed on all of
-                    // them and re-authored the entire wiki to redo Claims.
-                    `/${normalizeWikiPage(result.page)}`,
-                    toClaimOperations(result.propositions),
-                  ] as [string, ClaimOperation[]],
-              ),
-          )
-        : null;
-
       return JSON.stringify({
-        authored: authored.length,
-        failed: results.filter((result) => !result.ok),
-        propositionTotal,
-        pages: results.map((result) => result.page),
-        ...(claims
-          ? {
-              claimsEstablishedFor: claims.pages.length,
-              ...(claims.failed ? { claimsFailed: claims.failed } : {}),
-            }
-          : {}),
+        authored: results.length - failed.length,
+        claimsEstablished: results.reduce(
+          (total, result) => total + result.claims,
+          0,
+        ),
+        pagesWithNoClaims: withoutClaims.map((result) => result.page),
+        failed,
         ...(duplicates.length > 0 ? { duplicatePagesIgnored: duplicates } : {}),
       });
     },
     {
       name: "author_pages",
       description:
-        "Dispatch one page-author per assignment as a refilling pool of twenty, establish every proposition they report, and return the outcome per page. Pass the whole phase - initial authoring or one repair wave - in a single call: it pools, refills as each author settles, dedupes repeated pages, parses each report, establishes its propositions as Claims, and reports failures per page under failed rather than losing the pool. You do not call resolve_claims for pages authored here; it is already done. Each assignment is {page, brief}, where brief is the complete self-contained instruction for that page, since an author cannot read the plan or its neighbours. Never call this once per page and never run two calls covering the same page at once.",
+        "Dispatch one page-author per assignment as a refilling pool of twenty and return each page's outcome. Pass the whole phase - initial authoring or one repair wave - in a single call: it pools, refills as each author settles, dedupes repeated pages, and reports a failed author against its own page rather than losing the pool. Each author writes its page and establishes its own Claims, so you do not call resolve_claims for these pages; the counts come back from the claim store itself. A page under pagesWithNoClaims wrote prose it never grounded and is worth re-dispatching. Each assignment is {page, brief}, where brief is the complete self-contained instruction for that page, since an author cannot read the plan or its neighbours. Never call this once per page and never run two calls covering the same page at once.",
       schema: AuthorPagesInputSchema,
     },
   );

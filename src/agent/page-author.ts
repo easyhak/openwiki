@@ -57,9 +57,8 @@ export const AUTHOR_FILESYSTEM_TOOLS = [
 ] as const satisfies readonly FsToolName[];
 
 const PAGE_AUTHOR_DESCRIPTION = [
-  "Writes one assigned wiki page from a supplied evidence brief and relationship edges, then returns the propositions it established with repo:// evidence.",
-  "Dispatch concurrently from eval, one page per task. It returns this shape as JSON in its final message. Pass the same shape as responseSchema, byte-identical on every call - the title is what keeps the extraction tool name stable, and a name that changes per call defeats prompt caching. Read only the fields named here; a responseSchema declaring anything else does not change what comes back:",
-  '{"title":"openwiki_page_author_result_v1","type":"object","properties":{"page":{"type":"string"},"propositions":{"type":"array","items":{"type":"object","properties":{"statement":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}}},"required":["statement","evidence"]}},"undocumented":{"type":"array","items":{"type":"string"}}},"required":["page","propositions"]}',
+  "Writes one assigned wiki page from a supplied evidence brief and relationship edges, and establishes that page's Claims itself with repo:// evidence.",
+  "Dispatch concurrently through author_pages, one page per task. It returns a short plain-text note, not JSON: how many claims a page established comes from the claim store rather than from anything it says.",
 ].join(" ");
 
 const PAGE_AUTHOR_SYSTEM_PROMPT = `You author exactly one wiki page and report what you established.
@@ -85,45 +84,34 @@ Establish the claims first, then write the page from them:
 - State each supplied relationship in the prose that explains it, linking the target page by the path you were given. Do not invent link targets: another author may not have written that page yet, and a guessed path is a broken link.
 - Begin the file with OKF v0.1 front matter as your assignment specifies.
 
+Establish your claims yourself, with resolve_claims:
+- Call it for your page with the propositions you derived. You own your page's claim set; nobody establishes it on your behalf, and a proposition you never establish is one the wiki cannot re-verify however well the prose reads.
+- Evidence is \`repo://path\` or \`repo://path#symbol\`, and nothing else. No line ranges, no directories, no trailing slash. A symbol must be one the file actually declares - if you are unsure a name resolves, cite the file.
+- If it rejects a resource, that is a fact about your evidence and you have the file open: cite the symbol the file really declares, or cite the file. Do not abandon the claim.
+- Establish in batches rather than one call per proposition, and do it as you go rather than saving it for the end, so a page that runs long still has grounded claims.
+
 Reporting:
-- Return every proposition you established, with its evidence, as a single JSON object in your final message: {"page": "...", "propositions": [{"statement": "...", "evidence": ["repo://..."]}], "undocumented": ["..."]}. No prose around it. That return is how they reach the wiki's claim set: the coordinator owns all Claims operations and establishes what you report, so a proposition you leave out of the response is one the wiki cannot later re-verify, however well the prose reads.
-- Report any assigned unit you could not document from evidence, and why, rather than writing an unsupported page.`;
+- Finish with a short plain-text note: what you wrote, and any assigned area you could not document from evidence and why. It is read by a person, not parsed, so do not wrap it in JSON.
+- Report an area you could not document rather than writing an unsupported page.`;
 
 /**
- * The author's return contract.
+ * The author establishes its own claims.
  *
- * Described here rather than attached as `responseFormat`, though not for the
- * reason first recorded. Removing the static field did NOT restore caching:
- * page-author stayed 378 of 378 cold at 0% while the coordinator held 91% in
- * the same trace. The cause is the schema NAME, not the schema. LangChain names
- * the extraction tool after the JSON Schema's top-level `title`, and an untitled
- * schema is named extract-N off a process-global counter, so consecutive author
- * turns ship different tool definitions, every prefix differs, and nothing
- * caches. The coordinator therefore passes one byte-identical titled schema on
- * every task, and the field stays off here because the contract belongs where
- * the dispatch happens.
+ * It had returned them instead, for the coordinator to establish. That put a
+ * page's forty-odd propositions through a JSON return contract, a parser, and a
+ * pool, and every one of those seams broke at least once: a schema that never
+ * bound, a payload too large for a tool result, a relative page path the claim
+ * store refused, and one unresolvable symbol atomically discarding a whole
+ * page's claims. In one graded run 65 of 90 pages established nothing.
  *
- * It was not buying much either: only 3 of 57 authors produced a parsed
- * structuredResponse, while the other 54 returned exactly this shape as JSON in
- * their final message, which the coordinator reads without difficulty. So the
- * schema stays as the documented contract and the field goes.
+ * The author already had resolve_claims - subagents inherit the parent's tools -
+ * and was being told not to use it. It is also the only participant that can
+ * actually repair bad evidence, because it has the file open: a coordinator
+ * downstream can only degrade a rejected `#symbol` to its file and hope.
  *
- * Which means the schema is documentation, not enforcement, and the shape it
- * declares has to be the shape THIS prompt asks for. It was not: the description
- * advertised {propositions, ok} while the reporting rule below asks for {page,
- * propositions, undocumented}. A caller-supplied responseSchema does not settle
- * that: deepagents applies it, but its task tool falls back to the final message
- * whenever structuredResponse is null and nothing raises, so every author
- * returned the prompt's shape and every `ok` read as absent. Thirty-eight of
- * thirty-eight, harmless only because nothing branched on it.
- *
- * It was not harmless one dispatch over. Advertising a schema here taught the
- * coordinator to pass one everywhere, including to subagents whose system
- * prompts fix a TEXT return format. wiki-question-finder got a schema, returned
- * its [Q-NN] block, and the coordinator's `for (i < qf.length)` walked a string:
- * zero verification waves, zero repair authors, retrieval 0.328 -> 0.254. The
- * schemas the other subagents ignore are named in their own descriptions now,
- * and this one matches its prompt.
+ * Counts come from the claim session afterwards rather than from the author's
+ * report, so there is nothing to parse and nothing that can disagree with the
+ * store.
  */
 const PAGE_AUTHOR_SUBAGENT: SubAgent = {
   name: "page-author",

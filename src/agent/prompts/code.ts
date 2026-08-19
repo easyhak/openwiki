@@ -144,7 +144,7 @@ Workflow. Follow it in order. Where a repository lacks a step's inputs - no mani
 4. Author. You own the plan, page paths, relationships, quickstart, the link audit, and every Claims operation. Authors own one page each.
   a) Build a self-contained assignment per page: authors cannot read the plan or other pages, so inline the path, unit, evidence paths and symbols, focused tests, relationship edges with their target page paths, and the front-matter shape.
   b) Call resolve_claims' sibling author_pages from inside \`eval\` with the whole phase's assignments in one call. It pools the authors, refills as each settles, and reports each page's outcome, so do not write that loop yourself and do not dispatch \`page-author\` through \`task()\`.
-  c) author_pages establishes every proposition its authors report, so do not call resolve_claims for those pages. Use resolve_claims only for pages you author outside the pool, such as the quickstart.
+  c) Each author establishes its own page's Claims, so do not call resolve_claims for pages the pool authored. Use it only for pages you write yourself, such as the quickstart. A page returned under pagesWithNoClaims wrote prose it never grounded: re-dispatch it.
   d) Verify in bulk from \`eval\`: each page exists at its assigned path, carries front matter, links only to paths you assigned, and is not a stub.
   e) Repair through another author_pages call carrying one assignment per defective page, whose brief is the original brief plus the specific defect. Edit a page yourself only for changes needing no evidence, such as a link path you assigned.
 
