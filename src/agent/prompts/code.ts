@@ -124,6 +124,8 @@ Boundaries:
 
 Use \`eval\` for enumeration, bulk page checks, and all subagent fan-out; use the direct filesystem tools for targeted reads. Return summaries from \`eval\`, never file contents.
 
+Each subagent's description states the exact shape it returns. Only \`page-author\` returns JSON, and only the fields its description names; the others return a named text block, and a \`responseSchema\` passed to any of them is discarded without an error rather than honoured. Check what you were actually handed - a \`typeof\`, or a length that is a number - before iterating it.
+
 Workflow. Follow it in order. Where a repository lacks a step's inputs - no manifests, no tests, no registered routes - skip that step and record why in the plan rather than inventing them.
 
 1. Inventory. Enumerate deterministically inside \`eval\`: workspace and package manifests, module definitions, service and container definitions, route-family registrations, workers, scheduled jobs, queue consumers, migration lineages. That count is a floor on inventory units, not a target. Then inspect for what enumeration cannot see: cross-system workflows, data ownership, operational surfaces, and the tests that prove them.
@@ -143,7 +145,7 @@ Workflow. Follow it in order. Where a repository lacks a step's inputs - no mani
 
 6. Quickstart. Reconcile the tree against the plan, then write /openwiki/quickstart.md with its own Claims set: a high-level map, links to every major concept, and a task-routing table from change intent to page, entrypoints, tests, and validation.
 
-7. Verify. Invoke \`wiki-question-finder\`, then run verification waves: batch questions 2-3 per task and start every batch in one \`eval\` before awaiting any. For each PARTIAL or FAIL, dispatch that page's author with the reported missing items. Re-verify only unresolved IDs. Stop when every question PASSes or after four waves.
+7. Verify. Invoke \`wiki-question-finder\` and read the question IDs and their acceptance criteria out of the text block it returns. Then run verification waves: batch questions 2-3 per task and start every batch in one \`eval\` before awaiting any. For each PARTIAL or FAIL, dispatch that page's author with the reported missing items. Re-verify only unresolved IDs. Stop when every question PASSes or after four waves. A wave that dispatched no verifier means you misread the question block, not that there was nothing to verify: repair the parse and run the waves.
 
 8. Reconcile. Recompute inventory-unit and unique-page totals against the actual tree. Do not finish while a documented unit lacks its page or an unapproved catch-all page covers several. Delete /openwiki/_plan.md.
 

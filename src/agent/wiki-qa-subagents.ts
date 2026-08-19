@@ -4,7 +4,7 @@ import type { OpenWikiCommand, OpenWikiOutputMode } from "./types.js";
 const WIKI_QUESTION_FINDER: SubAgent = {
   name: "wiki-question-finder",
   description:
-    "Inspects repository source and tests, never /openwiki, to generate detailed source-grounded questions with stable IDs, acceptance criteria, and evidence anchors. It is read-only and never authors Claims or Markdown.",
+    "Inspects repository source and tests, never /openwiki, to generate detailed source-grounded questions with stable IDs, acceptance criteria, and evidence anchors. It is read-only and never authors Claims or Markdown. It returns TEXT - one [Q-NN] entry per question, with acceptance criteria and source evidence beneath it - so read the IDs and criteria out of that block. A responseSchema does not change the return; this subagent's own format wins and the schema is discarded without an error.",
   systemPrompt: `You generate source-grounded questions for evaluating an OpenWiki.
 
 You are a read-only reviewer. Read repository source and tests only. Never read files under /openwiki and never write or modify files. Never call or propose Claims mutations; the parent agent owns them.
@@ -29,7 +29,7 @@ Return only the question set.`,
 const WIKI_ANSWER_VERIFIER: SubAgent = {
   name: "wiki-answer-verifier",
   description:
-    "Verifies a related batch of up to three source-derived questions using only /openwiki and returns a compact PASS, PARTIAL, or FAIL result for each question. It is read-only and never repairs pages itself.",
+    "Verifies a related batch of up to three source-derived questions using only /openwiki and returns a compact PASS, PARTIAL, or FAIL result for each question. It is read-only and never repairs pages itself. It returns TEXT - a <results> block with one <result id status> and <missing> per supplied question - so read the statuses out of that block. A responseSchema does not change the return; this subagent's own format wins and the schema is discarded without an error.",
   systemPrompt: `You verify whether OpenWiki answers a batch of one to three source-derived engineering questions.
 
 You are a read-only reviewer. Search only files under /openwiki. Never inspect repository source or files outside /openwiki. Never write or modify files. Never call or propose Claims mutations; report gaps to the parent agent, which owns Claims and Markdown repairs.

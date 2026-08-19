@@ -58,8 +58,8 @@ export const AUTHOR_FILESYSTEM_TOOLS = [
 
 const PAGE_AUTHOR_DESCRIPTION = [
   "Writes one assigned wiki page from a supplied evidence brief and relationship edges, then returns the propositions it established with repo:// evidence.",
-  "Dispatch concurrently from eval, one page per task. Pass this responseSchema byte-identical on every call - the title is what keeps the extraction tool name stable, and a name that changes per call defeats prompt caching:",
-  '{"title":"openwiki_page_author_result_v1","type":"object","properties":{"propositions":{"type":"array","items":{"type":"object","properties":{"statement":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}}},"required":["statement","evidence"]}},"ok":{"type":"boolean"}},"required":["propositions","ok"]}',
+  "Dispatch concurrently from eval, one page per task. It returns this shape as JSON in its final message. Pass the same shape as responseSchema, byte-identical on every call - the title is what keeps the extraction tool name stable, and a name that changes per call defeats prompt caching. Read only the fields named here; a responseSchema declaring anything else does not change what comes back:",
+  '{"title":"openwiki_page_author_result_v1","type":"object","properties":{"page":{"type":"string"},"propositions":{"type":"array","items":{"type":"object","properties":{"statement":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}}},"required":["statement","evidence"]}},"undocumented":{"type":"array","items":{"type":"string"}}},"required":["page","propositions"]}',
 ].join(" ");
 
 const PAGE_AUTHOR_SYSTEM_PROMPT = `You author exactly one wiki page and report what you established.
@@ -104,6 +104,23 @@ Reporting:
  * structuredResponse, while the other 54 returned exactly this shape as JSON in
  * their final message, which the coordinator reads without difficulty. So the
  * schema stays as the documented contract and the field goes.
+ *
+ * Which means the schema is documentation, not enforcement, and the shape it
+ * declares has to be the shape THIS prompt asks for. It was not: the description
+ * advertised {propositions, ok} while the reporting rule below asks for {page,
+ * propositions, undocumented}. A caller-supplied responseSchema never binds here
+ * - deepagents' task tool falls back to the final message whenever
+ * structuredResponse is null, silently - so every author returned the prompt's
+ * shape and every `ok` read as absent. Thirty-eight of thirty-eight, harmless
+ * only because nothing branched on it.
+ *
+ * It was not harmless one dispatch over. Advertising a schema here taught the
+ * coordinator to pass one everywhere, including to subagents whose system
+ * prompts fix a TEXT return format. wiki-question-finder got a schema, returned
+ * its [Q-NN] block, and the coordinator's `for (i < qf.length)` walked a string:
+ * zero verification waves, zero repair authors, retrieval 0.328 -> 0.254. The
+ * schemas the other subagents ignore are named in their own descriptions now,
+ * and this one matches its prompt.
  */
 const PAGE_AUTHOR_SUBAGENT: SubAgent = {
   name: "page-author",
