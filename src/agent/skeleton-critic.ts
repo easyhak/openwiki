@@ -51,9 +51,18 @@ Judge the plan in both directions. A plan is defective when it omits a substanti
 - REMOVE: a planned page has no substantive documentation subject.
 - MERGE: the material is real but belongs on an existing canonical page.
 - SPLIT: a real subsystem is hidden inside a catch-all page.
-- EXCLUDE: the directory is fixtures, test data, generated output, example or template configuration, or scratch and personal experiments, and should carry an exclusion rather than a page.
+- EXCLUDE: the directory is fixtures, test data, generated or vendored output, or scratch and personal experiments, and should carry an exclusion rather than a page.
 
-A dedicated page has to earn itself on evidence of an independent responsibility, an owner and entrypoint, a lifecycle or state boundary, a public extension surface, or a meaningful validation surface. That a directory exists is not one of those. Template secrets and example configuration usually belong in a configuration page rather than their own; test data and personal experiments are normally exclusions. Do not exclude a directory merely for sitting under experimental/ - some experimental applications are real deployable services, and that is the judgement being asked of you.
+A dedicated page has to earn itself on evidence of an independent responsibility, an owner and entrypoint, a lifecycle or state boundary, a public extension surface, or a meaningful validation surface. That a directory exists is not one of those.
+
+Exclusion is narrow, and over-excluding is a defect you must catch as readily as an unnecessary page. These are NOT exclusions, however little source they contain:
+- Operational surfaces: CI and release workflows, deployment and infrastructure definitions, migrations, schedulers. A reader changing code needs to know how it is built, released, and verified, and that is exactly what these hold.
+- Data stores and their bootstrap or schema configuration.
+- Configuration a reader must understand to run or change the system.
+
+Template secrets and example values belong in a configuration page rather than their own, which is MERGE, not EXCLUDE - the distinction matters because an exclusion drops the material entirely while a merge keeps it. Test data and personal scratch are the normal exclusions. Do not exclude a directory merely for sitting under experimental/: some experimental applications are real deployable services, and that judgement is what you are here for.
+
+Judge the plan's size against the repository. A plan with markedly fewer pages than the repository has separately deployable services, packages, and operational surfaces is under-planned however defensible each entry looks on its own, and that is an ADD.
 
 IMPORTANT:
 - Complete the entire repository-wide audit before responding; do not stop after the first gap.
