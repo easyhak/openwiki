@@ -48,6 +48,12 @@ import {
 import { OpenWikiLocalShellBackend } from "./docs-only-backend.js";
 import { getSelectedModelAvailability } from "../model-availability.js";
 import { createOpenWikiAuthoringPoolMiddleware } from "./authoring-pool.js";
+import { createOpenWikiPlanLedgerMiddleware } from "./plan-ledger.js";
+import { createOpenWikiInventoryMiddleware } from "./repo-inventory.js";
+import {
+  createOpenWikiVerificationMiddleware,
+  createQaGate,
+} from "./wiki-verification.js";
 import { createOpenWikiCodeInterpreterMiddleware } from "./code-interpreter.js";
 import { createOpenWikiIndexMiddleware } from "./okf-middleware.js";
 import {
@@ -432,6 +438,12 @@ function createOpenWikiAgentGraph(
     virtualMode: true,
   });
   const backend = createAgentBackend(wikiBackend);
+  // One gate shared by verify_wiki and finalize_wiki. OPENWIKI_QA_MODE=off
+  // turns semantic QA into a no-op that still finalizes, which is the control
+  // arm for measuring whether it earns its cost.
+  const qaGate = createQaGate(
+    process.env.OPENWIKI_QA_MODE === "off" ? "off" : "full",
+  );
   const claimsIntegration = options.claimsRuntime
     ? createClaimsIntegration(options.claimsRuntime, wikiBackend)
     : undefined;
@@ -499,7 +511,17 @@ function createOpenWikiAgentGraph(
             // Registered after it, because the REPL reads its ptc list from
             // request.tools and author_pages has to be on the request by then.
             ...(options.command === "init" && options.outputMode === "repository"
-              ? [createOpenWikiAuthoringPoolMiddleware()]
+              ? [
+                  createOpenWikiAuthoringPoolMiddleware(
+                    options.claimsRuntime?.session,
+                  ),
+                  // Enumeration, the ledger it feeds, and the gate that reads
+                  // the ledger: breadth stops being something the workflow asks
+                  // for and becomes something it cannot skip.
+                  createOpenWikiInventoryMiddleware(wikiBackend),
+                  createOpenWikiVerificationMiddleware(qaGate),
+                  createOpenWikiPlanLedgerMiddleware(wikiBackend, qaGate),
+                ]
               : []),
             ...(claimsIntegration?.middleware ?? []),
             createOpenWikiIndexMiddleware(

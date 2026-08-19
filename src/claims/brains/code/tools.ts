@@ -360,7 +360,7 @@ const RESOLVE_CLAIMS_PAGE_CONCURRENCY = 8;
  * @param entries - Deduplicated page and operation pairs from one call.
  * @returns Successful pages under `pages`, and any failures under `failed`.
  */
-async function resolvePagesIndependently(
+export async function resolvePagesIndependently(
   session: ClaimSession,
   entries: readonly [string, ClaimOperation[]][],
 ): Promise<{

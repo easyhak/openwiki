@@ -25,6 +25,9 @@
 
 import { tool } from "@langchain/core/tools";
 import { createMiddleware } from "langchain";
+import type { ClaimSession } from "../claims/brains/code/session.js";
+import { resolvePagesIndependently } from "../claims/brains/code/tools.js";
+import type { ClaimOperation } from "../claims/core/types.js";
 import { z } from "zod";
 
 /**
@@ -117,6 +120,45 @@ function parseAuthorReport(output: unknown): AuthorReport | null {
   }
 }
 
+/**
+ * Converts an author's reported propositions into claim add operations.
+ *
+ * Authors report evidence as bare `repo://` strings, which is the shape their
+ * prompt asks for, while the claim store wants `{resource}` objects. Both are
+ * accepted because a model asked for one shape supplies the other often enough
+ * that rejecting it would drop real evidence on a technicality.
+ *
+ * @param propositions - Propositions as the author reported them.
+ * @returns Add operations, skipping any proposition with no usable evidence.
+ */
+function toClaimOperations(
+  propositions: { statement: string; evidence: unknown[] }[],
+): ClaimOperation[] {
+  const operations: ClaimOperation[] = [];
+  for (const proposition of propositions) {
+    const evidence = (proposition.evidence ?? [])
+      .map((entry) =>
+        typeof entry === "string"
+          ? { resource: entry }
+          : entry !== null &&
+              typeof entry === "object" &&
+              typeof (entry as { resource?: unknown }).resource === "string"
+            ? { resource: (entry as { resource: string }).resource }
+            : null,
+      )
+      .filter((entry): entry is { resource: string } => entry !== null);
+    if (evidence.length === 0 || !proposition.statement) {
+      continue;
+    }
+    operations.push({
+      op: "add",
+      statement: proposition.statement,
+      evidence,
+    });
+  }
+  return operations;
+}
+
 /** One author's structured report. */
 interface AuthorReport {
   page?: string;
@@ -157,7 +199,7 @@ const AuthorPagesInputSchema = z.object({
  *
  * @returns Middleware exposing `author_pages`, for registration in `ptc`.
  */
-export function createOpenWikiAuthoringPoolMiddleware() {
+export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
   // Narrow to what dispatch needs, because the request's tool union includes
   // shapes without `invoke` and this only ever calls one tool by name.
   let taskTool: {
@@ -234,21 +276,58 @@ export function createOpenWikiAuthoringPoolMiddleware() {
       });
 
       const authored = results.filter((result) => result.ok);
+      const propositionTotal = authored.reduce(
+        (total, result) => total + result.propositions.length,
+        0,
+      );
+
+      // Establish here rather than handing the propositions back.
+      //
+      // Returning them was the bug that cost a graded run its worst score. Fifty
+      // pages of roughly twenty propositions each, with evidence, is far past
+      // any tool-result limit: the middleware offloaded it, the offload write
+      // was refused, and the coordinator never learned which pages had been
+      // written. Offloading works now, but a payload whose only consumer is
+      // resolve_claims has no reason to travel through the REPL and the model's
+      // context to get there.
+      //
+      // It also retires the batching instruction. "Accumulate the phase, 8-12
+      // pages per call, never per page" produced 108 calls in one run, 16 in the
+      // next, and 7 in the run that collapsed. Establishing from here makes the
+      // batching a property of the code instead of a thing to ask for.
+      const claims = session
+        ? await resolvePagesIndependently(
+            session,
+            authored
+              .filter((result) => result.propositions.length > 0)
+              .map(
+                (result) =>
+                  [result.page, toClaimOperations(result.propositions)] as [
+                    string,
+                    ClaimOperation[],
+                  ],
+              ),
+          )
+        : null;
+
       return JSON.stringify({
         authored: authored.length,
         failed: results.filter((result) => !result.ok),
-        propositionTotal: authored.reduce(
-          (total, result) => total + result.propositions.length,
-          0,
-        ),
-        results,
+        propositionTotal,
+        pages: results.map((result) => result.page),
+        ...(claims
+          ? {
+              claimsEstablishedFor: claims.pages.length,
+              ...(claims.failed ? { claimsFailed: claims.failed } : {}),
+            }
+          : {}),
         ...(duplicates.length > 0 ? { duplicatePagesIgnored: duplicates } : {}),
       });
     },
     {
       name: "author_pages",
       description:
-        "Dispatch one page-author per assignment as a refilling pool of twenty and return every page's outcome. Pass the whole phase - initial authoring or one repair wave - in a single call: it pools, refills as each author settles, dedupes repeated pages, parses each author's report, and reports failures per page under failed rather than losing the pool. Each assignment is {page, brief}, where brief is the complete self-contained instruction for that page, since an author cannot read the plan or its neighbours. Never call this once per page and never run two calls covering the same page at once.",
+        "Dispatch one page-author per assignment as a refilling pool of twenty, establish every proposition they report, and return the outcome per page. Pass the whole phase - initial authoring or one repair wave - in a single call: it pools, refills as each author settles, dedupes repeated pages, parses each report, establishes its propositions as Claims, and reports failures per page under failed rather than losing the pool. You do not call resolve_claims for pages authored here; it is already done. Each assignment is {page, brief}, where brief is the complete self-contained instruction for that page, since an author cannot read the plan or its neighbours. Never call this once per page and never run two calls covering the same page at once.",
       schema: AuthorPagesInputSchema,
     },
   );

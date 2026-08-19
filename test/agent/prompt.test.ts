@@ -359,9 +359,15 @@ describe("createSystemPrompt Claims workflow", () => {
         expect(prompt).toContain("wiki-question-finder");
         expect(prompt).toContain("wiki-answer-verifier");
         expect(prompt).toContain("page-author");
+        // Claims for pooled pages are established inside author_pages now, so
+        // the prompt's job is to stop the coordinator doing it a second time.
         expect(prompt).toContain(
-          "Establish propositions once per phase, not once per page",
+          "author_pages establishes every proposition its authors report",
         );
+        expect(prompt).toContain("finalize_wiki");
+        expect(prompt).toContain("verify_wiki");
+        expect(prompt).toContain("submit_plan");
+        expect(prompt).toContain("inventory_repository");
         // The coordinator is the single Claims writer. Each subagent is told so
         // in its own system prompt, asserted in claims-agent-integration.
         expect(prompt).toContain("every Claims operation");
