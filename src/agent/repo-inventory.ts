@@ -76,10 +76,14 @@ export interface ListingBackend {
 }
 
 /**
- * Deepest level walked. Bounds the cost on a large tree while going deep enough
- * that a nested layout - packages/@org/name - is visible to partition against.
+ * Depth of the tree shown to the agent when it plans.
+ *
+ * A display bound, not a correctness one. It exists so the listing stays
+ * readable on a large monorepo; coverage checking does not use it and is not
+ * limited by it, because a directory the agent never saw still has to be
+ * covered by some ancestor entry.
  */
-const MAX_DEPTH = 4;
+const LISTING_DEPTH = 3;
 
 /**
  * Reports whether a directory name marks a test tree.
@@ -92,88 +96,142 @@ export function isTestDirectory(name: string): boolean {
 }
 
 /**
- * Enumerates every directory a survey must account for.
+ * Reports whether a directory should be walked at all.
+ *
+ * @param name - Bare directory name.
+ * @returns Whether it is a subject worth accounting for.
+ */
+function isWalkable(name: string): boolean {
+  if (SKIP_DIRECTORIES.has(name) || isTestDirectory(name)) {
+    return false;
+  }
+  // Dotted directories are tooling, with one exception: .github carries the
+  // repository's whole operational surface.
+  return !name.startsWith(".") || name === ".github";
+}
+
+/**
+ * Lists the walkable child directories of one directory.
+ *
+ * @param backend - Filesystem backend.
+ * @param directory - Repository-rooted path, "" for the root.
+ * @returns Child paths, rooted at "/".
+ */
+async function childDirectories(
+  backend: ListingBackend,
+  directory: string,
+): Promise<string[]> {
+  const listed = await backend.ls(directory === "" ? "/" : directory);
+  const children: string[] = [];
+  for (const entry of listed.files ?? []) {
+    if (!entry.is_dir) {
+      continue;
+    }
+    const name = path.posix.basename(entry.path.replace(/\/+$/u, ""));
+    if (isWalkable(name)) {
+      children.push(`${directory}/${name}`);
+    }
+  }
+  return children;
+}
+
+/**
+ * Enumerates directories for the agent to plan against, bounded for readability.
  *
  * @param backend - Filesystem backend rooted at the repository.
- * @returns Repository-rooted paths, sorted, so two runs agree exactly.
+ * @returns Repository-rooted paths, sorted, plus "/" for the root's own files.
  */
 export async function collectDirectoryTree(
   backend: ListingBackend,
 ): Promise<string[]> {
-  const found: string[] = [];
+  const found: string[] = ["/"];
   const walk = async (directory: string, depth: number): Promise<void> => {
-    if (depth > MAX_DEPTH) {
+    if (depth > LISTING_DEPTH) {
       return;
     }
-    const listed = await backend.ls(directory === "" ? "/" : directory);
-    for (const entry of listed.files ?? []) {
-      if (!entry.is_dir) {
-        continue;
-      }
-      const name = path.posix.basename(entry.path.replace(/\/+$/u, ""));
-      if (SKIP_DIRECTORIES.has(name) || isTestDirectory(name)) {
-        continue;
-      }
-      if (name.startsWith(".") && name !== ".github") {
-        continue;
-      }
-      const full = `${directory}/${name}`;
-      found.push(full);
-      await walk(full, depth + 1);
+    for (const child of await childDirectories(backend, directory)) {
+      found.push(child);
+      await walk(child, depth + 1);
     }
   };
   await walk("", 0);
-  // "/" is the repository's own files - manifests, workspace config - which
-  // belong to no subdirectory and would otherwise fall between partitions.
-  found.push("/");
   found.sort();
   return found;
 }
 
 /**
- * Reports which enumerated directories no proposed root covers.
+ * Normalizes a supplied directory to a rooted path with no trailing slash.
  *
- * Roots may nest: a directory belongs to its DEEPEST covering root, so
- * proposing `/src` alongside `/src/api` is meaningful rather than a conflict -
- * `/src` takes its own files and whatever `/src/api` does not claim. Rejecting
- * nesting would make a repository with significant files beside significant
- * subdirectories impossible to partition.
- *
- * @param tree - Every directory that must be accounted for.
- * @param roots - Proposed survey roots.
- * @returns Uncovered directories, empty when the partition is complete.
+ * @param directory - Model-supplied path.
+ * @returns Rooted path.
  */
-export function uncoveredDirectories(
-  tree: readonly string[],
-  roots: readonly string[],
-): string[] {
-  const normalized = roots.map(
-    (root) => `/${root.replace(/^\/+/u, "").replace(/\/+$/u, "")}`,
-  );
-  return tree.filter(
-    (directory) =>
-      !normalized.some(
-        (root) =>
-          root === "/" || directory === root || directory.startsWith(`${root}/`),
-      ),
+function rooted(directory: string): string {
+  return `/${directory.replace(/^\/+/u, "").replace(/\/+$/u, "")}`;
+}
+
+/**
+ * Reports whether any entry covers a directory.
+ *
+ * @param directory - Rooted directory path.
+ * @param entries - Rooted entry directories.
+ * @returns Whether the directory falls under an entry.
+ */
+function isCovered(directory: string, entries: readonly string[]): boolean {
+  return entries.some(
+    (entry) =>
+      entry === "/" || directory === entry || directory.startsWith(`${entry}/`),
   );
 }
 
 /**
- * Returns the directories a root owns directly, excluding deeper roots.
+ * Finds directories no entry covers, to any depth.
  *
- * A surveyor needs to know what it is NOT responsible for, or two surveyors
- * plan the same subtree and their pages collide.
+ * Unbounded in depth but cheap, because coverage is inherited: once a directory
+ * is covered every directory beneath it is too, so the walk prunes there and
+ * never descends. Under a complete plan it therefore visits only the top of the
+ * tree. An uncovered directory is reported and then pruned as well, so a missed
+ * subtree yields the one path that names it rather than hundreds of its
+ * children.
  *
- * @param root - The root being briefed.
- * @param roots - Every proposed root.
- * @returns Deeper roots nested inside this one.
+ * A depth bound here would put a hole in the only guarantee this makes: a
+ * service nested deeper than the bound would never be enumerated, so nothing
+ * would require the plan to cover it, which is the invisible subtree the check
+ * exists to prevent.
+ *
+ * @param backend - Filesystem backend rooted at the repository.
+ * @param entries - Directories the plan claims to cover.
+ * @returns Uncovered directories, shallowest first.
  */
-export function nestedRootsWithin(
-  root: string,
-  roots: readonly string[],
-): string[] {
-  return roots.filter(
-    (candidate) => candidate !== root && candidate.startsWith(`${root}/`),
-  );
+export async function findUncoveredDirectories(
+  backend: ListingBackend,
+  entries: readonly string[],
+): Promise<string[]> {
+  const covering = entries.map(rooted);
+  if (covering.includes("/")) {
+    return [];
+  }
+  // The repository's own files belong to no subdirectory, so only an entry on
+  // "/" covers them. Without this they would go unaccounted for silently.
+  const uncovered: string[] = isCovered("/", covering) ? [] : ["/"];
+
+  const walk = async (directory: string): Promise<void> => {
+    const children = await childDirectories(backend, directory);
+    for (const child of children) {
+      if (!isCovered(child, covering)) {
+        // Report the highest uncovered directory and stop. Its children add
+        // nothing a reader can act on, and listing them would turn one missed
+        // subtree into hundreds of problems.
+        uncovered.push(child);
+        continue;
+      }
+      // Covered, so everything beneath it is covered too - unless a deeper
+      // entry exists, which means this subtree was partitioned and something
+      // inside it may still have been missed.
+      if (covering.some((entry) => entry.startsWith(`${child}/`))) {
+        await walk(child);
+      }
+    }
+  };
+  await walk("");
+  return uncovered;
 }

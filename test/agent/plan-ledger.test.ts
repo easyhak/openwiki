@@ -4,10 +4,10 @@ import {
   renderPlanMarkdown,
   validatePlan,
 } from "../../src/agent/plan-ledger.ts";
-import { uncoveredDirectories } from "../../src/agent/repo-inventory.ts";
+import { findUncoveredDirectories } from "../../src/agent/repo-inventory.ts";
 import { createQaGate } from "../../src/agent/wiki-verification.ts";
 
-const TARGETS = ["/", "/smith-go", "/smith-backend"];
+const TREE = ["/", "/smith-go", "/smith-backend"];
 
 describe("validatePlan", () => {
   test("accepts a ledger covering every surveyed directory", () => {
@@ -22,7 +22,8 @@ describe("validatePlan", () => {
             reason: "Covered by the API pages owned by /smith-go",
           },
         ],
-        TARGETS,
+        TREE,
+        [],
       ),
     ).toEqual([]);
   });
@@ -34,7 +35,8 @@ describe("validatePlan", () => {
     expect(
       validatePlan(
         [{ directory: "/smith-go", pages: ["openwiki/go.md"] }],
-        TARGETS,
+        TREE,
+        ["/", "/smith-backend"],
       ).join(" "),
     ).toContain("covered by no entry");
   });
@@ -47,10 +49,11 @@ describe("validatePlan", () => {
         { directory: "/smith-backend", pages: ["openwiki/be.md"] },
         { directory: "/invented", pages: ["openwiki/x.md"] },
       ],
-      TARGETS,
+      TREE,
+      [],
     ).join(" ");
     expect(problems).toContain("plans no pages and gives no reason");
-    expect(problems).toContain("does not exist: /invented");
+    expect(problems).toContain("was not listed: /invented");
   });
 
   test("rejects two directories claiming one page", () => {
@@ -63,7 +66,8 @@ describe("validatePlan", () => {
           { directory: "/smith-go", pages: ["openwiki/shared.md"] },
           { directory: "/smith-backend", pages: [], reason: "none needed" },
         ],
-        TARGETS,
+        TREE,
+        [],
       ).join(" "),
     ).toContain("claimed by both");
   });
@@ -133,36 +137,69 @@ function wire(
   return { call };
 }
 
-describe("partition coverage", () => {
-  const TREE = ["/", "/smith-go", "/smith-go/api", "/smith-backend"];
+describe("coverage walk", () => {
+  // A repository nested deeper than any display bound, to prove the check is
+  // not limited by one: /deep/a/b/c/svc sits at depth 5.
+  const nested = {
+    ls: (dirPath: string) => {
+      const clean = dirPath.replace(/\/+$/u, "") || "/";
+      const tree: Record<string, string[]> = {
+        "/": ["deep", "flat", "tests"],
+        "/deep": ["a"],
+        "/deep/a": ["b"],
+        "/deep/a/b": ["c"],
+        "/deep/a/b/c": ["svc"],
+        "/deep/a/b/c/svc": [],
+        "/flat": [],
+      };
+      return Promise.resolve({
+        files: (tree[clean] ?? []).map((name) => ({
+          path: clean === "/" ? name : `${clean}/${name}`,
+          is_dir: true,
+        })),
+      });
+    },
+  };
 
-  test("accepts a partition that covers the tree, at any granularity", () => {
-    // Whichever granularity fits the repository is fine; only coverage is
-    // checked, because granularity is a fact about how it is organised.
-    expect(uncoveredDirectories(TREE, ["/"])).toEqual([]);
+  test("an entry covers everything beneath it, at any depth", async () => {
+    // /deep covers /deep/a/b/c/svc without naming it, which is why depth costs
+    // the plan nothing: coverage is inherited.
+    expect(await findUncoveredDirectories(nested, ["/", "/deep", "/flat"])).toEqual(
+      [],
+    );
+  });
+
+  test("an entry on the root covers the whole repository", async () => {
+    expect(await findUncoveredDirectories(nested, ["/"])).toEqual([]);
+  });
+
+  test("reports the highest uncovered directory, not its children", async () => {
+    // One missed subtree should read as one problem.
+    expect(await findUncoveredDirectories(nested, ["/flat"])).toEqual([
+      "/",
+      "/deep",
+    ]);
+  });
+
+  test("still descends into a subtree that was partitioned", async () => {
+    // /deep is covered, but a deeper entry means it was split, so something
+    // inside it can still have been missed - here /deep/a/b.
     expect(
-      uncoveredDirectories(TREE, ["/smith-go", "/smith-backend", "/"]),
-    ).toEqual([]);
-    // Roots may nest: a directory belongs to its deepest covering root.
-    expect(
-      uncoveredDirectories(TREE, [
+      await findUncoveredDirectories(nested, [
         "/",
-        "/smith-go",
-        "/smith-go/api",
-        "/smith-backend",
+        "/deep",
+        "/deep/a/b/c",
+        "/flat",
       ]),
     ).toEqual([]);
   });
 
-  test("names the directories a partition would leave unlooked-at", () => {
-    // A subtree nobody surveys is invisible, so an omission has to be a
-    // rejection carrying its path rather than a silent gap.
-    expect(uncoveredDirectories(TREE, ["/smith-go"])).toEqual([
+  test("the root's own files need an entry of their own", async () => {
+    // Nothing but "/" covers them, so omitting it is a real gap.
+    expect(await findUncoveredDirectories(nested, ["/deep", "/flat"])).toEqual([
       "/",
-      "/smith-backend",
     ]);
   });
-
 });
 
 describe("submit_plan", () => {

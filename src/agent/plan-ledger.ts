@@ -32,7 +32,7 @@ import { createMiddleware } from "langchain";
 import { z } from "zod";
 import {
   collectDirectoryTree,
-  uncoveredDirectories,
+  findUncoveredDirectories,
   type ListingBackend,
 } from "./repo-inventory.js";
 import { qaFinalizationProblem, type QaGate } from "./wiki-verification.js";
@@ -65,16 +65,16 @@ export interface PlanLedger {
 export function validatePlan(
   entries: PlanEntry[],
   tree: readonly string[],
+  uncovered: readonly string[],
 ): string[] {
   const problems: string[] = [];
-  const directories = entries.map((entry) => entry.directory);
 
   for (const entry of entries) {
     // A directory that is not in the tree is a typo, and a typo can leave the
     // directory it meant uncovered while looking like it was planned.
     if (!tree.includes(entry.directory)) {
       problems.push(
-        `Entry names a directory that does not exist: ${entry.directory}`,
+        `Entry names a directory that does not exist or was not listed: ${entry.directory}`,
       );
     }
     if (entry.pages.length === 0 && !entry.reason) {
@@ -84,10 +84,6 @@ export function validatePlan(
     }
   }
 
-  // The one check code can make. Which granularity is right is a fact about how
-  // this repository is organised; that nothing went unlooked-at is not, and a
-  // subtree nobody plans is indistinguishable from one nobody read.
-  const uncovered = uncoveredDirectories(tree, directories);
   if (uncovered.length > 0) {
     problems.push(
       `${uncovered.length} director(ies) are covered by no entry: ${uncovered.slice(0, 20).join(", ")}${uncovered.length > 20 ? ", ..." : ""}`,
@@ -173,7 +169,7 @@ export function createOpenWikiPlanLedgerMiddleware(
     {
       name: "list_repository_directories",
       description:
-        "List every non-test directory survey_repository requires a root to cover. Call this before choosing roots: it is the exact enumeration the partition is checked against, so partitioning against your own listing risks missing something this counts. Test, vendor, and build directories are already excluded.",
+        "List the repository's directories for planning, three levels deep, with test, vendor, and build directories already excluded. Coverage is not limited to what this shows: submit_plan checks the whole tree to any depth, and an entry covers everything beneath it, so a directory deeper than this listing is covered by whichever entry contains it.",
       schema: z.object({}),
     },
   );
@@ -181,8 +177,12 @@ export function createOpenWikiPlanLedgerMiddleware(
   const submitPlan = tool(
     async (rawInput) => {
       const input = SubmitPlanSchema.parse(rawInput);
-      const tree = await collectDirectoryTree(backend);
-      const problems = validatePlan(input.entries, tree);
+      const directories = input.entries.map((entry) => entry.directory);
+      const [tree, uncovered] = await Promise.all([
+        collectDirectoryTree(backend),
+        findUncoveredDirectories(backend, directories),
+      ]);
+      const problems = validatePlan(input.entries, tree, uncovered);
       if (problems.length > 0) {
         return JSON.stringify({ accepted: false, problems });
       }
