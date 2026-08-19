@@ -189,6 +189,15 @@ describe("finalize_wiki", () => {
     const broken = createQaGate("full");
     broken.status = "infrastructure_error";
     expect((await finalize(broken)).complete).toBe(true);
+
+    // Nor is it deadlocked by its own wave budget. `failed` with both waves
+    // spent has no remaining action, so blocking on it would leave every trial
+    // burning to its timeout with a complete wiki already on disk.
+    const spent = createQaGate("full");
+    spent.status = "failed";
+    spent.unresolved = ["Q-02"];
+    spent.wavesRun = 2;
+    expect((await finalize(spent)).complete).toBe(true);
   });
 
   test("refuses completion when no plan was ever accepted", async () => {

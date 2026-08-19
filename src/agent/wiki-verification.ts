@@ -54,6 +54,36 @@ const QUESTIONS_PER_BATCH = 3;
 const MAX_WAVES = 2;
 
 /**
+ * Reports why QA should block finishing, or null when it should not.
+ *
+ * Policy lives here rather than in the completion gate because it depends on
+ * the wave budget, and the two drifting apart deadlocks the run: with the
+ * budget spent and questions still unresolved, a gate that blocks on `failed`
+ * can never be satisfied, and every trial burns to its timeout having authored
+ * a complete wiki. The gate exists to stop QA being SKIPPED, not to demand that
+ * every question passes.
+ *
+ * So `failed` blocks only while a wave remains to fix it. Once the budget is
+ * spent, unresolved questions are a recorded outcome. `infrastructure_error`
+ * never blocks at all.
+ *
+ * @param gate - Run-scoped QA state.
+ * @returns Problem text for the finalization report, or null.
+ */
+export function qaFinalizationProblem(gate: QaGate): string | null {
+  if (gate.mode !== "full") {
+    return null;
+  }
+  if (gate.status === "not_triggered") {
+    return "Semantic QA has not run. Call verify_wiki, repair what it reports, then verify again.";
+  }
+  if (gate.status === "failed" && gate.wavesRun < MAX_WAVES) {
+    return `Semantic QA left ${gate.unresolved.length} question(s) unresolved: ${gate.unresolved.slice(0, 10).join(", ")}. Repair the reported pages through author_pages, then call verify_wiki again.`;
+  }
+  return null;
+}
+
+/**
  * Creates the QA gate a run shares between `verify_wiki` and `finalize_wiki`.
  *
  * @param mode - Whether semantic QA runs at all.

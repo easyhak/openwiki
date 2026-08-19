@@ -25,7 +25,7 @@ import { tool } from "@langchain/core/tools";
 import { createMiddleware } from "langchain";
 import { z } from "zod";
 import { collectInventory } from "./repo-inventory.js";
-import type { QaGate } from "./wiki-verification.js";
+import { qaFinalizationProblem, type QaGate } from "./wiki-verification.js";
 
 /** Dispositions a unit may be given, beyond being assigned its own page. */
 const GROUPED = "grouped";
@@ -227,16 +227,9 @@ export function createOpenWikiPlanLedgerMiddleware(
       // an infrastructure failure never blocks: a run that authored sixty pages
       // has done real work, and refusing to let it finish because the QA
       // plumbing broke would burn every token that produced them.
-      if (qaGate?.mode === "full") {
-        if (qaGate.status === "not_triggered") {
-          problems.push(
-            "Semantic QA has not run. Call verify_wiki, repair what it reports, then verify again.",
-          );
-        } else if (qaGate.status === "failed") {
-          problems.push(
-            `Semantic QA left ${qaGate.unresolved.length} question(s) unresolved: ${qaGate.unresolved.slice(0, 10).join(", ")}. Repair the reported pages through author_pages, then call verify_wiki again.`,
-          );
-        }
+      const qaProblem = qaGate ? qaFinalizationProblem(qaGate) : null;
+      if (qaProblem) {
+        problems.push(qaProblem);
       }
 
       return JSON.stringify({
