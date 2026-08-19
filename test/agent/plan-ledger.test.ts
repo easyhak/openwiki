@@ -5,6 +5,10 @@ import {
   renderPlanMarkdown,
   validatePlan,
 } from "../../src/agent/plan-ledger.ts";
+import {
+  nestedRootsWithin,
+  uncoveredDirectories,
+} from "../../src/agent/repo-inventory.ts";
 import { createQaGate } from "../../src/agent/wiki-verification.ts";
 
 const TARGETS = ["/", "/smith-go", "/smith-backend"];
@@ -143,8 +147,45 @@ function wire(backend: ReturnType<typeof stubBackend>, gate?: ReturnType<typeof 
   return { call };
 }
 
+describe("partition coverage", () => {
+  const TREE = ["/", "/smith-go", "/smith-go/api", "/smith-backend"];
+
+  test("accepts a partition that covers the tree, at any granularity", () => {
+    // Whichever granularity fits the repository is fine; only coverage is
+    // checked, because granularity is a fact about how it is organised.
+    expect(uncoveredDirectories(TREE, ["/"])).toEqual([]);
+    expect(
+      uncoveredDirectories(TREE, ["/smith-go", "/smith-backend", "/"]),
+    ).toEqual([]);
+    // Roots may nest: a directory belongs to its deepest covering root.
+    expect(
+      uncoveredDirectories(TREE, [
+        "/",
+        "/smith-go",
+        "/smith-go/api",
+        "/smith-backend",
+      ]),
+    ).toEqual([]);
+  });
+
+  test("names the directories a partition would leave unlooked-at", () => {
+    // A subtree nobody surveys is invisible, so an omission has to be a
+    // rejection carrying its path rather than a silent gap.
+    expect(uncoveredDirectories(TREE, ["/smith-go"])).toEqual([
+      "/",
+      "/smith-backend",
+    ]);
+  });
+
+  test("tells a root which nested roots it does not own", () => {
+    expect(
+      nestedRootsWithin("/smith-go", ["/smith-go", "/smith-go/api", "/"]),
+    ).toEqual(["/smith-go/api"]);
+  });
+});
+
 describe("survey_repository", () => {
-  test("surveys every non-test top-level directory and builds the plan", async () => {
+  test("fans out over the supplied roots and builds the plan", async () => {
     const backend = stubBackend([]);
     const { call } = wire(backend, undefined, (description) =>
       Promise.resolve(
@@ -153,20 +194,30 @@ describe("survey_repository", () => {
           : `<survey><page path="openwiki/workspace.md"/></survey>`,
       ),
     );
-    const out = await call("survey_repository");
-    // "/" for the root's own files and "/smith-go"; tests and node_modules are
-    // excluded as subjects, not as evidence.
-    expect(out.directoriesSurveyed).toBe(2);
+    const out = await call("survey_repository", {
+      roots: ["/", "/smith-go"],
+    });
+    expect(out.surveyed).toBe(true);
+    expect(out.rootsSurveyed).toBe(2);
     expect(out.plannedPages).toBe(2);
     expect(backend.written["/openwiki/_plan.md"]).toContain("| Directory |");
   });
 
-  test("records a directory whose surveyor proposed nothing", async () => {
+  test("refuses a partition that leaves a directory uncovered", async () => {
+    const { call } = wire(stubBackend([]), undefined, () =>
+      Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
+    );
+    const out = await call("survey_repository", { roots: ["/smith-go"] });
+    expect(out.surveyed).toBe(false);
+    expect(String(out.problems)).toContain("covered by no root");
+  });
+
+  test("records a root whose surveyor proposed nothing", async () => {
     const { call } = wire(stubBackend([]), undefined, () =>
       Promise.resolve("<survey></survey>"),
     );
-    const out = await call("survey_repository");
-    expect(out.emptyDirectories).toEqual(["/", "/smith-go"]);
+    const out = await call("survey_repository", { roots: ["/"] });
+    expect(out.emptyRoots).toEqual(["/"]);
   });
 });
 
@@ -176,7 +227,7 @@ describe("finalize_wiki", () => {
     const missing = wire(stubBackend([]), undefined, () =>
       Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
     );
-    await missing.call("survey_repository");
+    await missing.call("survey_repository", { roots: ["/"] });
     const blocked = await missing.call("finalize_wiki");
     expect(blocked.complete).toBe(false);
     expect(String(blocked.problems)).toContain("never written");
@@ -184,7 +235,7 @@ describe("finalize_wiki", () => {
     const present = wire(stubBackend(["openwiki/a.md"]), undefined, () =>
       Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
     );
-    await present.call("survey_repository");
+    await present.call("survey_repository", { roots: ["/"] });
     expect((await present.call("finalize_wiki")).complete).toBe(true);
   });
 
@@ -200,7 +251,7 @@ describe("finalize_wiki", () => {
       const { call } = wire(stubBackend(["openwiki/a.md"]), gate, () =>
         Promise.resolve(`<survey><page path="openwiki/a.md"/></survey>`),
       );
-      await call("survey_repository");
+      await call("survey_repository", { roots: ["/"] });
       return call("finalize_wiki");
     };
 
