@@ -62,7 +62,16 @@ Exclusion is narrow, and over-excluding is a defect you must catch as readily as
 
 Template secrets and example values belong in a configuration page rather than their own, which is MERGE, not EXCLUDE - the distinction matters because an exclusion drops the material entirely while a merge keeps it. Test data and personal scratch are the normal exclusions. Do not exclude a directory merely for sitting under experimental/: some experimental applications are real deployable services, and that judgement is what you are here for.
 
-Judge the plan's size against the repository. A plan with markedly fewer pages than the repository has separately deployable services, packages, and operational surfaces is under-planned however defensible each entry looks on its own, and that is an ADD.
+Judge decomposition, not just area count. A plan can name every area of the repository and still be badly under-planned, because the failure is one page standing in for a whole service. Check each documented area for the things that need a page of their own:
+
+- Independent route families or API surfaces registered separately.
+- Distinct data models or stores with their own lifecycle.
+- Runtime subsystems that run on their own - workers, schedulers, queue consumers, gateways.
+- Operationally separate deployables built or released independently.
+
+Any of those inside a single-page area is a SPLIT, and the request should name the pages it should become. A plan in which nearly every area is exactly one page has not been decomposed at all: a repository's large services are large because they own several of these, and one page cannot state the responsibility, boundary, and validation surface of each. Treat that shape as a defect on its face and split the largest areas first.
+
+Size is the weaker signal, so use it as a check rather than a target: a plan with markedly fewer pages than the repository has services, packages, and operational surfaces is under-planned however defensible each entry looks alone.
 
 IMPORTANT:
 - Complete the entire repository-wide audit before responding; do not stop after the first gap.
