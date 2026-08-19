@@ -496,7 +496,8 @@ export class OpenWikiLocalShellBackend extends LocalShellBackend {
     if (
       !this.docsOnly ||
       this.outputMode === "local-wiki" ||
-      isOpenWikiDocsPath(filePath)
+      isOpenWikiDocsPath(filePath) ||
+      isLargeToolResultPath(filePath)
     ) {
       return null;
     }
@@ -625,6 +626,54 @@ export function isClaimsStatePath(filePath: string): boolean {
  * segments collapsed) before the prefix check so a path such as
  * `/openwiki/../AGENTS.md` cannot escape the confinement.
  */
+/**
+ * Directory DeepAgents offloads an over-limit tool result into.
+ *
+ * The path is hard-coded in the middleware as `/large_tool_results/<id>.txt`
+ * and written through this backend, so a docs-only run refused it and the
+ * middleware reported "Tool result too large, but the result could not be saved
+ * to the filesystem". That is not a truncation. The result is destroyed: a
+ * graded run lost the outcome of its entire initial authoring phase this way,
+ * never learned which of ~50 planned pages had been written, and finished with
+ * 33 of 62 pages for the run's worst score.
+ *
+ * Allowing it does not weaken what docs-only protects. This is harness-owned
+ * scratch outside the repository tree, written by the middleware rather than by
+ * anything the model authored, and nothing under it is source, wiki, or
+ * agent-instruction content.
+ */
+const LARGE_TOOL_RESULTS_DIR = "large_tool_results";
+
+/**
+ * Reports whether a path is the offload directory or something inside it.
+ *
+ * Normalized the same way as the docs check, so `/large_tool_results/../etc`
+ * cannot borrow the exemption.
+ *
+ * @param filePath - Model- or middleware-supplied path.
+ * @returns Whether the write targets offloaded tool-result storage.
+ */
+export function isLargeToolResultPath(filePath: string): boolean {
+  const virtualPath = normalizeVirtualPath(filePath);
+  return (
+    virtualPath === LARGE_TOOL_RESULTS_DIR ||
+    virtualPath.startsWith(`${LARGE_TOOL_RESULTS_DIR}/`)
+  );
+}
+
+/**
+ * Collapses a supplied path to a root-relative virtual path.
+ *
+ * @param filePath - Model- or middleware-supplied path.
+ * @returns Normalized path with no leading slash and no `.`/`..` segments.
+ */
+function normalizeVirtualPath(filePath: string): string {
+  const slashed = filePath.trim().replace(/\\/gu, "/");
+  return path.posix
+    .normalize(`/${slashed.replace(/^\/+/u, "")}`)
+    .replace(/^\/+/u, "");
+}
+
 export function isOpenWikiDocsPath(filePath: string): boolean {
   const slashed = filePath.trim().replace(/\\/gu, "/");
   // Collapse `..`/`.` segments before the prefix check so a path like
