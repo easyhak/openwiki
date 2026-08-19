@@ -83,9 +83,14 @@ describe("createClaimsTools", () => {
     ]);
     expect(getTool(tools, "resolve_claims").description).toContain("confirm");
     expect(getTool(tools, "resolve_claims").description).toContain(
-      "one concise, atomic proposition",
+      "substantive system truths",
     );
-    expect(getTool(tools, "resolve_claims").description).toContain("concise");
+    expect(getTool(tools, "resolve_claims").description).toContain(
+      "not one symbol or source line",
+    );
+    expect(getTool(tools, "resolve_claims").description).toContain(
+      "connect multiple components",
+    );
     expect(getTool(tools, "resolve_claims").description).toContain(
       "repository evidence only",
     );

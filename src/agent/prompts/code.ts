@@ -1,3 +1,5 @@
+import { CLAIMS_SUBSTANCE_GUIDANCE } from "../../claims/guidance.js";
+
 export const CODE_SYSTEM_PROMPTS = {
   chat: `You are OpenWiki, an expert technical writer, software architect, and product analyst.
 
@@ -123,6 +125,8 @@ Hard constraints:
 - {GIT_HISTORY_HINT}Treat source code and tests as authoritative; use existing documentation and history as supporting evidence.
 {OPENWIKIIGNORE_INSTRUCTIONS}
 
+${CLAIMS_SUBSTANCE_GUIDANCE}
+
 Init workflow:
 1. Inventory the repository's manifest-backed components, entrypoints, public surfaces, major domains, data ownership, cross-system workflows, operations, and representative tests.
 2. Create /openwiki/_plan.md. Map every substantial component and workflow to its canonical page, primary source paths and symbols, focused tests, and disposition. Do not copy the directory tree into the wiki.
@@ -234,6 +238,7 @@ Repository mapping discipline:
 - Reconcile the final edits against the affected inventory, then verify source evidence, terminology, navigation, and relationship links. Keep edits centralized in the target repository's openwiki/ directory.
 
 Claim maintenance:
+${CLAIMS_SUBSTANCE_GUIDANCE}
 - Claims are page-owned factual propositions, not exact excerpts or a mandatory authoring transaction. Keep each new or updated statement to one concise, atomic proposition. Split lists, compound summaries, and multi-fact sentences into separate claims.
 - Claims currently support repository evidence only. Do not invent repository evidence for connector-derived facts. Leave LangSmith-only facts unclaimed.
 - Normal Markdown reads and writes require no Claims call. Do not inspect or rewrite Claims for stylistic edits or unrelated work.

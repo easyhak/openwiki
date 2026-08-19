@@ -333,6 +333,11 @@ describe("createSystemPrompt Claims workflow", () => {
         "Do not invent repository evidence for connector-derived facts",
       );
       expect(prompt).toContain("Leave LangSmith-only facts unclaimed");
+      expect(prompt).toContain("substantive system truth");
+      expect(prompt).toContain("connect multiple components");
+      expect(prompt).toContain("materiality test");
+      expect(prompt).toContain("architectural model");
+      expect(prompt).toContain("semantically duplicate Claims");
       expect(prompt).not.toContain("update_claims");
       expect(prompt).not.toContain("fetch_claims");
       if (command === "update") {
