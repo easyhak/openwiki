@@ -154,6 +154,22 @@ Everything OpenWiki writes is plain Markdown you own and version alongside your 
 - **No-op runs are free.** After a run, OpenWiki snapshots the `openwiki/` directory and only records new metadata when something actually changed, so scheduled workflows never churn.
 - **Local, private config.** Provider choice, keys, and optional LangSmith tracing are saved to `~/.openwiki/.env` on your machine.
 
+## Migrate an existing wiki to Claims
+
+Repository wikis created before Claims do not backfill Claims during a normal
+`--update`. Run the interactive migration center instead:
+
+```sh
+openwiki migrate
+```
+
+OpenWiki detects generated pages without Claims, previews the model-backed work,
+and asks for confirmation before changing anything. Migration verifies existing
+prose against current repository source, persists evidence-backed Claims, and
+updates Markdown only when the source no longer supports it. Progress is saved
+one page at a time, so an interrupted or failed migration can resume safely by
+running the same command again.
+
 ## Open Knowledge Format
 
 OpenWiki emits [Google Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundles in both modes, so your wiki is portable to any OKF-aware tool.
@@ -382,6 +398,7 @@ openwiki "generate docs"         # start with an initial request
 openwiki -p "what can you do?"   # one-shot, print, and exit
 openwiki --init                  # initialize code docs (personal: openwiki personal --init)
 openwiki --update                # update code docs (personal: openwiki personal --update)
+openwiki migrate                 # interactively backfill Claims for existing code docs
 openwiki visualize               # interactive graph + live reader
 openwiki visualize openwiki --export docs/openwiki-visualizer  # static graph + reader
 openwiki auth <provider>         # authenticate a connector (slack, gmail, x, notion)

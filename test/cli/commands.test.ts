@@ -70,6 +70,28 @@ describe("parseCommand — help", () => {
   test("help documents the output language option", () => {
     expect(getHelpText()).toContain("-l, --language <locale>");
   });
+
+  test("help documents interactive migrations", () => {
+    expect(getHelpText()).toContain("openwiki migrate");
+    expect(getHelpText()).toContain("pending repository wiki migrations");
+  });
+});
+
+describe("parseCommand — migrate", () => {
+  test("parses the interactive migration center", () => {
+    expect(parseCommand(["migrate"])).toEqual({
+      kind: "migrate",
+      exitCode: 0,
+    });
+  });
+
+  test("rejects migration arguments until another migration is exposed", () => {
+    expect(parseCommand(["migrate", "claims"])).toEqual({
+      kind: "error",
+      exitCode: 1,
+      message: "Usage: openwiki migrate",
+    });
+  });
 });
 
 describe("parseCommand — chat default", () => {

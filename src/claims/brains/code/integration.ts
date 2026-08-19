@@ -5,8 +5,16 @@ import type { ClaimsRuntime } from "./runtime.js";
 import {
   createClaimsDeleteFileTool,
   createClaimsTools,
+  createCompleteClaimsReviewTool,
   type ClaimsDeletionBackend,
 } from "./tools.js";
+
+export interface ClaimsIntegrationOptions {
+  /**
+   * Exposes the explicit page-review completion gate used by Claims migration.
+   */
+  includeReviewCompletion?: boolean;
+}
 
 /**
  * Agent-facing pieces of the repository Claims subsystem.
@@ -33,11 +41,17 @@ export interface ClaimsIntegration {
 export function createClaimsIntegration(
   runtime: ClaimsRuntime,
   backend: ClaimsDeletionBackend,
+  options: ClaimsIntegrationOptions = {},
 ): ClaimsIntegration {
   return {
     tools: [
-      createClaimsDeleteFileTool(runtime.session, backend),
+      ...(options.includeReviewCompletion
+        ? []
+        : [createClaimsDeleteFileTool(runtime.session, backend)]),
       ...createClaimsTools(runtime.session),
+      ...(options.includeReviewCompletion
+        ? [createCompleteClaimsReviewTool(runtime.session)]
+        : []),
     ],
     middleware: [createClaimsReadNoteMiddleware(runtime.session)],
   };

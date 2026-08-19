@@ -104,6 +104,13 @@ const DeleteFileInputSchema = z
   .strict();
 
 /**
+ * Runtime validator for migration-only page review completion.
+ */
+const CompleteClaimsReviewInputSchema = z
+  .object({ page: CanonicalNonEmptyStringSchema })
+  .strict();
+
+/**
  * Guarded backend capability required by the Claims page-deletion tool.
  */
 export interface ClaimsDeletionBackend {
@@ -268,6 +275,39 @@ export function createClaimsTools(
         }),
     }),
   ];
+}
+
+/**
+ * Creates the migration-only completion gate for one reviewed page.
+ *
+ * A dedicated tool prevents an empty claim set from being confused with an
+ * agent that simply forgot to author claims. The migration prompt requires
+ * this call after the page has been checked against repository evidence.
+ *
+ * @param session - Run-scoped authoritative claim state.
+ * @returns Model-facing review completion tool.
+ */
+export function createCompleteClaimsReviewTool(
+  session: ClaimSession,
+): StructuredToolInterface {
+  return new DynamicStructuredTool({
+    name: "complete_claims_review",
+    description:
+      "Complete the Claims migration review for exactly one wiki page after checking all of its material factual propositions against repository evidence. Call this once even when the legitimate complete claim set is empty.",
+    schema: {
+      type: "object",
+      properties: { page: { type: "string", minLength: 1 } },
+      required: ["page"],
+      additionalProperties: false,
+    } as const,
+    func: (input) =>
+      runClaimsTool(async () => {
+        const parsed = CompleteClaimsReviewInputSchema.parse(input);
+        const page = normalizeClaimsToolPagePath(parsed.page);
+        await session.completeReview(page);
+        return { completed: page };
+      }),
+  });
 }
 
 /**

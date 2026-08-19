@@ -16,6 +16,7 @@ import {
 import { shouldPrintStartupError } from "./run-mode.js";
 import { resolveStartupCommand } from "./startup.js";
 import { App } from "./app/app.js";
+import { MigrateApp } from "./migrate-app.js";
 import {
   runAuthCommand,
   runCronCommand,
@@ -38,7 +39,8 @@ if (
   parsedCommand.kind === "auth" ||
   parsedCommand.kind === "cron" ||
   parsedCommand.kind === "ingest" ||
-  parsedCommand.kind === "ngrok"
+  parsedCommand.kind === "ngrok" ||
+  parsedCommand.kind === "migrate"
 ) {
   await loadOpenWikiEnv();
 }
@@ -71,6 +73,15 @@ if (command.kind === "auth") {
   await runIngestCommand(command);
 } else if (command.kind === "visualize") {
   await runVisualizeCommand(command);
+} else if (command.kind === "migrate") {
+  if (!process.stdin.isTTY) {
+    process.stderr.write(
+      "openwiki migrate requires an interactive terminal.\n",
+    );
+    process.exitCode = 1;
+  } else {
+    render(<MigrateApp />);
+  }
 } else if (shouldPrintStartupError(argv, parsedCommand, command)) {
   process.stderr.write(`${command.message}\n`);
   process.exitCode = command.exitCode;

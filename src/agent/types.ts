@@ -1,6 +1,14 @@
 export type OpenWikiCommand = "chat" | "init" | "update";
 export type OpenWikiOutputMode = "local-wiki" | "repository";
 
+/**
+ * Internal context for a bounded repository migration agent run.
+ */
+export type OpenWikiMigrationContext = {
+  kind: "claims";
+  page: string;
+};
+
 export type OpenWikiRunResult = {
   command: OpenWikiCommand;
   model: string;
@@ -34,6 +42,7 @@ export type OpenWikiRunOptions = {
   debug?: boolean;
   isFollowup?: boolean;
   language?: string | null;
+  migration?: OpenWikiMigrationContext;
   modelId?: string | null;
   onEvent?: (event: OpenWikiRunEvent) => void;
   outputMode?: OpenWikiOutputMode;

@@ -52,6 +52,18 @@ export interface ClaimSessionOptions {
    * @default A `claim_`-prefixed cryptographically random UUID.
    */
   createClaimId?: () => string;
+
+  /**
+   * Requires an explicit completed review before dirty page state may persist.
+   *
+   * @default false for normal init and update runs.
+   */
+  requireCompletedReview?: boolean;
+
+  /**
+   * Restricts every mutating Claims operation to one migration work unit.
+   */
+  restrictedPage?: string;
 }
 
 /**
@@ -82,6 +94,9 @@ interface WorkingPageState {
    * Evidence issues not yet resolved by a claim operation.
    */
   issues: GroundingIssue[];
+
+  /** Whether migration explicitly completed review after the latest mutation. */
+  reviewComplete: boolean;
 }
 
 /**
@@ -113,6 +128,12 @@ export class ClaimSession {
    */
   private readonly createClaimId: () => string;
 
+  /** Whether dirty pages require the migration completion gate. */
+  private readonly requireCompletedReview: boolean;
+
+  /** Canonical page allowed to mutate during a bounded migration run. */
+  private readonly restrictedPage?: string;
+
   /**
    * Creates a run-scoped Claims session from persisted state and preflight.
    *
@@ -126,6 +147,10 @@ export class ClaimSession {
     this.createClaimId =
       options.createClaimId ??
       (() => `claim_${randomUUID().replaceAll("-", "")}`);
+    this.requireCompletedReview = options.requireCompletedReview ?? false;
+    this.restrictedPage = options.restrictedPage
+      ? normalizeWikiPagePath(options.restrictedPage)
+      : undefined;
 
     for (const [pageInput, persisted] of options.persisted) {
       const page = normalizeWikiPagePath(pageInput);
@@ -144,6 +169,7 @@ export class ClaimSession {
         issues: options.issues
           .filter((issue) => normalizeWikiPagePath(issue.page) === page)
           .map(cloneGroundingIssue),
+        reviewComplete: !this.requireCompletedReview,
       });
     }
   }
@@ -159,6 +185,7 @@ export class ClaimSession {
    */
   async resolveClaims(input: ResolveClaimsInput): Promise<ResolveClaimsResult> {
     const page = normalizeWikiPagePath(input.page);
+    this.assertPageMutationAllowed(page);
     const state = this.getOrCreatePage(page);
     const previousMutation = state.pendingMutation;
     let releaseMutation = (): void => undefined;
@@ -192,6 +219,7 @@ export class ClaimSession {
       }));
       state.dirty = true;
       state.deleted = false;
+      state.reviewComplete = !this.requireCompletedReview;
       const targetedIds = new Set(results.map(({ id }) => id));
       state.issues = state.issues.filter(
         (issue) => !targetedIds.has(issue.claimId),
@@ -203,6 +231,24 @@ export class ClaimSession {
   }
 
   /**
+   * Marks a page's complete claim set as reviewed even when it has no claims.
+   *
+   * Migration uses this explicit completion gate so an empty, factual-free page
+   * can receive a durable sidecar without inventing a placeholder proposition.
+   *
+   * @param pageInput - Virtual generated-page path.
+   */
+  async completeReview(pageInput: string): Promise<void> {
+    const page = normalizeWikiPagePath(pageInput);
+    this.assertPageMutationAllowed(page);
+    const state = this.getOrCreatePage(page);
+    await state.pendingMutation;
+    state.dirty = true;
+    state.deleted = false;
+    state.reviewComplete = true;
+  }
+
+  /**
    * Returns compact claim state without creating a write obligation.
    *
    * @param pageInput - Virtual generated-page path.
@@ -210,6 +256,7 @@ export class ClaimSession {
    */
   inspectClaims(pageInput: string): InspectedClaim[] {
     const page = normalizeWikiPagePath(pageInput);
+    this.assertPageMutationAllowed(page);
     const state = this.getOrCreatePage(page);
     if (state.deleted) {
       return [];
@@ -282,6 +329,7 @@ export class ClaimSession {
    */
   async recordDeletion(pageInput: string): Promise<void> {
     const page = normalizeWikiPagePath(pageInput);
+    this.assertPageMutationAllowed(page);
     const state = this.getOrCreatePage(page);
     await state.pendingMutation;
     this.replaceClaimOwnership(page, state.claims, []);
@@ -311,6 +359,12 @@ export class ClaimSession {
     for (const [page, state] of this.pages) {
       await state.pendingMutation;
       if (state.deleted || !state.dirty) {
+        continue;
+      }
+      if (this.requireCompletedReview && !state.reviewComplete) {
+        warnings.push(
+          `Could not persist Claims for ${page}; complete_claims_review was not called after the latest claim mutation.`,
+        );
         continue;
       }
       try {
@@ -431,6 +485,7 @@ export class ClaimSession {
       dirty: false,
       deleted: false,
       issues: [],
+      reviewComplete: !this.requireCompletedReview,
     };
     this.pages.set(page, created);
     return created;
@@ -455,6 +510,17 @@ export class ClaimSession {
     throw new ClaimSessionError(
       "Unable to allocate a globally unique claim identifier.",
     );
+  }
+
+  /**
+   * Enforces the page boundary of one Claims migration work unit.
+   */
+  private assertPageMutationAllowed(page: string): void {
+    if (this.restrictedPage && page !== this.restrictedPage) {
+      throw new ClaimSessionError(
+        `Claims migration may mutate only ${this.restrictedPage}; received ${page}.`,
+      );
+    }
   }
 
   /**

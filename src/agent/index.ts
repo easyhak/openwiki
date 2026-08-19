@@ -61,7 +61,12 @@ import {
   readCodexTokensFromEnv,
   refreshChatGptTokens,
 } from "./openai-chatgpt-oauth.js";
-import { createSystemPrompt, createUserPrompt } from "./prompt.js";
+import {
+  createClaimsMigrationSystemPrompt,
+  createClaimsMigrationUserPrompt,
+  createSystemPrompt,
+  createUserPrompt,
+} from "./prompt.js";
 import { resolveRepositoryReviewSubagents } from "./review-subagents.js";
 import { syncBundledSkills } from "./skills.js";
 import {
@@ -74,6 +79,7 @@ import {
 } from "./vertex-surface.js";
 import type {
   OpenWikiCommand,
+  OpenWikiMigrationContext,
   OpenWikiOutputMode,
   OpenWikiRunEvent,
   OpenWikiRunOptions,
@@ -190,6 +196,9 @@ export async function runOpenWikiAgent(
         runtimeCwd,
         openWikiIgnore,
         (message) => emitClaimsWarning(options, message),
+        options.migration?.kind === "claims"
+          ? options.migration.page
+          : undefined,
       ),
     { errorClass: "build_error", errorDetail: "claims_preflight" },
   );
@@ -200,7 +209,11 @@ export async function runOpenWikiAgent(
       : "claims=disabled",
   );
 
-  if (command === "update" && shouldCheckUpdateNoop(options)) {
+  if (
+    command === "update" &&
+    !options.migration &&
+    shouldCheckUpdateNoop(options)
+  ) {
     const noopStatus = await getUpdateNoopStatus(
       runtimeCwd,
       openWikiIgnore,
@@ -348,6 +361,7 @@ export type OpenWikiAgentOptions = {
   command: OpenWikiCommand;
   cwd: string;
   language?: string | null;
+  migration?: OpenWikiMigrationContext;
   model: BaseChatModel;
   onEvent?: (event: OpenWikiRunEvent) => void;
   outputMode: OpenWikiOutputMode;
@@ -386,6 +400,7 @@ export async function createOpenWikiAgent(
     options.cwd,
     openWikiIgnore,
     (message) => emitClaimsWarning(options, message),
+    options.migration?.kind === "claims" ? options.migration.page : undefined,
   );
   const checkpointer = await createCheckpointer(
     resolveCheckpointTarget(options.command),
@@ -438,18 +453,22 @@ function createOpenWikiAgentGraph(
   });
   const backend = createAgentBackend(wikiBackend);
   const claimsIntegration = options.claimsRuntime
-    ? createClaimsIntegration(options.claimsRuntime, wikiBackend)
+    ? createClaimsIntegration(options.claimsRuntime, wikiBackend, {
+        includeReviewCompletion: options.migration?.kind === "claims",
+      })
     : undefined;
   // An update inherits the wiki's persisted language unless --language requests a
   // different one. The plan drives a beforeAgent pass that, on a switch,
   // retranslates every page so the incremental update does not leave a mix of the
   // old and new language, and on any update retries pages a prior run left
   // pending. It is undefined for init and chat, which never translate.
-  const translation = resolveTranslationPlan(
-    options.command,
-    resolveLanguage(options.language).language,
-    options.context.lastUpdate?.language,
-  );
+  const translation = options.migration
+    ? undefined
+    : resolveTranslationPlan(
+        options.command,
+        resolveLanguage(options.language).language,
+        options.context.lastUpdate?.language,
+      );
   // Localized headings for the deterministic directory indexes, plus the
   // localized fallback `type` stamped on pages the code has to repair. Both fall
   // back to English for any language not in the static maps.
@@ -499,12 +518,16 @@ function createOpenWikiAgentGraph(
                 ]
               : []),
             ...(claimsIntegration?.middleware ?? []),
-            createOpenWikiIndexMiddleware(
-              wikiBackend,
-              options.outputMode,
-              indexLabels,
-              conceptType,
-            ),
+            ...(options.migration
+              ? []
+              : [
+                  createOpenWikiIndexMiddleware(
+                    wikiBackend,
+                    options.outputMode,
+                    indexLabels,
+                    conceptType,
+                  ),
+                ]),
           ],
     skills: ["/skills/"],
     subagents: resolveRepositoryReviewSubagents(
@@ -513,12 +536,17 @@ function createOpenWikiAgentGraph(
       backend,
     ),
     permissions: AGENT_FILESYSTEM_PERMISSIONS,
-    systemPrompt: createSystemPrompt(
-      options.command,
-      options.outputMode,
-      options.context.language,
-      options.openWikiIgnore,
-    ),
+    systemPrompt: options.migration
+      ? createClaimsMigrationSystemPrompt(
+          options.context.language,
+          options.openWikiIgnore,
+        )
+      : createSystemPrompt(
+          options.command,
+          options.outputMode,
+          options.context.language,
+          options.openWikiIgnore,
+        ),
   });
 }
 
@@ -540,7 +568,7 @@ async function runOpenWikiAgentCore(
   );
   emitDebug(options, "context=created");
   const openWikiSnapshotBefore =
-    command === "chat"
+    command === "chat" || options.migration
       ? null
       : await inStage(
           "build",
@@ -576,6 +604,7 @@ async function runOpenWikiAgentCore(
         command,
         cwd,
         language: options.language,
+        migration: options.migration,
         model,
         onEvent: options.onEvent,
         outputMode,
@@ -629,14 +658,16 @@ async function runOpenWikiAgentCore(
   // Register with the crash guard for exactly the stream-consumption window so
   // escaped runtime failures become interrupted-stamped runs instead of silent
   // process aborts. The finally clears the registration after every run.
-  registerActiveRun({
-    command,
-    cwd,
-    modelId,
-    outputMode,
-    snapshotBefore: openWikiSnapshotBefore ?? undefined,
-    language: context.language,
-  });
+  if (!options.migration) {
+    registerActiveRun({
+      command,
+      cwd,
+      modelId,
+      outputMode,
+      snapshotBefore: openWikiSnapshotBefore ?? undefined,
+      language: context.language,
+    });
+  }
 
   let unhandledChunkCount = 0;
 
@@ -672,22 +703,24 @@ async function runOpenWikiAgentCore(
     // as interrupted so the next update is not skipped as a no-op against a
     // possibly partial wiki. Persistence errors are swallowed here so the
     // original run error propagates.
-    try {
-      const metadataWritten = await persistRunMetadataIfChanged(
-        command,
-        cwd,
-        modelId,
-        outputMode,
-        openWikiSnapshotBefore,
-        "interrupted",
-        context.language,
-      );
-      emitDebug(
-        options,
-        metadataWritten ? "metadata=written" : "metadata=skipped",
-      );
-    } catch {
-      emitDebug(options, "metadata=writeFailed");
+    if (!options.migration) {
+      try {
+        const metadataWritten = await persistRunMetadataIfChanged(
+          command,
+          cwd,
+          modelId,
+          outputMode,
+          openWikiSnapshotBefore,
+          "interrupted",
+          context.language,
+        );
+        emitDebug(
+          options,
+          metadataWritten ? "metadata=written" : "metadata=skipped",
+        );
+      } catch {
+        emitDebug(options, "metadata=writeFailed");
+      }
     }
 
     throw error;
@@ -721,6 +754,9 @@ async function runOpenWikiAgentCore(
     metadataWritten = await inStage("finalize", async () => {
       await cleanupTemporaryPlanFile(command, cwd, outputMode, options);
       await claimsRuntime?.finalize();
+      if (options.migration) {
+        return false;
+      }
       return persistRunMetadataIfChanged(
         command,
         cwd,
@@ -732,18 +768,20 @@ async function runOpenWikiAgentCore(
       );
     });
   } catch (error) {
-    try {
-      await persistRunMetadataIfChanged(
-        command,
-        cwd,
-        modelId,
-        outputMode,
-        openWikiSnapshotBefore,
-        "interrupted",
-        context.language,
-      );
-    } catch {
-      emitDebug(options, "metadata=writeFailed");
+    if (!options.migration) {
+      try {
+        await persistRunMetadataIfChanged(
+          command,
+          cwd,
+          modelId,
+          outputMode,
+          openWikiSnapshotBefore,
+          "interrupted",
+          context.language,
+        );
+      } catch {
+        emitDebug(options, "metadata=writeFailed");
+      }
     }
     throw error;
   }
@@ -771,7 +809,7 @@ async function cleanupTemporaryPlanFile(
   outputMode: OpenWikiOutputMode,
   options: OpenWikiRunOptions,
 ): Promise<void> {
-  if (command === "chat") {
+  if (command === "chat" || options.migration) {
     return;
   }
 
@@ -798,6 +836,10 @@ function createRunUserMessage(
   context: Awaited<ReturnType<typeof createRunContext>>,
   options: OpenWikiRunOptions,
 ): string {
+  if (options.migration?.kind === "claims") {
+    return createClaimsMigrationUserPrompt(options.migration.page);
+  }
+
   if (options.isFollowup === true && options.userMessage?.trim()) {
     return options.userMessage.trim();
   }

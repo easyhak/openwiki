@@ -1,4 +1,8 @@
 import type { OpenWikiIgnore } from "./openwiki-ignore.js";
+import {
+  CLAIMS_MIGRATION_SYSTEM_PROMPT,
+  CLAIMS_MIGRATION_USER_PROMPT,
+} from "./prompts/claims-migration.js";
 import { CODE_SYSTEM_PROMPTS, CODE_USER_PROMPTS } from "./prompts/code.js";
 import {
   PERSONAL_SYSTEM_PROMPTS,
@@ -87,6 +91,26 @@ export function createUserPrompt(
       runtimeRoot ? formatRuntimeContext(runtimeRoot, outputMode) : "",
     )
     .trim();
+}
+
+/**
+ * Builds the focused system prompt for one Claims migration page.
+ */
+export function createClaimsMigrationSystemPrompt(
+  language?: string,
+  openWikiIgnore?: OpenWikiIgnore,
+): string {
+  return `${CLAIMS_MIGRATION_SYSTEM_PROMPT.replace(
+    "{OPENWIKIIGNORE_INSTRUCTIONS}",
+    formatOpenWikiIgnoreInstructions(openWikiIgnore),
+  )}${formatLanguageInstructions(language)}\n\n${createLinkIntegrityInstructions()}`.trim();
+}
+
+/**
+ * Builds the focused user prompt for one Claims migration page.
+ */
+export function createClaimsMigrationUserPrompt(page: string): string {
+  return CLAIMS_MIGRATION_USER_PROMPT.replace("{PAGE}", page).trim();
 }
 
 export function formatRuntimeRootInstruction(

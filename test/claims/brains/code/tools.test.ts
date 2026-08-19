@@ -9,6 +9,7 @@ import { ClaimSession } from "../../../../src/claims/brains/code/session.ts";
 import {
   createClaimsDeleteFileTool,
   createClaimsTools,
+  createCompleteClaimsReviewTool,
 } from "../../../../src/claims/brains/code/tools.ts";
 
 const PAGE = "/openwiki/page.md";
@@ -75,6 +76,51 @@ function parse(output: unknown): Record<string, unknown> {
 }
 
 describe("createClaimsTools", () => {
+  test("persists an explicitly reviewed empty migration page", async () => {
+    const session = new ClaimSession({
+      resolver: { resolve: () => Promise.resolve(null) },
+      persisted: new Map(),
+      issues: [],
+      orphanPages: [],
+    });
+    const tool = createCompleteClaimsReviewTool(session);
+
+    await expect(tool.invoke({ page: PAGE })).resolves.toContain(PAGE);
+    expect(session.inspectClaims(PAGE)).toEqual([]);
+  });
+
+  test("keeps a migration work unit on its assigned page", async () => {
+    const session = new ClaimSession({
+      resolver: { resolve: () => Promise.resolve(resolved()) },
+      persisted: new Map(),
+      issues: [],
+      orphanPages: [],
+      requireCompletedReview: true,
+      restrictedPage: PAGE,
+    });
+    const resolve = getTool(createClaimsTools(session), "resolve_claims");
+
+    const output = parse(
+      await resolve.invoke({
+        pages: [
+          {
+            page: "/openwiki/other.md",
+            operations: [
+              {
+                op: "add",
+                statement: "The feature exists.",
+                evidence: [{ resource: RESOURCE }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(output).toMatchObject({ retryable: true });
+    expect(output.error).toContain("may mutate only /openwiki/page.md");
+  });
+
   test("exposes the compact resolve and inspect API", () => {
     const tools = createClaimsTools(createSession());
     expect(tools.map(({ name }) => name)).toEqual([

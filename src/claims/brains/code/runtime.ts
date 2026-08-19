@@ -39,6 +39,7 @@ export interface ClaimsRuntime {
  * @param cwd - Absolute repository root.
  * @param openWikiIgnore - Repository read-boundary rules.
  * @param onWarning - Optional sink for non-fatal Claims degradation.
+ * @param migrationPage - Optional page boundary requiring completed review.
  * @returns Prepared Claims runtime, or `undefined` outside code generation.
  */
 export async function prepareClaimsRuntime(
@@ -47,6 +48,7 @@ export async function prepareClaimsRuntime(
   cwd: string,
   openWikiIgnore: OpenWikiIgnore,
   onWarning: (message: string) => void = () => undefined,
+  migrationPage?: string,
 ): Promise<ClaimsRuntime | undefined> {
   if (outputMode !== "repository" || command === "chat") {
     return undefined;
@@ -64,6 +66,8 @@ export async function prepareClaimsRuntime(
       persisted: new Map(),
       issues: [],
       orphanPages: await store.discoverSidecarPages(),
+      requireCompletedReview: migrationPage !== undefined,
+      restrictedPage: migrationPage,
     });
     return {
       session,
@@ -80,7 +84,9 @@ export async function prepareClaimsRuntime(
     resolver,
     persisted: preflight.persisted,
     issues: preflight.issues,
-    orphanPages: preflight.orphanPages,
+    orphanPages: migrationPage ? [] : preflight.orphanPages,
+    requireCompletedReview: migrationPage !== undefined,
+    restrictedPage: migrationPage,
   });
   return {
     session,

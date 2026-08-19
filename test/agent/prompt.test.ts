@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  createClaimsMigrationSystemPrompt,
+  createClaimsMigrationUserPrompt,
   createDiagramInstructions,
   createLinkIntegrityInstructions,
   createSystemPrompt,
@@ -18,6 +20,33 @@ function emptyContext(overrides: Partial<RunContext> = {}): RunContext {
     ...overrides,
   };
 }
+
+describe("Claims migration prompts", () => {
+  test("constrains the agent to one page and requires durable review", () => {
+    const system = createClaimsMigrationSystemPrompt();
+    const user = createClaimsMigrationUserPrompt(
+      "/openwiki/architecture/overview.md",
+    );
+
+    expect(system).toContain("Work only on the exact target page");
+    expect(system).toContain("complete_claims_review exactly once");
+    expect(system).toContain("Existing wiki prose is a migration input");
+    expect(system).toContain("substantive system truth");
+    expect(system).toContain("connect multiple components");
+    expect(system).toContain("materiality test");
+    expect(user).toContain("/openwiki/architecture/overview.md");
+  });
+
+  test("uses the same substantive Claims standard for init and update", () => {
+    for (const command of ["init", "update"] as const) {
+      const system = createSystemPrompt(command, "repository");
+
+      expect(system).toContain("substantive system truth");
+      expect(system).toContain("architectural model");
+      expect(system).toContain("semantically duplicate Claims");
+    }
+  });
+});
 
 describe("createSystemPrompt output language", () => {
   test("instructs the agent to write wiki documentation in the selected language", () => {

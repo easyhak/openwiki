@@ -52,6 +52,9 @@ interface CapturedGraphOptions {
    */
   subagents: unknown[];
 
+  /** Focused or normal system prompt selected for the graph. */
+  systemPrompt: string;
+
   /**
    * Explicit tools registered alongside filesystem tools.
    */
@@ -134,6 +137,29 @@ describe("Claims agent graph integration", () => {
       }
     },
   );
+
+  test("exposes review completion only to a focused Claims migration", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "openwiki-claims-agent-"));
+    temporaryDirectories.push(cwd);
+
+    await createOpenWikiAgent({
+      command: "update",
+      cwd,
+      migration: { kind: "claims", page: "/openwiki/page.md" },
+      model: new FakeListChatModel({ responses: ["done"] }),
+      outputMode: "repository",
+    });
+
+    const options = latestGraphOptions();
+    expect(options.tools.map((tool) => tool.name)).toContain(
+      "complete_claims_review",
+    );
+    expect(options.tools.map((tool) => tool.name)).not.toContain("delete_file");
+    expect(options.systemPrompt).toContain("Claims migration agent");
+    expect(options.systemPrompt).toContain(
+      "Work only on the exact target page",
+    );
+  });
 
   test.each([
     ["chat", "repository"],

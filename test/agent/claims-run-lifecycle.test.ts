@@ -420,6 +420,74 @@ describe("Claims production run lifecycle", () => {
     });
   });
 
+  test("commits one migration review without advancing update metadata", async () => {
+    const cwd = await createRepository();
+    await mkdir(path.join(cwd, "openwiki"));
+    await writeFile(path.join(cwd, "openwiki/page.md"), "# Reference\n");
+    graphHarness.streamBehavior.mockImplementation(
+      async (options: CapturedGraphOptions, input: CapturedStreamInput) => {
+        expect(input.messages[0]?.content).toContain(
+          "Migrate this exact generated wiki page",
+        );
+        expect(input.messages[0]?.content).toContain("/openwiki/page.md");
+        const completeReview = options.tools.find(
+          (tool) => tool.name === "complete_claims_review",
+        );
+        expect(completeReview).toBeDefined();
+        await completeReview?.invoke({ page: "/openwiki/page.md" });
+      },
+    );
+
+    await runOpenWikiAgent("update", cwd, {
+      migration: { kind: "claims", page: "/openwiki/page.md" },
+      outputMode: "repository",
+    });
+
+    const store = new ClaimsStore(cwd);
+    await expect(store.loadPage("/openwiki/page.md")).resolves.toMatchObject({
+      claims: [],
+    });
+    await expect(
+      readFile(path.join(cwd, "openwiki/.last-update.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("does not persist migration claims before explicit review completion", async () => {
+    const cwd = await createRepository();
+    await mkdir(path.join(cwd, "openwiki"));
+    await writeFile(path.join(cwd, "openwiki/page.md"), "# Reference\n");
+    graphHarness.streamBehavior.mockImplementation(
+      async (options: CapturedGraphOptions) => {
+        const resolveClaims = options.tools.find(
+          (tool) => tool.name === "resolve_claims",
+        );
+        await resolveClaims?.invoke({
+          pages: [
+            {
+              page: "/openwiki/page.md",
+              operations: [
+                {
+                  op: "add",
+                  statement: "The repository has a README.",
+                  evidence: [{ resource: "repo://README.md" }],
+                },
+              ],
+            },
+          ],
+        });
+      },
+    );
+
+    await runOpenWikiAgent("update", cwd, {
+      migration: { kind: "claims", page: "/openwiki/page.md" },
+      outputMode: "repository",
+    });
+
+    await expect(
+      new ClaimsStore(cwd).loadPage("/openwiki/page.md"),
+    ).resolves.toBeNull();
+  });
+
   test("runs Claims preflight before provider credential resolution", async () => {
     const cwd = await createRepository();
     await mkdir(path.join(cwd, "openwiki/.claims"), { recursive: true });

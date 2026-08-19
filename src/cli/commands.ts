@@ -28,6 +28,7 @@ export type HelpContent = {
 };
 
 export type CliCommand =
+  | { kind: "migrate"; exitCode: 0 }
   | {
       kind: "auth";
       action: "configure" | "list" | "oauth" | "tools";
@@ -152,6 +153,17 @@ export function parseCommand(argv: string[]): CliCommand {
       force,
       provider,
     };
+  }
+
+  if (argv[0] === "migrate") {
+    if (argv.length > 1) {
+      return {
+        kind: "error",
+        exitCode: 1,
+        message: "Usage: openwiki migrate",
+      };
+    }
+    return { kind: "migrate", exitCode: 0 };
   }
 
   if (argv[0] === "ngrok") {
@@ -785,6 +797,7 @@ export const helpContent: HelpContent = {
     "openwiki [--modelId <model>] [message]",
     "openwiki --update [message]",
     "openwiki auth <provider>",
+    "openwiki migrate",
     "openwiki auth configure <provider> [--force]",
     "openwiki auth tools <provider>",
     "openwiki ingest <source|source-instance|all> [--scheduled] [--print] [--modelId <id>]",
@@ -810,6 +823,11 @@ export const helpContent: HelpContent = {
       label: "openwiki",
       description:
         "Open the interactive OpenWiki code chat for the current repository.",
+    },
+    {
+      label: "openwiki migrate",
+      description:
+        "Interactively detect and run pending repository wiki migrations.",
     },
     {
       label: "openwiki auth <provider>",
