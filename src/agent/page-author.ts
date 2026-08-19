@@ -88,12 +88,16 @@ Reporting:
 /**
  * The author's return contract.
  *
- * Described here rather than attached as `responseFormat`, which cost far more
- * than it bought. Measured locally on two otherwise identical agents: without a
- * responseFormat, turn 1 is cold and every later turn caches ~99%; with one,
- * every turn is cold. In the fan-out run that made page-author the only agent
- * at 0% cache while the coordinator sat at 92%, and it burned 15.9M of the
- * run's 18.1M prompt tokens uncached - 88% of the bill.
+ * Described here rather than attached as `responseFormat`, though not for the
+ * reason first recorded. Removing the static field did NOT restore caching:
+ * page-author stayed 378 of 378 cold at 0% while the coordinator held 91% in
+ * the same trace. The cause is the schema NAME, not the schema. LangChain names
+ * the extraction tool after the JSON Schema's top-level `title`, and an untitled
+ * schema is named extract-N off a process-global counter, so consecutive author
+ * turns ship different tool definitions, every prefix differs, and nothing
+ * caches. The coordinator therefore passes one byte-identical titled schema on
+ * every task, and the field stays off here because the contract belongs where
+ * the dispatch happens.
  *
  * It was not buying much either: only 3 of 57 authors produced a parsed
  * structuredResponse, while the other 54 returned exactly this shape as JSON in

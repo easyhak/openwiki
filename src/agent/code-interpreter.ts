@@ -32,6 +32,13 @@ import { createCodeInterpreterMiddleware } from "@langchain/quickjs";
  * Fan-out therefore works without being requested here - and rather better,
  * since a schema lets an author return structured propositions.
  *
+ * A responseSchema passed to task() must carry a stable top-level `title`.
+ * LangChain names the extraction tool after it and falls back to extract-N off a
+ * process-global counter, so an untitled schema gives every dispatch a different
+ * tool name, which changes the request prefix and defeats prompt caching for the
+ * whole subagent. The init prompt fixes one title for page-author; anything else
+ * dispatching with a schema needs its own.
+ *
  * Authoring stays on the direct surface: a
  * page's prose has to come out of a model turn, so routing write_file through
  * the REPL would only mean emitting every page's body inside one code string.
