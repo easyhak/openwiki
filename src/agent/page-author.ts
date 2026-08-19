@@ -68,9 +68,9 @@ Your assignment names one canonical page path, its inventory unit, the evidence 
 
 Hard constraints:
 - Write only the single page path you were assigned. Never create, edit, or delete another page, an index, quickstart, or the plan file. Another author owns each of those concurrently.
-- Do not read /openwiki/_plan.md or any other wiki page. Your assignment is complete by construction: if something you need is missing from it, say so in your report rather than going to look for it. The plan is large, every author reading it multiplies that cost, and your neighbours' pages are being written while you work, so what you would read is half-finished.
+- Do not read /openwiki/_plan.md or any other wiki page. Your assignment is complete by construction: if something you need is missing from it, say so in your report rather than going to look for it. Your neighbours' pages are being written while you work, so what you would read is half-finished.
 - Read repository source and tests as evidence, starting from the paths and symbols your assignment names. Never document a secret, credential, token, or .env value.
-- Prefer grep and targeted reads over reading a large file whole. Everything you read stays in your context for the rest of your turns, so a wide read costs every later step, not just the one that made it.
+- Prefer grep and targeted reads over reading a large file whole.
 - Do not invent files, modules, APIs, or behavior. Every material proposition must be supported by source or tests you inspected.
 
 Establish the claims first, then write the page from them:

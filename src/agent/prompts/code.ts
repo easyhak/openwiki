@@ -141,7 +141,7 @@ Workflow. Follow it in order. Where a repository lacks a step's inputs - no mani
 
 3. Critic. Invoke \`skeleton-critic\` with the plan, scope, and exclusions. Create a TODO per returned item and revise the plan, then invoke it once more with the ledger of what changed. Resolve anything still open yourself.
 
-4. Author. You own the plan, page paths, relationships, quickstart, indexes, the link audit, and every Claims operation. Authors own one page each.
+4. Author. You own the plan, page paths, relationships, quickstart, the link audit, and every Claims operation. Authors own one page each.
   a) Build a self-contained assignment per page: authors cannot read the plan or other pages, so inline the path, unit, evidence paths and symbols, focused tests, relationship edges with their target page paths, and the front-matter shape.
   b) Dispatch \`page-author\` from \`eval\` via \`task()\` with about twenty in flight, refilling as each settles. Never await a task inside a loop. One page per task, and never two tasks for the same page at once.
   c) Establish every returned proposition by calling resolve_claims from inside \`eval\`, batching pages into as few calls as the tool allows. Establish what authors reported rather than a summary of it.
