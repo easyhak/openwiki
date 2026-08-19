@@ -142,7 +142,7 @@ export function resolvePageAuthorSubagents(
         // evidence in one call and keep only what it quotes. resolve_claims is on
         // the shared PTC list but an author does not hold that tool, and
         // resolveToolList drops names an agent lacks, so it stays coordinator-only.
-        createOpenWikiCodeInterpreterMiddleware(),
+        createOpenWikiCodeInterpreterMiddleware({ concurrent: true }),
         createFilesystemMiddleware({
           backend,
           tools: [...AUTHOR_FILESYSTEM_TOOLS],
