@@ -46,6 +46,9 @@ import { dispatchSubagent, type TaskToolLike } from "./subagent-dispatch.js";
  */
 const DEFAULT_AUTHOR_CONCURRENCY = 20;
 
+/** Times author_pages refuses an incomplete plan before authoring it anyway. */
+const MAX_BLOCKED_ATTEMPTS = 2;
+
 /** Hard ceiling, so a model-supplied concurrency cannot become a fork bomb. */
 const MAX_AUTHOR_CONCURRENCY = 32;
 
@@ -127,6 +130,7 @@ export function createOpenWikiAuthoringPoolMiddleware(
   // Narrow to what dispatch needs, because the request's tool union includes
   // shapes without `invoke` and this only ever calls one tool by name.
   let taskTool: TaskToolLike | null = null;
+  let blockedAttempts = 0;
 
   const authorPages = tool(
     async (rawInput, config) => {
@@ -177,11 +181,20 @@ export function createOpenWikiAuthoringPoolMiddleware(
       // defers most of the repository is how a run wrote three pages.
       const blocking = readiness ? await readiness() : [];
       if (blocking.length > 0) {
-        return JSON.stringify({
-          authored: 0,
-          blocked: blocking,
-          hint: "Fix these through submit_plan, then call author_pages again. Entries accumulate, so send only what changes.",
-        });
+        blockedAttempts += 1;
+        // Refusing forever is worse than authoring a coarse plan. Two trials
+        // built 84 documented areas and 87 pages, were refused twice over one
+        // under-split area, and finished with a single page on disk for 0.125.
+        // So the gate gets two chances to be listened to and then yields, with
+        // what it wanted still on the record.
+        if (blockedAttempts <= MAX_BLOCKED_ATTEMPTS) {
+          return JSON.stringify({
+            authored: 0,
+            blocked: blocking,
+            attemptsLeft: MAX_BLOCKED_ATTEMPTS - blockedAttempts + 1,
+            hint: "Fix these through submit_plan, then call author_pages again. Entries accumulate, so send only what changes. After this the pages are authored as planned regardless, so a plan left coarse stays coarse.",
+          });
+        }
       }
       // Every planned page's responsibility, so a brief can say what sits on
       // the other side of each of its relationships.

@@ -216,3 +216,36 @@ describe("author_pages readiness gate", () => {
     expect(String(out.blocked)).toContain("covered by no entry");
   });
 });
+
+describe("author_pages gate is bounded", () => {
+  test("yields after two refusals rather than authoring nothing", async () => {
+    // Refusing forever is worse than a coarse wiki: two trials built 84
+    // documented areas and 87 pages, were refused twice over one under-split
+    // area, and finished with one page on disk for 0.125.
+    const middleware = createOpenWikiAuthoringPoolMiddleware(
+      stubStore(["openwiki/a.md"]),
+      () => Promise.resolve(["/big plans 1 page for a subtree of 40"]),
+      stubSession({ "/openwiki/a.md": 7 }),
+    );
+    const tools = (
+      middleware as { tools: { invoke: (i: unknown) => Promise<unknown> }[] }
+    ).tools;
+    (
+      middleware as {
+        wrapModelCall: (r: unknown, h: (r: unknown) => unknown) => unknown;
+      }
+    ).wrapModelCall(
+      { tools: [{ name: "task", invoke: () => Promise.resolve("ok") }] },
+      (r) => r,
+    );
+    const call = async () =>
+      JSON.parse(
+        String(await tools[0].invoke({ assignments: [{ page: "a.md" }] })),
+      ) as Record<string, unknown>;
+
+    expect((await call()).authored).toBe(0);
+    expect((await call()).authored).toBe(0);
+    // Third time it authors anyway, with the complaint already on the record.
+    expect((await call()).authored).toBe(1);
+  });
+});

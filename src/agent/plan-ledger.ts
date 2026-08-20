@@ -457,7 +457,17 @@ export async function planReadiness(
     backend,
     entries.map((entry) => entry.directory),
   );
-  return blockingProblems(entries, uncovered);
+  // Decomposition blocks again. Demoting it to advice cost the mechanism that
+  // made the best round work: with it blocking, plans averaged 88 pages and the
+  // round scored 0.394; advisory, the coordinator could decline to split and
+  // plans fell to 74 pages for 0.352, at identical page density. The deadlock
+  // that prompted the demotion was the message, not the rule - it offered two
+  // remedies and coordinators took the one that never terminates - and the
+  // message now leads with the second page that clears it in one step.
+  return [
+    ...blockingProblems(entries, uncovered),
+    ...advisoryProblems(entries, await collectDirectoryTree(backend)),
+  ];
 }
 
 export function createOpenWikiPlanLedgerMiddleware(
