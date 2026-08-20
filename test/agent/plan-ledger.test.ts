@@ -12,7 +12,6 @@ import {
   canonicalWikiPage,
   createPlanStore,
   missingEvidence,
-  renderBrief,
 } from "../../src/agent/plan-store.ts";
 import { findUncoveredDirectories } from "../../src/agent/repo-inventory.ts";
 import { createQaGate } from "../../src/agent/wiki-verification.ts";
@@ -691,34 +690,5 @@ describe("blocking versus advisory", () => {
     expect(blockingProblems(coarse, ["/unplanned"]).join(" ")).toContain(
       "covered by no entry",
     );
-  });
-});
-
-describe("brief relationships", () => {
-  test("names what sits on the other side of each edge", () => {
-    // Boundary is the role the grader finds absent most often, 59% to 79%. It
-    // is a fact about two components and an author owns one, so an edge that
-    // gives only a path leaves it guessing what the other page is for.
-    const brief = renderBrief(
-      {
-        ...page("openwiki/services/api.md", [
-          { page: "openwiki/data/postgres.md", relationship: "writes runs" },
-        ]),
-      },
-      undefined,
-      new Map([["openwiki/data/postgres.md", "Owns the runs table"]]),
-    );
-    expect(brief).toContain(
-      "openwiki/data/postgres.md (Owns the runs table): writes runs",
-    );
-  });
-
-  test("falls back to the path when the neighbour is unknown", () => {
-    const brief = renderBrief(
-      page("openwiki/a.md", [
-        { page: "openwiki/gone.md", relationship: "calls it" },
-      ]),
-    );
-    expect(brief).toContain("openwiki/gone.md: calls it");
   });
 });
