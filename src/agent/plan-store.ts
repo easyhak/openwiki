@@ -123,17 +123,6 @@ export function missingEvidence(page: PlannedPage): string[] {
   if (!page.responsibility.trim()) {
     missing.push("responsibility");
   }
-  // Boundary is the claim role the grader finds absent most often - 64% to 71%
-  // across runs - and it is the one an author cannot derive from its own
-  // subtree: it is a fact about two components, and only the planner saw both.
-  // A plan that names no relationship for a page guarantees the page states
-  // none. Measured on a healthy plan, 11 of 65 pages had zero edges and the
-  // rest averaged 1.2.
-  if (page.edges.length === 0) {
-    missing.push(
-      "at least one edge - what this depends on, or what depends on it",
-    );
-  }
   return missing;
 }
 
