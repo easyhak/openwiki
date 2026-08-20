@@ -48,6 +48,7 @@ import {
 import { OpenWikiLocalShellBackend } from "./docs-only-backend.js";
 import { getSelectedModelAvailability } from "../model-availability.js";
 import { createOpenWikiAuthoringPoolMiddleware } from "./authoring-pool.js";
+import { createOpenWikiBoundaryMiddleware } from "./boundary-pass.js";
 import {
   createOpenWikiPlanLedgerMiddleware,
   planReadiness,
@@ -527,6 +528,7 @@ function createOpenWikiAgentGraph(
                   // for and becomes something it cannot skip.
                   createOpenWikiVerificationMiddleware(qaGate),
                   createOpenWikiPlanLedgerMiddleware(wikiBackend, planStore, qaGate),
+                  createOpenWikiBoundaryMiddleware(planStore),
                 ]
               : []),
             ...(claimsIntegration?.middleware ?? []),

@@ -150,11 +150,13 @@ Workflow. Follow it in order. Where a repository lacks a step's inputs - no mani
 
 5. Unknown-unknown pass. One sweep over uncovered clusters, one-hop dependencies, and cross-system workflows. Expand the plan only for real gaps, and author additions the same way.
 
-6. Quickstart. Reconcile the tree against the plan, then write /openwiki/quickstart.md with its own Claims set: a high-level map, links to every major concept, and a task-routing table from change intent to page, entrypoints, tests, and validation.
+6. Reconcile boundaries. Call \`reconcile_boundaries\` once, now that every page is written. It reviews each page against the pages it relates to and states what actually crosses between them - which is the one thing no author could do, because its neighbours were half-written while it worked and it was told not to read them.
+
+7. Quickstart. Reconcile the tree against the plan, then write /openwiki/quickstart.md with its own Claims set: a high-level map, links to every major concept, and a task-routing table from change intent to page, entrypoints, tests, and validation.
 
 7. Verify. Call \`verify_wiki\`. It generates the questions, dispatches every verifier concurrently, and returns defects grouped by canonical page. Repair those pages through one author_pages call - one assignment per page carrying all of that page's defects, not one per defect - then call \`verify_wiki\` once more to re-verify only what stayed unresolved. Two waves is the whole budget and the tool enforces it, so do not dispatch \`wiki-question-finder\` or \`wiki-answer-verifier\` yourself and do not re-verify a wiki you have not repaired.
 
-8. Reconcile. Call \`finalize_wiki\`. It compares the accepted ledger against the pages actually on disk and reports any planned page that was never written. You may not finish while it reports problems: author the missing pages through author_pages and call it again. Only once it reports complete, delete /openwiki/_plan.md.
+9. Finalize. Call \`finalize_wiki\`. It compares the accepted ledger against the pages actually on disk and reports any planned page that was never written. You may not finish while it reports problems: author the missing pages through author_pages and call it again. Only once it reports complete, delete /openwiki/_plan.md.
 
 Page contract:
 - A reader with no source access must be able to answer questions about that page's own domain from the page alone. Four of those questions every page must answer in specifics, because they are what someone about to change the code opens it for: what this is responsible for and deliberately is not, where it lives down to named entrypoints, what crosses its boundary in each direction, and how someone would check they had not broken it. Answering in specifics means naming the thing - the test and the behaviour it proves, not "unit tests".
