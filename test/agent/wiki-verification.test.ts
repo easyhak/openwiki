@@ -141,6 +141,18 @@ describe("verify_wiki", () => {
     expect(h.gate.status).toBe("infrastructure_error");
   });
 
+  test("a question-finder that throws is recorded, not fatal", async () => {
+    // A provider rejecting the finder's prompt once ended a run that had already
+    // authored its wiki. QA failing is QA's outcome, never the run's.
+    const h = verifyWith(() =>
+      Promise.reject(new Error("400 Invalid prompt: policy violation")),
+    );
+    const out = await h.run();
+    expect(out.status).toBe("infrastructure_error");
+    expect(String(out.problem)).toContain("policy violation");
+    expect(h.gate.status).toBe("infrastructure_error");
+  });
+
   test("fails loudly when the verifier answers about questions it was not sent", async () => {
     const h = verifyWith((type) =>
       Promise.resolve(

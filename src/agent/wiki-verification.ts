@@ -176,11 +176,27 @@ export function createOpenWikiVerificationMiddleware(gate: QaGate) {
       // Generated once. Re-deriving them on a retry would change the test
       // between waves, so a later PASS would not mean the defect was repaired.
       if (!questions) {
-        const raw = await dispatch(
-          "wiki-question-finder",
-          "Generate source-grounded questions for evaluating this wiki, in your documented [Q-NN] format.",
-          config,
-        );
+        // The verifier batches run under allSettled, so a failing one costs its
+        // questions. This dispatch had no such containment: anything it threw -
+        // a provider rejecting the prompt, a transport error - left verify_wiki
+        // and ended the run, discarding a finished wiki over a call that says
+        // nothing about it. QA failing is a recorded outcome, never the run's.
+        let raw: string;
+        try {
+          raw = await dispatch(
+            "wiki-question-finder",
+            "Generate source-grounded questions for evaluating this wiki, in your documented [Q-NN] format.",
+            config,
+          );
+        } catch (error) {
+          gate.status = "infrastructure_error";
+          questions = null;
+          return JSON.stringify({
+            status: "infrastructure_error",
+            problem: `The question-finder dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+            note: "Semantic QA cannot run. This is recorded as an infrastructure failure, not a documentation defect, and it does not block finishing.",
+          });
+        }
         questions = parseQuestions(raw);
         if (questions.length === 0) {
           gate.status = "infrastructure_error";

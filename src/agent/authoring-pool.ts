@@ -202,7 +202,7 @@ export function createOpenWikiAuthoringPoolMiddleware(
             authored: 0,
             blocked: state.blocking,
             attemptsLeft: MAX_BLOCKED_ATTEMPTS - blockedAttempts + 1,
-            hint: "Fix these through submit_plan, then call author_pages again. Entries accumulate, so send only what changes.",
+            hint: "Fix these through submit_plan, then call author_pages again. Entries accumulate, so send only what changes. submit_plan is one of your own tools - it is not a global inside the code interpreter, so do not conclude from the interpreter's namespace that there is no way to repair the plan.",
           });
         }
       }

@@ -393,9 +393,14 @@ export function advisoryProblems(
     if (entry.disposition !== "document") {
       continue;
     }
+    // "/" as a prefix, not "//": the root entry's descendants are every rooted
+    // path, and building the prefix by concatenation made none of them match, so
+    // the root subtracted nothing and appeared to own the whole repository.
+    const prefix =
+      entry.directory === "/" ? "/" : `${entry.directory}/`;
     const beneath = tree.filter(
       (directory) =>
-        directory.startsWith(`${entry.directory}/`) &&
+        directory.startsWith(prefix) &&
         !claimed.some(
           (other) =>
             other !== entry.directory &&
@@ -417,9 +422,7 @@ export function advisoryProblems(
     // Only the outermost claimed descendants are subtracted, since a subtree
     // total already includes anything nested inside it.
     const claimedBeneath = claimed.filter(
-      (other) =>
-        other !== entry.directory &&
-        other.startsWith(`${entry.directory}/`),
+      (other) => other !== entry.directory && other.startsWith(prefix),
     );
     const outermost = claimedBeneath.filter(
       (other) =>
@@ -591,8 +594,10 @@ export function createOpenWikiPlanLedgerMiddleware(
       // deferred 37 of 38 areas to one page and authored three. Accumulating
       // lets a page's evidence be paid for once and kept.
       const merged = new Map<string, PlanEntry>();
+      const previous = new Map<string, PlanEntry>();
       for (const entry of store.get()?.entries ?? []) {
         merged.set(entry.directory, entry);
+        previous.set(entry.directory, entry);
       }
       // The same view the authoring gate uses. Validating here without the source
       // counts made submit_plan blind to exactly what author_pages would refuse:
@@ -610,12 +615,33 @@ export function createOpenWikiPlanLedgerMiddleware(
         merged.set(entry.directory, entry);
       }
 
+      // Replacing an entry for a directory it already had is how the plan is
+      // corrected, but it silently drops pages the previous version carried, and
+      // a coordinator resubmitting one directory to add pages lost the page every
+      // other entry had edges to. Dropped pages are reported rather than kept,
+      // since removing one is also legitimate.
+      const dropped: string[] = [];
+      for (const entry of parsed.data.entries) {
+        const before = previous.get(entry.directory);
+        if (!before || before.disposition !== "document") continue;
+        const after = merged.get(entry.directory);
+        if (!after || after.disposition !== "document") continue;
+        const keptPaths = new Set(
+          after.pages.map((planned) => canonicalWikiPage(planned.path)),
+        );
+        for (const planned of before.pages) {
+          const path = canonicalWikiPage(planned.path);
+          if (!keptPaths.has(path)) dropped.push(path);
+        }
+      }
+
       const entries = [...merged.values()];
       const uncovered = await findUncoveredDirectories(
         backend,
         entries.map((entry) => entry.directory),
       );
-      const shape = validatePlanShape(entries, uncovered, tree, view.sourceFiles);
+      const blocking = blockingProblems(entries, uncovered);
+      const shortfall = advisoryProblems(entries, tree, view.sourceFiles);
       await setLedger(entries);
       const documented = entries.filter(
         (entry) => entry.disposition === "document",
@@ -626,9 +652,19 @@ export function createOpenWikiPlanLedgerMiddleware(
         documented,
         plannedPages: store.get()?.pages.size ?? 0,
         ...(rejected.length > 0 ? { rejectedEntries: rejected } : {}),
-        // Not a rejection: the plan is built up over several calls, and it is
-        // authoring that requires it to be complete.
-        ...(shape.length > 0 ? { notYetAuthorable: shape } : {}),
+        // Two classes, named for what they cost. `blocking` stops authoring
+        // until it clears; `shortfall` does not, and telling the coordinator
+        // otherwise made it spend a run satisfying a floor that would have let
+        // it through.
+        ...(dropped.length > 0
+          ? {
+              pagesDropped: dropped,
+              pagesDroppedNote:
+                "An entry replaces the whole previous entry for its directory, so these pages are no longer planned. If that was not deliberate, resubmit the entry with them included - anything with an edge to them is now dangling.",
+            }
+          : {}),
+        ...(blocking.length > 0 ? { blocking } : {}),
+        ...(shortfall.length > 0 ? { shortfall } : {}),
       });
     },
     {
@@ -644,7 +680,8 @@ export function createOpenWikiPlanLedgerMiddleware(
         '  {"path":"openwiki/services/go-api.md","responsibility":"one line","entrypoint":"smith-go/main.go#main","sources":["smith-go/api/routes.go#Register"],"tests":["smith-go/api/routes_test.go - make test-dir DIR=api"],"edges":[{"page":"openwiki/data/postgres.md","relationship":"writes runs through it"}]}',
         "Pages carry evidence because their author is sent nothing else: an implementation anchor and symbol rather than a directory, the focused tests plus the command that runs them, and an edge per relationship saying what crosses the boundary in which direction. Never put an entry object inside a pages array.",
         "Most areas of a repository need a page of their own. Excluding suits fixtures, test data, generated output, and scratch; CI and release workflows, deployment definitions, migrations, schedulers, data stores, and configuration a reader needs are documented or covered_by. covered_by is for an area genuinely documented on another page, not a way to avoid writing one, and one page cannot absorb more than a few areas. A large area is several pages: one each for independently registered route families, distinct data models or stores, and subsystems that run on their own.",
-        "notYetAuthorable in the response lists what still has to clear before author_pages will run. /openwiki/_plan.md is rendered from what is recorded, so do not write or parse it.",
+        "The response separates two things. `blocking` stops author_pages until it clears - a directory no entry covers, or a page reference that resolves to nothing. `shortfall` does not stop anything: it reports areas whose planned pages look thin for the source they hold, and authoring proceeds either way, so treat it as a prompt to plan better rather than a barrier to clear. Never invent placeholder pages to satisfy it; a page that documents nothing is worse than an area that is thin.",
+        "/openwiki/_plan.md is rendered from what is recorded, so do not write or parse it.",
       ].join(" "),
       schema: SubmitPlanInputSchema,
     },

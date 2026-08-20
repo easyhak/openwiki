@@ -69,6 +69,40 @@ describe("plan validation", () => {
     ).toEqual([]);
   });
 
+  test("the root entry owns its own files, not the whole repository", () => {
+    // The root's descendants are every rooted path. Building its prefix by
+    // concatenation gave "//", which matched nothing, so the root subtracted
+    // none of its children and was told a repository's whole file count.
+    const tree = ["/", "/svc", "/lib"];
+    const entries = [
+      {
+        disposition: "document" as const,
+        directory: "/",
+        pages: [page("openwiki/quickstart.md")],
+      },
+      {
+        disposition: "document" as const,
+        directory: "/svc",
+        pages: [page("openwiki/svc.md")],
+      },
+      {
+        disposition: "document" as const,
+        directory: "/lib",
+        pages: [page("openwiki/lib.md")],
+      },
+    ];
+    // 9000 files in the tree, all but 12 of them claimed by /svc and /lib.
+    const counts = new Map([
+      ["/", 9000],
+      ["/svc", 6000],
+      ["/lib", 2988],
+    ]);
+    const problems = validatePlanShape(entries, [], tree, counts).join(" ");
+    expect(problems).not.toContain("/ plans");
+    // The areas that do own the volume are still asked for their pages.
+    expect(problems).toContain("/svc plans 1 page(s) for 6000 source files");
+  });
+
   test("scales the page floor with documentable source, not with nesting", () => {
     const tree = ["/", "/svc", "/svc/a", "/svc/b", "/svc/c", "/svc/d"];
     const onePage = [
@@ -589,7 +623,8 @@ describe("submit_plan", () => {
     });
     expect(out.accepted).toBe(true);
     expect(out.recorded).toBe(1);
-    expect(String(out.notYetAuthorable)).toContain("covered by no entry");
+    // Named for what it costs: this class stops authoring, the shortfall class does not.
+    expect(String(out.blocking)).toContain("covered by no entry");
   });
 
   test("lists the directories a plan must cover", async () => {
