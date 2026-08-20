@@ -77,6 +77,13 @@ export function createPlanStore(): PlanStore {
  */
 export function missingEvidence(page: PlannedPage): string[] {
   const missing: string[] = [];
+  // The claim store accepts only a Markdown file below the wiki root and throws
+  // otherwise. A plan carrying "architecture/overview" therefore produced a
+  // page nothing could ever ground, and the throw surfaced from a count read
+  // deep inside the authoring pool rather than at the plan that caused it.
+  if (!/\.md$/u.test(page.path.trim())) {
+    missing.push("a .md page path");
+  }
   if (page.sources.length === 0) {
     missing.push("sources");
   }

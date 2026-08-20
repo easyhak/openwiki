@@ -174,15 +174,26 @@ describe("validatePlan", () => {
     // validation 57%, and neither is derivable from the author's own subtree.
     expect(
       missingEvidence({
-        path: "openwiki/a.md",
+        path: "openwiki/a",
         responsibility: "",
         entrypoint: "",
         sources: [],
         tests: [],
         edges: [],
       }),
-    ).toEqual(["sources", "entrypoint", "tests", "responsibility"]);
+    ).toEqual([
+      "a .md page path",
+      "sources",
+      "entrypoint",
+      "tests",
+      "responsibility",
+    ]);
     expect(missingEvidence(page("openwiki/a.md"))).toEqual([]);
+    // The path that crashed a run: the claim store throws on it, so it is
+    // refused at the plan rather than surfacing from a count read later.
+    expect(missingEvidence(page("architecture/overview"))).toEqual([
+      "a .md page path",
+    ]);
   });
 
   test("rejects an edge to a page nothing documents", () => {

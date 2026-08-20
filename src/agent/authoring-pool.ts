@@ -217,7 +217,18 @@ export function createOpenWikiAuthoringPoolMiddleware(
                 : String(outcome.reason),
           };
         }
-        return { page, claims: session ? session.inspectClaims(page).length : 0 };
+        // inspectClaims throws on a path it will not accept, and this runs
+        // inside a map over model-supplied strings: one bad path took down a
+        // whole author_pages call, and with it a run's entire authoring phase.
+        // A count that cannot be read is a count of zero, which the caller
+        // already knows how to treat.
+        let claims: number;
+        try {
+          claims = session ? session.inspectClaims(page).length : 0;
+        } catch {
+          claims = 0;
+        }
+        return { page, claims };
       });
 
       // Zero claims is a failed task, not a page needing another pass. A page
