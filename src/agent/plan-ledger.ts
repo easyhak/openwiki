@@ -308,6 +308,17 @@ export function blockingProblems(
 }
 
 /**
+ * Directories one page is expected to be able to describe.
+ *
+ * Used only to turn an area's own directory count into a page floor. See the
+ * caller for why this is the weakest constant in the gate.
+ */
+const DIRECTORIES_PER_PAGE = 16;
+
+/** Page floor for any area the decomposition rule applies to. */
+const MIN_PAGES_PER_AREA = 2;
+
+/**
  * Problems worth telling the planner about that must not stop it authoring.
  *
  * Decomposition and proportion are quality: a coarse plan writes a worse wiki,
@@ -373,15 +384,21 @@ export function advisoryProblems(
             (directory === other || directory.startsWith(`${other}/`)),
         ),
     );
-    // Proportional, with a floor of two. A single threshold let an area still
-    // owning 130 directories stop at two pages, and page count is the strongest
-    // correlate of reward while also being the least stable thing in the run:
-    // identical builds planned 64 pages and 101 pages, and the narrow runs
-    // scored worst. Tying the requirement to what an area still owns takes that
-    // swing out of the coordinator's ambition. One page per sixteen directories
-    // is a granularity claim - a page can say something useful about a dozen
-    // directories and nothing useful about a hundred - not a page target.
-    const required = Math.max(2, Math.ceil(beneath.length / 16));
+    // Proportional, with a floor of two: a flat threshold lets an area still
+    // owning a hundred directories stop at two pages, which is the collapse this
+    // is here to catch. The requirement follows what the area still owns, so it
+    // does not depend on how ambitious the planner happens to be.
+    //
+    // DIRECTORIES_PER_PAGE is a granularity judgement, not a page target - a page
+    // can say something useful about a dozen directories and nothing useful about
+    // a hundred. It is also the weakest thing here: it scales linearly with
+    // repository size, so a very large tree is asked for proportionally many
+    // pages. A structural signal - independently registered subsystems rather
+    // than a directory count - would carry the same intent without the scaling.
+    const required = Math.max(
+      MIN_PAGES_PER_AREA,
+      Math.ceil(beneath.length / DIRECTORIES_PER_PAGE),
+    );
     if (beneath.length >= 4 && entry.pages.length < required) {
       problems.push(
         `${entry.directory} plans ${entry.pages.length} page(s) for a subtree of ${beneath.length} directories and needs at least ${required}. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. Adding pages to this entry clears it immediately - naming deeper entries also works but only once they claim the subtree, which is the long way round.`,
