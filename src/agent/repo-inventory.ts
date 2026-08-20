@@ -129,9 +129,29 @@ const PLANNING_VIEWS = new WeakMap<
 
 /** Extensions counted as documentable source. */
 const SOURCE_EXTENSIONS = new Set([
-  ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".kt", ".scala",
-  ".rb", ".php", ".cs", ".swift", ".m", ".c", ".cc", ".cpp", ".h", ".hpp",
-  ".sql", ".proto", ".sh",
+  ".go",
+  ".py",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".rs",
+  ".java",
+  ".kt",
+  ".scala",
+  ".rb",
+  ".php",
+  ".cs",
+  ".swift",
+  ".m",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".h",
+  ".hpp",
+  ".sql",
+  ".proto",
+  ".sh",
 ]);
 
 /** Names that mark a file as a test, wherever it sits. */

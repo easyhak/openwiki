@@ -60,35 +60,89 @@ export interface PlannedPage {
   edges: { page: string; relationship: string }[];
 }
 
+/** One observed relationship crossing an area's boundary. */
+export interface BoundaryClaim {
+  /** Stable within the survey; canonicalized with the area's directory. */
+  id: string;
+  direction: "inbound" | "outbound" | "shared";
+  /** A recorded area directory, or `external:<name>` for an outside system. */
+  counterparty: string;
+  /** What crosses the boundary and why the relationship exists. */
+  relationship: string;
+  /** The concrete call, protocol, data, artifact, or operational mechanism. */
+  mechanism: string;
+  /** Implementation anchors proving this side of the relationship. */
+  sources: string[];
+  /** Focused validation evidence and its runnable command. */
+  tests: string[];
+  /** Why nothing covers this relationship, when `tests` is empty. */
+  testsAbsent?: string;
+}
+
+/** Evidence that one planned area was investigated for outward relationships. */
+export type AreaBoundarySurvey =
+  | {
+      status: "reviewed";
+      inspected: string[];
+      boundaries: BoundaryClaim[];
+    }
+  | {
+      status: "no_boundaries";
+      inspected: string[];
+      reason: string;
+      boundaries: [];
+    };
+
 /** One area of the repository and what the plan does about it. */
 export type PlanEntry =
-  | { disposition: "document"; directory: string; pages: PlannedPage[] }
+  | {
+      disposition: "document";
+      directory: string;
+      pages: PlannedPage[];
+      survey?: AreaBoundarySurvey;
+    }
   | {
       disposition: "covered_by";
       directory: string;
       page: string;
       reason: string;
+      survey?: AreaBoundarySurvey;
     }
   | { disposition: "exclude"; directory: string; reason: string };
 
 /**
- * One contract between areas, and the page that documents it.
+ * The documentation disposition for one or more submitted boundary claims.
  *
- * Kept apart from PlanEntry rather than added to it as a fourth disposition. An
- * entry is keyed by directory everywhere downstream - coverage of the tree, the
- * page floor, which entry claims a subtree - and a contract has no directory. A
- * directory-less entry threaded through those checks would make coverage
- * unsatisfiable, which stops authoring outright.
+ * Kept apart from PlanEntry because entries are keyed by directory for coverage
+ * and decomposition, while a relationship can join several areas or an area and
+ * an external system.
  */
-export type ContractEntry =
-  | { contract: string; participants: string[]; page: PlannedPage }
-  | { contract: string; excluded: true; reason: string };
+export type BoundaryDisposition =
+  | {
+      boundary: string;
+      claims: string[];
+      disposition: "document";
+      page: PlannedPage;
+    }
+  | {
+      boundary: string;
+      claims: string[];
+      disposition: "covered_by";
+      page: string;
+      reason: string;
+    }
+  | {
+      boundary: string;
+      claims: string[];
+      disposition: "exclude";
+      reason: string;
+    };
 
 /** The accepted plan. */
 export interface PlanLedger {
   entries: PlanEntry[];
-  /** Contract units, keyed by contract name. */
-  contracts: ContractEntry[];
+  /** Boundary units, keyed by their planner-assigned name. */
+  boundaries: BoundaryDisposition[];
   pages: Map<string, PlannedPage>;
 }
 

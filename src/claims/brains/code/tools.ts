@@ -449,10 +449,7 @@ async function runClaimsTool(
 function isRecoverableClaimsToolError(
   error: unknown,
 ): error is
-  | ClaimSessionError
-  | EvidenceResourceError
-  | EvidenceParseError
-  | z.ZodError {
+  ClaimSessionError | EvidenceResourceError | EvidenceParseError | z.ZodError {
   return (
     error instanceof ClaimSessionError ||
     error instanceof EvidenceResourceError ||
@@ -472,10 +469,7 @@ function isRecoverableClaimsToolError(
  */
 function formatRecoverableClaimsToolError(
   error:
-    | ClaimSessionError
-    | EvidenceResourceError
-    | EvidenceParseError
-    | z.ZodError,
+    ClaimSessionError | EvidenceResourceError | EvidenceParseError | z.ZodError,
 ): string {
   if (error instanceof z.ZodError) {
     return error.issues

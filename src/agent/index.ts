@@ -52,7 +52,6 @@ import {
   createOpenWikiPlanLedgerMiddleware,
   planReadiness,
 } from "./plan-ledger.js";
-import { sharedContracts } from "./concept-discovery.js";
 import { createPlanStore } from "./plan-store.js";
 import {
   createOpenWikiVerificationMiddleware,
@@ -516,14 +515,12 @@ function createOpenWikiAgentGraph(
             createOpenWikiCodeInterpreterMiddleware(),
             // Registered after it, because the REPL reads its ptc list from
             // request.tools and author_pages has to be on the request by then.
-            ...(options.command === "init" && options.outputMode === "repository"
+            ...(options.command === "init" &&
+            options.outputMode === "repository"
               ? [
                   createOpenWikiAuthoringPoolMiddleware(
                     planStore,
-                    () =>
-                      planReadiness(planStore, wikiBackend, () =>
-                        sharedContracts(options.cwd),
-                      ),
+                    () => planReadiness(planStore, wikiBackend),
                     options.claimsRuntime?.session,
                   ),
                   // Enumeration, the ledger it feeds, and the gate that reads
@@ -534,8 +531,6 @@ function createOpenWikiAgentGraph(
                     wikiBackend,
                     planStore,
                     qaGate,
-                    undefined,
-                    options.cwd,
                   ),
                 ]
               : []),
