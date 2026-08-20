@@ -181,9 +181,13 @@ function rooted(directory: string): string {
  * @returns Whether the directory falls under an entry.
  */
 function isCovered(directory: string, entries: readonly string[]): boolean {
+  // "/" covers only itself - the repository's own files, which belong to no
+  // subdirectory. Letting it cover the whole tree made the guarantee vacuous:
+  // a coordinator blocked twice on schema errors collapsed its plan to one root
+  // entry with twenty pages, passed coverage on 964 directories, and scored
+  // 0.230. A plan has to name the areas it documents.
   return entries.some(
-    (entry) =>
-      entry === "/" || directory === entry || directory.startsWith(`${entry}/`),
+    (entry) => directory === entry || directory.startsWith(`${entry}/`),
   );
 }
 
@@ -211,9 +215,6 @@ export async function findUncoveredDirectories(
   entries: readonly string[],
 ): Promise<string[]> {
   const covering = entries.map(rooted);
-  if (covering.includes("/")) {
-    return [];
-  }
   // The repository's own files belong to no subdirectory, so only an entry on
   // "/" covers them. Without this they would go unaccounted for silently.
   const uncovered: string[] = isCovered("/", covering) ? [] : ["/"];

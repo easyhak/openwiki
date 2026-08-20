@@ -277,8 +277,13 @@ describe("coverage walk", () => {
     );
   });
 
-  test("an entry on the root covers the whole repository", async () => {
-    expect(await findUncoveredDirectories(nested, ["/"])).toEqual([]);
+  test("an entry on the root covers only the root's own files", async () => {
+    // It used to cover everything, which made the guarantee vacuous: a plan of
+    // one root entry passed coverage on 964 directories and scored 0.230.
+    expect(await findUncoveredDirectories(nested, ["/"])).toEqual([
+      "/deep",
+      "/flat",
+    ]);
   });
 
   test("reports the highest uncovered directory, not its children", async () => {
@@ -420,7 +425,12 @@ describe("finalize_wiki", () => {
     const missing = wire(stubBackend([]));
     await missing.call("submit_plan", {
       entries: [
-        { disposition: "document", directory: "/", pages: [page("openwiki/a.md")] },
+        {
+          disposition: "document",
+          directory: "/",
+          pages: [page("openwiki/a.md")],
+        },
+        { disposition: "exclude", directory: "/smith-go", reason: "fixtures" },
       ],
     });
     const blocked = await missing.call("finalize_wiki");
@@ -430,7 +440,12 @@ describe("finalize_wiki", () => {
     const present = wire(stubBackend(["openwiki/a.md"]));
     await present.call("submit_plan", {
       entries: [
-        { disposition: "document", directory: "/", pages: [page("openwiki/a.md")] },
+        {
+          disposition: "document",
+          directory: "/",
+          pages: [page("openwiki/a.md")],
+        },
+        { disposition: "exclude", directory: "/smith-go", reason: "fixtures" },
       ],
     });
     expect((await present.call("finalize_wiki")).complete).toBe(true);
@@ -453,6 +468,7 @@ describe("finalize_wiki", () => {
             directory: "/",
             pages: [page("openwiki/a.md")],
           },
+          { disposition: "exclude", directory: "/smith-go", reason: "fixtures" },
         ],
       });
       return call("finalize_wiki");
