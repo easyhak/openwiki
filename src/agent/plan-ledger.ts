@@ -206,9 +206,15 @@ export function validateEntry(
   tree: readonly string[],
 ): string[] {
   const problems: string[] = [];
-  if (!tree.includes(entry.directory)) {
+  if (!tree.includes(entry.directory) && entry.disposition !== "exclude") {
     // A directory not in the tree is a typo, and a typo can leave the directory
     // it meant uncovered while looking like it was planned.
+    //
+    // An exclusion is exempt. The coverage walk runs live and to any depth while
+    // the listing is bounded and read once, so it can report a directory the
+    // listing never showed - one created during the run, or one deeper than the
+    // listing goes. Refusing the exclusion too left the plan unable to answer a
+    // requirement it was being held to, which stops authoring outright.
     problems.push(
       `${entry.directory}: not a directory list_repository_directories returned`,
     );
