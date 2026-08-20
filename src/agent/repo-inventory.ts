@@ -114,6 +114,19 @@ function isWalkable(name: string): boolean {
   return !name.startsWith(".") || name === ".github";
 }
 
+/**
+ * One planning view per backend.
+ *
+ * The counting walk visits every directory, and plan validation runs on each
+ * submit_plan call, so without this a long planning phase would re-walk the
+ * repository dozens of times. A run's tree does not change under it: the wiki
+ * directory is excluded from the walk.
+ */
+const PLANNING_VIEWS = new WeakMap<
+  ListingBackend,
+  { directories: string[]; sourceFiles: ReadonlyMap<string, number> }
+>();
+
 /** Extensions counted as documentable source. */
 const SOURCE_EXTENSIONS = new Set([
   ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".kt", ".scala",
@@ -193,16 +206,22 @@ export async function collectDirectoryTree(
  */
 export async function collectPlanningView(backend: ListingBackend): Promise<{
   directories: string[];
-  sourceFiles: Map<string, number>;
+  sourceFiles: ReadonlyMap<string, number>;
 }> {
-  const found: string[] = ["/"];
+  const cached = PLANNING_VIEWS.get(backend);
+  if (cached) {
+    return cached;
+  }
+  const directories: string[] = ["/"];
   const sourceFiles = new Map<string, number>();
-  const walk = async (directory: string, depth: number): Promise<void> => {
-    if (depth > LISTING_DEPTH) {
-      return;
-    }
+
+  // Unbounded, unlike the directory listing. A subtree total that stopped at
+  // LISTING_DEPTH would omit most of a deep repository's source and understate
+  // every area that holds any, so the count walks the whole tree while the
+  // listing stays bounded for readability.
+  const walk = async (directory: string, depth: number): Promise<number> => {
     const listed = await backend.ls(directory === "" ? "/" : directory);
-    let own = 0;
+    let total = 0;
     const children: string[] = [];
     for (const entry of listed.files ?? []) {
       const name = path.posix.basename(entry.path.replace(/\/+$/u, ""));
@@ -211,18 +230,23 @@ export async function collectPlanningView(backend: ListingBackend): Promise<{
           children.push(`${directory}/${name}`);
         }
       } else if (isDocumentableSource(name)) {
-        own += 1;
+        total += 1;
       }
     }
-    sourceFiles.set(directory === "" ? "/" : directory, own);
     for (const child of children) {
-      found.push(child);
-      await walk(child, depth + 1);
+      if (depth < LISTING_DEPTH) {
+        directories.push(child);
+      }
+      total += await walk(child, depth + 1);
     }
+    sourceFiles.set(directory === "" ? "/" : directory, total);
+    return total;
   };
   await walk("", 0);
-  found.sort();
-  return { directories: found, sourceFiles };
+  directories.sort();
+  const view = { directories, sourceFiles };
+  PLANNING_VIEWS.set(backend, view);
+  return view;
 }
 
 /**

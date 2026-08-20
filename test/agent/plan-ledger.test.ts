@@ -71,9 +71,7 @@ describe("plan validation", () => {
 
   test("scales the page floor with documentable source, not with nesting", () => {
     const tree = ["/", "/svc", "/svc/a", "/svc/b", "/svc/c", "/svc/d"];
-    // One page, so the rule applies. Entries already holding two or more pages
-    // are exempt regardless of volume; see the loop in advisoryProblems.
-    const planned = [
+    const onePage = [
       {
         disposition: "document" as const,
         directory: "/svc",
@@ -82,28 +80,48 @@ describe("plan validation", () => {
       { disposition: "exclude" as const, directory: "/", reason: "root files" },
     ];
 
-    // 40 files is under one page's worth, so only the floor of two applies.
-    const light = new Map([
-      ["/svc", 10],
-      ["/svc/a", 10],
-      ["/svc/b", 10],
-      ["/svc/c", 10],
-      ["/svc/d", 0],
-    ]);
-    expect(validatePlanShape(planned, [], tree, light).join(" ")).toContain(
-      "holding 40 source files, and needs at least 2",
-    );
+    // 40 files is under one page's worth, so one page satisfies it however many
+    // directories that source is spread across.
+    const light = new Map([["/svc", 40]]);
+    expect(validatePlanShape(onePage, [], tree, light)).toEqual([]);
 
     // The identical directory shape holding 600 files needs six.
-    const heavy = new Map([
-      ["/svc", 100],
-      ["/svc/a", 150],
-      ["/svc/b", 150],
-      ["/svc/c", 100],
-      ["/svc/d", 100],
+    const heavy = new Map([["/svc", 600]]);
+    expect(validatePlanShape(onePage, [], tree, heavy).join(" ")).toContain(
+      "plans 1 page(s) for 600 source files",
+    );
+    expect(validatePlanShape(onePage, [], tree, heavy).join(" ")).toContain(
+      "needs at least 6",
+    );
+
+    // And it keeps applying past the second page - two pages is not a discharge.
+    const twoPages = [
+      {
+        disposition: "document" as const,
+        directory: "/svc",
+        pages: [page("openwiki/svc.md"), page("openwiki/svc-two.md")],
+      },
+      { disposition: "exclude" as const, directory: "/", reason: "root files" },
+    ];
+    expect(validatePlanShape(twoPages, [], tree, heavy).join(" ")).toContain(
+      "needs at least 6",
+    );
+
+    // Volume a deeper entry claims is that entry's problem, not this one's.
+    const split = [
+      ...twoPages,
+      {
+        disposition: "document" as const,
+        directory: "/svc/a",
+        pages: [page("openwiki/svc-a.md")],
+      },
+    ];
+    const owned = new Map([
+      ["/svc", 600],
+      ["/svc/a", 550],
     ]);
-    expect(validatePlanShape(planned, [], tree, heavy).join(" ")).toContain(
-      "holding 600 source files, and needs at least 6",
+    expect(validatePlanShape(split, [], tree, owned).join(" ")).not.toContain(
+      "/svc plans",
     );
   });
 
@@ -132,10 +150,9 @@ describe("plan validation", () => {
       ],
       [],
       tree,
+      new Map([["/big", 400]]),
     ).join(" ");
-    expect(problems).toContain(
-      "plans 1 page(s) for a subtree of 4 directories holding 0 source files, and needs at least 2",
-    );
+    expect(problems).toContain("plans 1 page(s) for 400 source files");
 
     // A deeper entry claiming them is the other way to satisfy it.
     expect(
@@ -727,13 +744,11 @@ describe("blocking versus advisory", () => {
   ];
 
   test("a coarse plan is advised, not blocked", () => {
-    // A nudge that can zero a run is not a nudge. Making decomposition
-    // blocking cost a trial everything: 84 documented areas and 87 pages
-    // planned, author_pages refused twice over one under-split area, and the
-    // wiki finished with a single page on disk for 0.125.
-    expect(advisoryProblems(coarse, tree).join(" ")).toContain(
-      "needs at least 2",
-    );
+    // A nudge that can zero a run is not a nudge, so under-decomposition is
+    // reported and the run proceeds.
+    expect(
+      advisoryProblems(coarse, tree, new Map([["/big", 300]])).join(" "),
+    ).toContain("needs at least 3");
     expect(blockingProblems(coarse, [])).toEqual([]);
   });
 

@@ -313,21 +313,26 @@ export function blockingProblems(
  * Documentable source files one page is expected to be able to describe.
  *
  * The unit is files rather than directories because a directory is not a unit of
- * information: in a monorepo the median directory holds a handful of files and
- * the largest holds hundreds, so a directory count says more about nesting
- * convention than about how much there is to write. File counts are available
- * from the same listing the walk already performs, so the better unit is free.
+ * information: the median directory in a monorepo holds a handful of files and
+ * the largest holds hundreds, so a directory count describes nesting convention
+ * rather than how much there is to write. Counting is free - the walk already
+ * lists files alongside directories.
  *
- * Override per repository through `directoriesPerPage`'s replacement option when
- * a project's layout makes the default a poor fit.
+ * The value is the one judgement left in this rule. Repository structure cannot
+ * supply it: subdividing the tree to coherent units fragments to roughly a dozen
+ * files per unit, far finer than a readable wiki, so the number comes from what a
+ * page can usefully say rather than from the tree.
  */
 const SOURCE_FILES_PER_PAGE = 100;
 
-/** Page floor for any area the decomposition rule applies to. */
-const MIN_PAGES_PER_AREA = 2;
-
-/** Directories beneath an area before the decomposition rule applies at all. */
-const DECOMPOSITION_THRESHOLD = 4;
+/**
+ * Pages any documented area has.
+ *
+ * One, definitionally: an area that is documented has a page. Every page past the
+ * first is earned by volume. A floor of two asks a four-file module for two pages
+ * while asking a two-hundred-file service for the same two.
+ */
+const MIN_PAGES_PER_AREA = 1;
 
 /**
  * Problems worth telling the planner about that must not stop it authoring.
@@ -385,7 +390,7 @@ export function advisoryProblems(
   // constant chosen here.
   const claimed = entries.map((entry) => entry.directory);
   for (const entry of entries) {
-    if (entry.disposition !== "document" || entry.pages.length > 1) {
+    if (entry.disposition !== "document") {
       continue;
     }
     const beneath = tree.filter(
@@ -397,26 +402,45 @@ export function advisoryProblems(
             (directory === other || directory.startsWith(`${other}/`)),
         ),
     );
-    // Proportional, with a floor of two: a flat floor lets an area still owning
-    // a hundred directories stop at two pages, which is the collapse this is
-    // here to catch. The requirement follows the documentable source the area
-    // still owns, so it tracks how much there is to write rather than how deeply
-    // the repository happens to be nested.
+    // One page per area, plus one per SOURCE_FILES_PER_PAGE files it still owns.
+    // Volume rather than directory count, so the requirement tracks how much
+    // there is to write instead of how deeply the repository is nested, and the
+    // comparison runs at every page count: an area holding six pages' worth of
+    // source is under-documented at two pages as surely as at one.
     //
-    // Directories are still what decides whether the rule APPLIES, because an
-    // area with one directory is one subject however large its files are. Volume
-    // decides how many pages that subject needs.
-    const volume = beneath.reduce(
-      (total, directory) => total + (sourceFiles.get(directory) ?? 0),
-      sourceFiles.get(entry.directory) ?? 0,
+    // What an area "still owns" excludes anything a deeper entry claimed, so
+    // naming sub-areas is always a way to satisfy this rather than a way to
+    // multiply the requirement. MAX_BLOCKED_ATTEMPTS bounds what the rule can
+    // cost a run whose coordinator will not satisfy it.
+    // Counts are subtree totals, so this subtracts rather than sums: the area's
+    // own total, less the total of each deeper entry that claimed part of it.
+    // Only the outermost claimed descendants are subtracted, since a subtree
+    // total already includes anything nested inside it.
+    const claimedBeneath = claimed.filter(
+      (other) =>
+        other !== entry.directory &&
+        other.startsWith(`${entry.directory}/`),
+    );
+    const outermost = claimedBeneath.filter(
+      (other) =>
+        !claimedBeneath.some(
+          (nearer) => nearer !== other && other.startsWith(`${nearer}/`),
+        ),
+    );
+    const volume = Math.max(
+      0,
+      outermost.reduce(
+        (total, other) => total - (sourceFiles.get(other) ?? 0),
+        sourceFiles.get(entry.directory) ?? 0,
+      ),
     );
     const required = Math.max(
       MIN_PAGES_PER_AREA,
       Math.ceil(volume / sourceFilesPerPage),
     );
-    if (beneath.length >= DECOMPOSITION_THRESHOLD && entry.pages.length < required) {
+    if (entry.pages.length < required) {
       problems.push(
-        `${entry.directory} plans ${entry.pages.length} page(s) for a subtree of ${beneath.length} directories holding ${volume} source files, and needs at least ${required}. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. Adding pages to this entry clears it immediately - naming deeper entries also works but only once they claim the subtree, which is the long way round.`,
+        `${entry.directory} plans ${entry.pages.length} page(s) for ${volume} source files across ${beneath.length} directories it still owns, and needs at least ${required}. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. Adding pages to this entry clears it immediately - naming deeper entries also works but only once they claim the subtree, which is the long way round.`,
       );
     }
   }
