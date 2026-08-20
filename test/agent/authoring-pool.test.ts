@@ -243,9 +243,11 @@ describe("author_pages gate is bounded", () => {
         String(await tools[0].invoke({ assignments: [{ page: "a.md" }] })),
       ) as Record<string, unknown>;
 
-    expect((await call()).authored).toBe(0);
-    expect((await call()).authored).toBe(0);
-    // Third time it authors anyway, with the complaint already on the record.
+    // Six refusals: enough that complying is the path of least resistance,
+    // finite so no run ends with a complete plan and one page on disk.
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      expect((await call()).authored).toBe(0);
+    }
     expect((await call()).authored).toBe(1);
   });
 });

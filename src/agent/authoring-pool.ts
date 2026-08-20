@@ -46,8 +46,22 @@ import { dispatchSubagent, type TaskToolLike } from "./subagent-dispatch.js";
  */
 const DEFAULT_AUTHOR_CONCURRENCY = 20;
 
-/** Times author_pages refuses an incomplete plan before authoring it anyway. */
-const MAX_BLOCKED_ATTEMPTS = 2;
+/**
+ * Times author_pages refuses an incomplete plan before authoring it anyway.
+ *
+ * The gate's persistence is the breadth mechanism, not a side effect of it.
+ * Blocking without limit produced 88-page plans and the best round, 0.394.
+ * Allowing two refusals produced 76 pages and 0.370, and demoting the rule to
+ * advice entirely produced 74 pages and 0.374 - the same 0.02 given back twice,
+ * for the same reason.
+ *
+ * So the bound is generous rather than tight. Six refusals is far more than a
+ * coordinator needs once the message names the remedy - the run that deadlocked
+ * spent twelve calls only because it was told two remedies and chose the one
+ * that never terminates - while still guaranteeing no run ends the way that one
+ * did, with a complete plan and a single page on disk.
+ */
+const MAX_BLOCKED_ATTEMPTS = 6;
 
 /** Hard ceiling, so a model-supplied concurrency cannot become a fork bomb. */
 const MAX_AUTHOR_CONCURRENCY = 32;
