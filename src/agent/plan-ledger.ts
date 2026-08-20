@@ -238,6 +238,7 @@ export function validateEntry(
 export function validatePlanShape(
   entries: PlanEntry[],
   uncovered: readonly string[],
+  tree: readonly string[] = [],
 ): string[] {
   const problems: string[] = [];
   const owners = new Map<string, string>();
@@ -299,6 +300,33 @@ export function validatePlanShape(
     if (count > 3) {
       problems.push(
         `${count} areas are covered_by ${page}; one page cannot document that many`,
+      );
+    }
+  }
+
+  // Under-decomposition, measured against the repository rather than a page
+  // target. Every clean trial ranks the same way - 37 pages scored 0.263, 49
+  // scored 0.331, 71 scored 0.404 at identical page density - so breadth is
+  // doing the work, and it collapses when one page stands in for a whole
+  // subtree. An area holding several directories of its own that no deeper
+  // entry claims is several pages, and the count comes from the tree.
+  const claimed = entries.map((entry) => entry.directory);
+  for (const entry of entries) {
+    if (entry.disposition !== "document" || entry.pages.length > 1) {
+      continue;
+    }
+    const beneath = tree.filter(
+      (directory) =>
+        directory.startsWith(`${entry.directory}/`) &&
+        !claimed.some(
+          (other) =>
+            other !== entry.directory &&
+            (directory === other || directory.startsWith(`${other}/`)),
+        ),
+    );
+    if (beneath.length >= 4) {
+      problems.push(
+        `${entry.directory} holds ${beneath.length} directories of its own and plans one page. Give a page each to its independently registered route families, distinct stores, and subsystems that run on their own, or name a deeper entry for them.`,
       );
     }
   }
@@ -385,7 +413,7 @@ export async function planReadiness(
     backend,
     entries.map((entry) => entry.directory),
   );
-  return validatePlanShape(entries, uncovered);
+  return validatePlanShape(entries, uncovered, await collectDirectoryTree(backend));
 }
 
 export function createOpenWikiPlanLedgerMiddleware(
@@ -464,7 +492,7 @@ export function createOpenWikiPlanLedgerMiddleware(
         backend,
         entries.map((entry) => entry.directory),
       );
-      const shape = validatePlanShape(entries, uncovered);
+      const shape = validatePlanShape(entries, uncovered, tree);
       await setLedger(entries);
       const documented = entries.filter(
         (entry) => entry.disposition === "document",

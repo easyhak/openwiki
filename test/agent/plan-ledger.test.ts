@@ -67,6 +67,60 @@ describe("plan validation", () => {
     ).toEqual([]);
   });
 
+  test("refuses one page standing in for a whole subtree", () => {
+    // Breadth is what moves the score: 37 pages scored 0.263, 49 scored 0.331,
+    // 71 scored 0.404 at identical page density. It collapses when an area
+    // holding many directories plans a single page.
+    const tree = [
+      "/",
+      "/big",
+      "/big/a",
+      "/big/b",
+      "/big/c",
+      "/big/d",
+      "/small",
+    ];
+    const problems = validatePlanShape(
+      [
+        {
+          disposition: "document",
+          directory: "/big",
+          pages: [page("openwiki/big.md")],
+        },
+        { disposition: "exclude", directory: "/small", reason: "fixtures" },
+        { disposition: "exclude", directory: "/", reason: "root files" },
+      ],
+      [],
+      tree,
+    ).join(" ");
+    expect(problems).toContain("holds 4 directories of its own and plans one page");
+
+    // A deeper entry claiming them is the other way to satisfy it.
+    expect(
+      validatePlanShape(
+        [
+          {
+            disposition: "document",
+            directory: "/big",
+            pages: [page("openwiki/big.md")],
+          },
+          {
+            disposition: "document",
+            directory: "/big/a",
+            pages: [page("openwiki/big-a.md")],
+          },
+          { disposition: "exclude", directory: "/big/b", reason: "fixtures" },
+          { disposition: "exclude", directory: "/big/c", reason: "fixtures" },
+          { disposition: "exclude", directory: "/big/d", reason: "fixtures" },
+          { disposition: "exclude", directory: "/small", reason: "fixtures" },
+          { disposition: "exclude", directory: "/", reason: "root files" },
+        ],
+        [],
+        tree,
+      ).join(" "),
+    ).not.toContain("plans one page");
+  });
+
   test("refuses a plan that defers most of the repository", () => {
     // Every cheap legal shape got used in turn; naming an area is not
     // documenting it.
