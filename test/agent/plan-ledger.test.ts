@@ -5,6 +5,10 @@ import {
   renderPlanMarkdown,
   advisoryProblems,
   blockingProblems,
+  boundaryLedgerProblems,
+  boundaryProblems,
+  sourceBelongsToArea,
+  validateBoundaryDisposition,
   validateEntry,
   validatePlanShape,
 } from "../../src/agent/plan-ledger.ts";
@@ -369,7 +373,11 @@ describe("plan validation", () => {
     expect(
       validatePlanShape(
         [
-          { disposition: "document", directory: "/", pages: [page("shared.md")] },
+          {
+            disposition: "document",
+            directory: "/",
+            pages: [page("shared.md")],
+          },
           {
             disposition: "document",
             directory: "/smith-go",
@@ -436,11 +444,17 @@ describe("plan validation", () => {
           {
             disposition: "document",
             directory: "/",
-            pages: [page("openwiki/a.md", [
-              { page: "openwiki/ghost.md", relationship: "calls it" },
-            ])],
+            pages: [
+              page("openwiki/a.md", [
+                { page: "openwiki/ghost.md", relationship: "calls it" },
+              ]),
+            ],
           },
-          { disposition: "exclude", directory: "/smith-go", reason: "fixtures" },
+          {
+            disposition: "exclude",
+            directory: "/smith-go",
+            reason: "fixtures",
+          },
           {
             disposition: "exclude",
             directory: "/smith-backend",
@@ -510,9 +524,9 @@ describe("coverage walk", () => {
   test("an entry covers everything beneath it, at any depth", async () => {
     // /deep covers /deep/a/b/c/svc without naming it, which is why depth costs
     // the plan nothing: coverage is inherited.
-    expect(await findUncoveredDirectories(nested, ["/", "/deep", "/flat"])).toEqual(
-      [],
-    );
+    expect(
+      await findUncoveredDirectories(nested, ["/", "/deep", "/flat"]),
+    ).toEqual([]);
   });
 
   test("an entry on the root covers only the root's own files", async () => {
@@ -571,7 +585,9 @@ function stubBackend(wikiFiles: string[]) {
         });
       }
       if (clean === "/smith-go") {
-        return Promise.resolve({ files: [{ path: "smith-go/api", is_dir: true }] });
+        return Promise.resolve({
+          files: [{ path: "smith-go/api", is_dir: true }],
+        });
       }
       if (clean === "/openwiki") {
         return Promise.resolve({
@@ -659,6 +675,179 @@ describe("submit_plan", () => {
     // tests/ and node_modules/ are excluded as subjects, not as evidence.
     expect(out.tree).toEqual(["/", "/smith-go", "/smith-go/api"]);
   });
+
+  test("rejects a boundary disposition no survey supports, and keeps the entries", async () => {
+    const { call } = wire(stubBackend([]));
+    const out = await call("submit_plan", {
+      entries: [
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: [page("openwiki/go.md")],
+        },
+      ],
+      boundaries: [
+        {
+          boundary: "invented",
+          claims: ["/smith-go#nothing"],
+          disposition: "exclude",
+          reason: "No repository evidence supports this proposed relationship.",
+        },
+      ],
+    });
+    expect(out.accepted).toBe(false);
+    expect(String(out.rejectedBoundaries)).toContain(
+      "which no area survey claims",
+    );
+    // The entry in the same call is still recorded: one bad boundary is not a
+    // reason to discard the evidence beside it.
+    expect(out.recorded).toBe(1);
+  });
+
+  test("surveys and boundaries accumulate across calls until nothing is open", async () => {
+    const { call } = wire(stubBackend([]));
+    const claim = (counterparty: string, direction: string) => ({
+      status: "reviewed",
+      inspected: ["smith-go/store/pg.go"],
+      boundaries: [
+        {
+          id: "sessions-write",
+          direction,
+          counterparty,
+          relationship: "writes session rows the other side also writes",
+          mechanism: "direct INSERT into public.sessions",
+          sources: ["smith-go/store/pg.go#InsertSession"],
+          tests: ["smith-go/store/pg_test.go - make test-dir DIR=store"],
+        },
+      ],
+    });
+
+    // The first call has one end of the relationship, so the ledger blocks on
+    // the side nobody has surveyed yet rather than accepting a one-sided fact.
+    const first = await call("submit_plan", {
+      entries: [
+        {
+          disposition: "document",
+          directory: "/",
+          pages: [page("openwiki/workspace.md")],
+          survey: claim("/smith-go", "outbound"),
+        },
+      ],
+    });
+    expect(first.accepted).toBe(true);
+    expect(first.boundaryClaims).toBe(1);
+    // Reciprocity advises: one area cannot satisfy it alone, so it must not hold
+    // up claims another entry recorded correctly.
+    expect(String(first.shortfall)).toContain("records no inbound claim");
+
+    const second = await call("submit_plan", {
+      entries: [
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: [page("openwiki/go.md")],
+          survey: claim("/", "inbound"),
+        },
+      ],
+      boundaries: [
+        {
+          boundary: "session-ownership",
+          claims: ["/#sessions-write", "/smith-go#sessions-write"],
+          disposition: "exclude",
+          reason:
+            "One migration run at install writes every row in this table.",
+        },
+      ],
+    });
+    expect(second.accepted).toBe(true);
+    expect(second.recorded).toBe(2);
+    expect(second.boundariesRecorded).toBe(1);
+    expect(second.blocking).toBeUndefined();
+  });
+
+  test("a boundary page joins the plan's pages and the rendered plan", async () => {
+    const backend = stubBackend([]);
+    const { call } = wire(backend);
+    const out = await call("submit_plan", {
+      entries: [
+        {
+          disposition: "document",
+          directory: "/",
+          pages: [page("openwiki/workspace.md")],
+          survey: {
+            status: "no_boundaries",
+            inspected: ["README.md"],
+            reason: "Root holds only the workspace manifest and this README.",
+            boundaries: [],
+          },
+        },
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: [page("openwiki/go.md")],
+          survey: {
+            status: "reviewed",
+            inspected: ["smith-go/store/pg.go"],
+            boundaries: [
+              {
+                id: "stripe-webhook",
+                direction: "inbound",
+                counterparty: "external:stripe",
+                relationship: "receives payment events from the vendor",
+                mechanism: "POST /webhooks/stripe",
+                sources: ["smith-go/api/webhooks.go#Stripe"],
+                tests: [
+                  "smith-go/api/webhooks_test.go - make test-dir DIR=api",
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      boundaries: [
+        {
+          boundary: "stripe-webhook",
+          claims: ["/smith-go#stripe-webhook"],
+          disposition: "document",
+          page: {
+            path: "openwiki/boundaries/stripe.md",
+            responsibility: "smith-go owns verification; Stripe owns retries",
+            entrypoint: "smith-go/api/webhooks.go#Stripe",
+            sources: ["smith-go/api/webhooks.go#Stripe"],
+            tests: ["smith-go/api/webhooks_test.go - make test-dir DIR=api"],
+            edges: [{ page: "openwiki/go.md", relationship: "delivers into" }],
+          },
+        },
+      ],
+    });
+    expect(out.accepted).toBe(true);
+    expect(out.blocking).toBeUndefined();
+    // Boundary pages are dispatched by the same pool and checked by the same
+    // completion gate, so they are in the same page map.
+    expect(out.plannedPages).toBe(3);
+    const plan = backend.written["/openwiki/_plan.md"];
+    expect(plan).toContain("## Area boundary surveys");
+    expect(plan).toContain("## Boundary claims");
+    expect(plan).toContain("openwiki/boundaries/stripe.md");
+  });
+
+  test("list_unresolved_boundaries reads the ledger back without recording", async () => {
+    const { call } = wire(stubBackend([]));
+    await call("submit_plan", {
+      entries: [
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: [page("openwiki/go.md")],
+        },
+      ],
+    });
+    const out = await call("list_unresolved_boundaries");
+    expect(out.areasRecorded).toBe(1);
+    expect(out.areasSurveyed).toBe(0);
+    expect(String(out.problems)).toContain("has no boundary survey");
+    expect((await call("list_unresolved_boundaries")).areasRecorded).toBe(1);
+  });
 });
 
 describe("finalize_wiki", () => {
@@ -710,7 +899,11 @@ describe("finalize_wiki", () => {
             directory: "/",
             pages: [page("openwiki/a.md")],
           },
-          { disposition: "exclude", directory: "/smith-go", reason: "fixtures" },
+          {
+            disposition: "exclude",
+            directory: "/smith-go",
+            reason: "fixtures",
+          },
         ],
       });
       return call("finalize_wiki");
@@ -790,6 +983,528 @@ describe("submit_plan schema failures", () => {
     });
     expect(out.accepted).toBe(false);
     expect((out.problems as string[]).join(" ")).toContain("entries.0.pages.0");
+  });
+});
+
+describe("area boundary surveys", () => {
+  /** A survey with one claim pointing at another recorded area. */
+  const survey = (
+    counterparty: string,
+    direction: "inbound" | "outbound" | "shared" = "outbound",
+    id = "sessions-write",
+  ) => ({
+    status: "reviewed" as const,
+    inspected: ["smith-go/store/pg.go"],
+    boundaries: [
+      {
+        id,
+        direction,
+        counterparty,
+        relationship: "writes session rows the other side also writes",
+        mechanism: "direct INSERT into public.sessions",
+        sources: ["smith-go/store/pg.go#InsertSession"],
+        tests: ["smith-go/store/pg_test.go - make test-dir DIR=store"],
+      },
+    ],
+  });
+
+  /** The two ends of one internal relationship, each surveyed by its own area. */
+  const twoSided = (): Parameters<typeof boundaryLedgerProblems>[0] => [
+    {
+      disposition: "document",
+      directory: "/smith-go",
+      pages: [page("openwiki/go.md")],
+      survey: survey("/smith-backend", "outbound"),
+    },
+    {
+      disposition: "document",
+      directory: "/smith-backend",
+      pages: [page("openwiki/backend.md")],
+      survey: survey("/smith-go", "inbound"),
+    },
+  ];
+
+  const both = ["/smith-go#sessions-write", "/smith-backend#sessions-write"];
+
+  test("an area the plan keeps but never surveyed blocks", () => {
+    // The survey is the evidence the area was read for what leaves it. Without
+    // one, an area with no claims and an area nobody looked at are the same
+    // record.
+    const problems = boundaryLedgerProblems(
+      [
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: [page("openwiki/go.md")],
+        },
+      ],
+      [],
+    );
+    expect(problems.join(" ")).toContain("has no boundary survey");
+  });
+
+  test("an excluded area needs no survey", () => {
+    expect(
+      boundaryLedgerProblems(
+        [
+          {
+            disposition: "exclude",
+            directory: "/test_data",
+            reason: "fixtures",
+          },
+        ],
+        [],
+      ),
+    ).toEqual([]);
+  });
+
+  test("no_boundaries is a complete answer", () => {
+    expect(
+      boundaryLedgerProblems(
+        [
+          {
+            disposition: "document",
+            directory: "/smith-go",
+            pages: [page("openwiki/go.md")],
+            survey: {
+              status: "no_boundaries",
+              inspected: ["docs/adr/0001.md"],
+              reason:
+                "Prose only: nothing here is imported, called, or deployed.",
+              boundaries: [],
+            },
+          },
+        ],
+        [],
+      ),
+    ).toEqual([]);
+  });
+
+  test("an internal claim the counterparty never reported blocks", () => {
+    // One area seeing a boundary the other does not is the signature of a
+    // guess, and it is the failure the heuristic discovery this replaced could
+    // not distinguish from a fact.
+    const oneSided: Parameters<typeof boundaryLedgerProblems>[0] = [
+      twoSided()[0],
+      {
+        disposition: "document",
+        directory: "/smith-backend",
+        pages: [page("openwiki/backend.md")],
+        survey: {
+          status: "no_boundaries",
+          inspected: ["smith-backend/app.py"],
+          reason:
+            "Nothing here is imported, called, or deployed by another area.",
+          boundaries: [],
+        },
+      },
+    ];
+    expect(boundaryLedgerProblems(oneSided, []).join(" ")).toContain(
+      "records no inbound claim back to /smith-go",
+    );
+  });
+
+  test("shared pairs with shared, and a mismatched direction is one-sided", () => {
+    const entries = twoSided();
+    entries[0] = { ...entries[0], survey: survey("/smith-backend", "shared") };
+    expect(boundaryLedgerProblems(entries, []).join(" ")).toContain(
+      "no shared claim back",
+    );
+  });
+
+  test("an external counterparty needs no reciprocal", () => {
+    const problems = boundaryLedgerProblems(
+      [
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: [page("openwiki/go.md")],
+          survey: survey("external:stripe"),
+        },
+      ],
+      [
+        {
+          boundary: "billing",
+          claims: ["/smith-go#sessions-write"],
+          disposition: "exclude",
+          reason: "The vendor documents its own side of this webhook contract.",
+        },
+      ],
+    );
+    expect(problems).toEqual([]);
+  });
+
+  test("a counterparty no entry records, and an area claiming itself, both block", () => {
+    expect(
+      boundaryLedgerProblems(
+        [
+          {
+            disposition: "document",
+            directory: "/smith-go",
+            pages: [page("openwiki/go.md")],
+            survey: survey("/invented"),
+          },
+        ],
+        [],
+      ).join(" "),
+    ).toContain("not an area the plan documents or covers");
+    expect(
+      boundaryLedgerProblems(
+        [
+          {
+            disposition: "document",
+            directory: "/smith-go",
+            pages: [page("openwiki/go.md")],
+            survey: survey("/smith-go"),
+          },
+        ],
+        [],
+      ).join(" "),
+    ).toContain("names its own area as the counterparty");
+  });
+
+  test("a claim with no disposition blocks, and one disposition clears both sides", () => {
+    const entries = twoSided();
+    expect(boundaryLedgerProblems(entries, []).join(" ")).toContain(
+      "has no disposition",
+    );
+    expect(
+      boundaryLedgerProblems(entries, [
+        {
+          boundary: "session-ownership",
+          claims: both,
+          disposition: "exclude",
+          reason: "Both writes go through one migration that runs at install.",
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  test("the two sides of one relationship cannot sit in different boundaries", () => {
+    const problems = boundaryLedgerProblems(twoSided(), [
+      {
+        boundary: "go-side",
+        claims: ["/smith-go#sessions-write"],
+        disposition: "exclude",
+        reason: "A migration that runs once at install writes these rows.",
+      },
+      {
+        boundary: "python-side",
+        claims: ["/smith-backend#sessions-write"],
+        disposition: "exclude",
+        reason: "A migration that runs once at install writes these rows.",
+      },
+    ]);
+    expect(problems.join(" ")).toContain("different boundaries");
+  });
+
+  test("a claim disposed of twice, and a disposition of a claim nobody made", () => {
+    const twice = boundaryLedgerProblems(twoSided(), [
+      {
+        boundary: "one",
+        claims: both,
+        disposition: "exclude",
+        reason: "A migration that runs once at install writes these rows.",
+      },
+      {
+        boundary: "two",
+        claims: both,
+        disposition: "exclude",
+        reason: "A migration that runs once at install writes these rows.",
+      },
+    ]);
+    expect(twice.join(" ")).toContain("exactly one disposition");
+
+    const invented = boundaryLedgerProblems(twoSided(), [
+      {
+        boundary: "one",
+        claims: [...both, "/smith-go#invented"],
+        disposition: "exclude",
+        reason: "A migration that runs once at install writes these rows.",
+      },
+    ]);
+    expect(invented.join(" ")).toContain("which no area survey claims");
+  });
+
+  test("duplicate claim ids inside one survey block", () => {
+    const entries = twoSided();
+    const first = entries[0];
+    if (first.disposition !== "document" || !first.survey) {
+      throw new Error("fixture");
+    }
+    entries[0] = {
+      ...first,
+      survey: {
+        ...first.survey,
+        boundaries: [first.survey.boundaries[0], first.survey.boundaries[0]],
+      },
+    };
+    expect(boundaryLedgerProblems(entries, []).join(" ")).toContain(
+      "unique within its survey",
+    );
+  });
+});
+
+describe("boundary dispositions", () => {
+  const claims = new Map([
+    [
+      "/smith-go#sessions-write",
+      {
+        area: "/smith-go",
+        claim: {
+          id: "sessions-write",
+          direction: "outbound" as const,
+          counterparty: "/smith-backend",
+          relationship: "writes session rows the Python API also writes",
+          mechanism: "direct INSERT into public.sessions",
+          sources: ["smith-go/store/pg.go#InsertSession"],
+          tests: ["smith-go/store/pg_test.go - make test-dir DIR=store"],
+        },
+      },
+    ],
+  ]);
+
+  const boundaryPage = (
+    sources: string[],
+    edges = [
+      {
+        page: "openwiki/boundaries/sessions.md",
+        relationship: "documents both sides of this relationship",
+      },
+    ],
+  ) => ({
+    path: "openwiki/boundaries/sessions.md",
+    responsibility: "smith-go is authoritative; smith-backend backfills",
+    entrypoint: "smith-go/store/pg.go#InsertSession",
+    sources,
+    tests: ["smith-backend/tests/test_sessions.py - pytest"],
+    edges,
+  });
+
+  test("rejects a disposition of a claim no survey made", () => {
+    // Otherwise a plan clears its boundary report by naming relationships
+    // nothing observed, which is the guessed-contract failure with a new name.
+    const problems = validateBoundaryDisposition(
+      {
+        boundary: "sessions",
+        claims: ["/smith-go#invented"],
+        disposition: "document",
+        page: boundaryPage(["smith-go/store/pg.go#InsertSession"]),
+      },
+      claims,
+    );
+    expect(problems.join(" ")).toContain("which no area survey claims");
+  });
+
+  test("rejects a boundary page anchored on one side", () => {
+    const problems = validateBoundaryDisposition(
+      {
+        boundary: "sessions",
+        claims: ["/smith-go#sessions-write"],
+        disposition: "document",
+        page: boundaryPage([
+          "smith-go/store/pg.go#InsertSession",
+          "smith-go/model.go#Session",
+        ]),
+      },
+      claims,
+    );
+    expect(problems.join(" ")).toContain("cites no source in /smith-backend");
+  });
+
+  test("accepts a boundary page citing both participants", () => {
+    expect(
+      validateBoundaryDisposition(
+        {
+          boundary: "sessions",
+          claims: ["/smith-go#sessions-write"],
+          disposition: "document",
+          page: boundaryPage([
+            "smith-go/store/pg.go#InsertSession",
+            "smith-backend/store.py#insert_session",
+          ]),
+        },
+        claims,
+      ),
+    ).toEqual([]);
+  });
+
+  test("rejects a boundary page missing evidence authoring requires", () => {
+    const problems = validateBoundaryDisposition(
+      {
+        boundary: "sessions",
+        claims: ["/smith-go#sessions-write"],
+        disposition: "document",
+        page: boundaryPage(
+          [
+            "smith-go/store/pg.go#InsertSession",
+            "smith-backend/store.py#insert_session",
+          ],
+          [],
+        ),
+      },
+      claims,
+    );
+    expect(problems.join(" ")).toContain("missing at least one edge");
+  });
+
+  test("rejects a repeated claim reference", () => {
+    const problems = validateBoundaryDisposition(
+      {
+        boundary: "sessions",
+        claims: ["/smith-go#sessions-write", "/smith-go#sessions-write"],
+        disposition: "exclude",
+        reason: "A migration that runs once at install writes these rows.",
+      },
+      claims,
+    );
+    expect(problems.join(" ")).toContain("twice");
+  });
+
+  test("accepts an evidenced exclusion, and one page that covers it", () => {
+    expect(
+      validateBoundaryDisposition(
+        {
+          boundary: "sessions",
+          claims: ["/smith-go#sessions-write"],
+          disposition: "exclude",
+          reason: "smith-backend writes it only in a migration run at install",
+        },
+        claims,
+      ),
+    ).toEqual([]);
+    expect(
+      validateBoundaryDisposition(
+        {
+          boundary: "sessions",
+          claims: ["/smith-go#sessions-write"],
+          disposition: "covered_by",
+          page: "openwiki/data/postgres.md",
+          reason: "The Postgres page states who owns each table it holds.",
+        },
+        claims,
+      ),
+    ).toEqual([]);
+  });
+
+  test("the root area owns its own files, not the whole tree", () => {
+    // "/" as a prefix would let any source in the repository anchor the root,
+    // so a boundary page could claim both participants while citing one.
+    expect(sourceBelongsToArea("README.md", "/")).toBe(true);
+    expect(sourceBelongsToArea("smith-go/store/pg.go#Insert", "/")).toBe(false);
+    expect(sourceBelongsToArea("/smith-go/store/pg.go", "/smith-go")).toBe(
+      true,
+    );
+    expect(sourceBelongsToArea("smith-gopher/x.go", "/smith-go")).toBe(false);
+  });
+
+  test("boundary pages are checked for duplicate ownership and dangling edges", () => {
+    const entries: Parameters<typeof blockingProblems>[0] = [
+      {
+        disposition: "document",
+        directory: "/smith-go",
+        pages: [page("openwiki/boundaries/sessions.md")],
+      },
+    ];
+    const duplicate = {
+      boundary: "sessions",
+      claims: ["/smith-go#sessions-write"],
+      disposition: "document" as const,
+      page: boundaryPage([
+        "smith-go/store/pg.go#InsertSession",
+        "smith-backend/store.py#insert_session",
+      ]),
+    };
+    expect(blockingProblems(entries, [], [duplicate]).join(" ")).toContain(
+      "owned by both",
+    );
+
+    const dangling = {
+      ...duplicate,
+      page: boundaryPage(
+        ["smith-go/store/pg.go#InsertSession"],
+        [{ page: "openwiki/missing.md", relationship: "calls" }],
+      ),
+    };
+    expect(blockingProblems([], [], [dangling]).join(" ")).toContain(
+      "which no entry documents",
+    );
+  });
+});
+
+describe("boundary pairing and missing tests", () => {
+  const claim = (
+    id: string,
+    direction: "inbound" | "outbound",
+    counterparty: string,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    id,
+    direction,
+    counterparty,
+    relationship: "writes rows the other side also writes",
+    mechanism: "direct SQL insert",
+    sources: ["a/x.go#Insert"],
+    tests: ["a/x_test.go - go test ./..."],
+    ...extra,
+  });
+
+  const area = (directory: string, boundaries: unknown[]) => ({
+    disposition: "document" as const,
+    directory,
+    pages: [],
+    survey: {
+      status: "reviewed" as const,
+      inspected: [`${directory.slice(1)}/store`],
+      boundaries,
+    },
+  });
+
+  test("a second claim between one pair in one direction is matched by id", () => {
+    // Keyed by (area, counterparty, direction), the second claim overwrote the
+    // first: an unmirrored claim passed on another claim's mate, and two
+    // unrelated relationships were told to share a boundary.
+    const entries = [
+      area("/api-go", [
+        claim("sessions-write", "outbound", "/api-py"),
+        claim("runs-write", "outbound", "/api-py"),
+      ]),
+      area("/api-py", [claim("sessions-write", "inbound", "/api-go")]),
+    ];
+    const { structural, reciprocity } = boundaryProblems(entries as never, [
+      {
+        boundary: "sessions",
+        claims: ["/api-go#sessions-write", "/api-py#sessions-write"],
+        disposition: "exclude" as const,
+        reason: "already documented on the shared persistence page",
+      },
+      {
+        boundary: "runs",
+        claims: ["/api-go#runs-write"],
+        disposition: "exclude" as const,
+        reason: "already documented on the shared persistence page",
+      },
+    ]);
+    // The unmirrored one is named, and nothing asks for the two to be merged.
+    expect(reciprocity.join(" ")).toContain("/api-go#runs-write");
+    expect(structural.join(" ")).not.toContain("two sides of one relationship");
+  });
+
+  test("both sides matched by id, in one boundary, is clean", () => {
+    const entries = [
+      area("/api-go", [claim("sessions-write", "outbound", "/api-py")]),
+      area("/api-py", [claim("sessions-write", "inbound", "/api-go")]),
+    ];
+    const { structural, reciprocity } = boundaryProblems(entries as never, [
+      {
+        boundary: "sessions",
+        claims: ["/api-go#sessions-write", "/api-py#sessions-write"],
+        disposition: "exclude" as const,
+        reason: "already documented on the shared persistence page",
+      },
+    ]);
+    expect(structural).toEqual([]);
+    expect(reciprocity).toEqual([]);
   });
 });
 

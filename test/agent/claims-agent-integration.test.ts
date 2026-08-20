@@ -134,7 +134,9 @@ describe("Claims agent graph integration", () => {
           "author_pages",
         ]);
       } else {
-        expect(middlewareNames).not.toContain("OpenWikiAuthoringPoolMiddleware");
+        expect(middlewareNames).not.toContain(
+          "OpenWikiAuthoringPoolMiddleware",
+        );
       }
       expect(
         options.middleware.map((middleware) => middleware.name),

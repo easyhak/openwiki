@@ -496,7 +496,9 @@ describe("createClaimsTools", () => {
       resolver: {
         resolve: (resource: string) =>
           resource.includes("broken")
-            ? Promise.reject(new EvidenceResolutionError("resolver unavailable"))
+            ? Promise.reject(
+                new EvidenceResolutionError("resolver unavailable"),
+              )
             : Promise.resolve({
                 evidence: { resource, version: "revision:2" },
                 content: "c",
