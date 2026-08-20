@@ -5,6 +5,8 @@ import {
   renderPlanMarkdown,
   advisoryProblems,
   blockingProblems,
+  unhomedContracts,
+  validateContract,
   validateEntry,
   validatePlanShape,
 } from "../../src/agent/plan-ledger.ts";
@@ -764,6 +766,109 @@ describe("submit_plan schema failures", () => {
     });
     expect(out.accepted).toBe(false);
     expect((out.problems as string[]).join(" ")).toContain("entries.0.pages.0");
+  });
+});
+
+describe("contract units", () => {
+  const known = new Map([
+    [
+      "sessions",
+      {
+        kind: "divided-state" as const,
+        name: "sessions",
+        signal: "written by several areas",
+        areas: ["api-go", "api-py", "web"],
+        writers: ["api-go", "api-py"],
+        consumers: ["web"],
+        evidence: ["api-go/write.go", "api-py/write.py"],
+        tests: ["api-py/tests/test_sessions.py"],
+        weight: 110,
+      },
+    ],
+  ]);
+
+  const contractPage = (sources: string[]) => ({
+    path: "openwiki/contracts/sessions.md",
+    responsibility: "api-go is authoritative; api-py backfills",
+    entrypoint: "api-go/write.go#Insert",
+    sources,
+    tests: ["api-py/tests/test_sessions.py - pytest"],
+    edges: [],
+  });
+
+  test("rejects a contract the repository does not show", () => {
+    const problems = validateContract(
+      { contract: "invented", participants: ["a", "b"], page: contractPage(["a/x.go"]) },
+      known,
+    );
+    // Otherwise a plan clears its contract report by naming contracts nothing
+    // shows, which is the placeholder-page failure with a new name.
+    expect(problems.join(" ")).toContain("not a contract the repository shows");
+  });
+
+  test("rejects a contract page anchored in only one participant", () => {
+    const problems = validateContract(
+      {
+        contract: "sessions",
+        participants: ["api-go", "api-py"],
+        page: contractPage(["api-go/write.go#Insert", "api-go/model.go#Session"]),
+      },
+      known,
+    );
+    expect(problems.join(" ")).toContain("only api-go");
+  });
+
+  test("accepts a contract page citing both sides", () => {
+    expect(
+      validateContract(
+        {
+          contract: "sessions",
+          participants: ["api-go", "api-py"],
+          page: contractPage(["api-go/write.go#Insert", "api-py/write.py#insert"]),
+        },
+        known,
+      ),
+    ).toEqual([]);
+  });
+
+  test("accepts an evidenced exclusion", () => {
+    expect(
+      validateContract(
+        {
+          contract: "sessions",
+          excluded: true,
+          reason: "api-py writes it only in a migration that runs once at install",
+        },
+        known,
+      ),
+    ).toEqual([]);
+  });
+
+  test("reports the sharpest unanswered contracts, and stops reporting answered ones", () => {
+    const candidates = [...known.values()];
+    expect(unhomedContracts(candidates, []).join(" ")).toContain("sessions");
+    expect(
+      unhomedContracts(candidates, [
+        { contract: "sessions", excluded: true, reason: "x".repeat(25) },
+      ]),
+    ).toEqual([]);
+  });
+
+  test("a single-writer table with no outside reader is not reported", () => {
+    const quiet = [
+      {
+        kind: "divided-state" as const,
+        name: "private_notes",
+        signal: "written by one, read by others",
+        areas: ["api-py"],
+        writers: ["api-py"],
+        consumers: [],
+        evidence: [],
+        tests: [],
+        weight: 60,
+      },
+    ];
+    expect(unhomedContracts(quiet, [])).toEqual([]);
   });
 });
 

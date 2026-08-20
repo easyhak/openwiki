@@ -71,9 +71,24 @@ export type PlanEntry =
     }
   | { disposition: "exclude"; directory: string; reason: string };
 
+/**
+ * One contract between areas, and the page that documents it.
+ *
+ * Kept apart from PlanEntry rather than added to it as a fourth disposition. An
+ * entry is keyed by directory everywhere downstream - coverage of the tree, the
+ * page floor, which entry claims a subtree - and a contract has no directory. A
+ * directory-less entry threaded through those checks would make coverage
+ * unsatisfiable, which stops authoring outright.
+ */
+export type ContractEntry =
+  | { contract: string; participants: string[]; page: PlannedPage }
+  | { contract: string; excluded: true; reason: string };
+
 /** The accepted plan. */
 export interface PlanLedger {
   entries: PlanEntry[];
+  /** Contract units, keyed by contract name. */
+  contracts: ContractEntry[];
   pages: Map<string, PlannedPage>;
 }
 

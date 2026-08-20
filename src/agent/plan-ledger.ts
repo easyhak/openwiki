@@ -31,12 +31,17 @@ import { tool } from "@langchain/core/tools";
 import { createMiddleware } from "langchain";
 import { z } from "zod";
 import {
+  type ContractCandidate,
+  discoverSharedContracts,
+} from "./concept-discovery.js";
+import {
   collectDirectoryTree,
   collectPlanningView,
   findUncoveredDirectories,
   type ListingBackend,
 } from "./repo-inventory.js";
 import {
+  type ContractEntry,
   canonicalWikiPage,
   missingEvidence,
   type PlanEntry,
@@ -115,8 +120,23 @@ const EntrySchema = z.discriminatedUnion("disposition", [
     .strict(),
 ]);
 
+/** Shape a contract entry must have before it can be recorded. */
+const ContractInputSchema = z.union([
+  z.object({
+    contract: z.string().min(1),
+    participants: z.array(z.string().min(1)).min(2),
+    page: PlannedPageSchema,
+  }),
+  z.object({
+    contract: z.string().min(1),
+    excluded: z.literal(true),
+    reason: z.string().min(20),
+  }),
+]);
+
 const SubmitPlanSchema = z.object({
-  entries: z.array(EntrySchema).min(1),
+  entries: z.array(EntrySchema).min(1).optional(),
+  contracts: z.array(ContractInputSchema).optional(),
 });
 
 /**
@@ -133,8 +153,12 @@ const SubmitPlanSchema = z.object({
  * So the declared schema accepts any object and the strict one runs inside,
  * where a failure becomes a message naming the path that broke.
  */
+/** Contracts listed in one call, so the list informs the plan without crowding it. */
+const CONTRACTS_SHOWN = 60;
+
 const SubmitPlanInputSchema = z.object({
-  entries: z.array(z.record(z.string(), z.unknown())).min(1),
+  entries: z.array(z.record(z.string(), z.unknown())).min(1).optional(),
+  contracts: z.array(z.record(z.string(), z.unknown())).optional(),
 });
 
 /**
@@ -457,7 +481,10 @@ export function advisoryProblems(
  * @param ledger - Accepted plan.
  * @returns Markdown for `/openwiki/_plan.md`.
  */
-export function renderPlanMarkdown(entries: PlanEntry[]): string {
+export function renderPlanMarkdown(
+  entries: PlanEntry[],
+  contracts: ContractEntry[] = [],
+): string {
   const counts = { document: 0, covered_by: 0, exclude: 0 };
   for (const entry of entries) {
     counts[entry.disposition] += 1;
@@ -485,6 +512,20 @@ export function renderPlanMarkdown(entries: PlanEntry[]): string {
         (entry) =>
           `| ${entry.directory} | ${entry.disposition} | ${"reason" in entry ? entry.reason : ""} |`,
       ),
+    ...(contracts.length > 0
+      ? [
+          "",
+          `${contracts.length} contract(s) between areas.`,
+          "",
+          "| Contract | Participants | Page or reason |",
+          "| --- | --- | --- |",
+          ...contracts.map((contract) =>
+            "page" in contract
+              ? `| ${contract.contract} | ${contract.participants.join(", ")} | ${contract.page.path} |`
+              : `| ${contract.contract} | - | excluded: ${contract.reason} |`,
+          ),
+        ]
+      : []),
     "",
   ].join("\n");
 }
@@ -537,13 +578,113 @@ export async function planReadiness(
   };
 }
 
+/**
+ * Checks one contract entry against what the repository actually shows.
+ *
+ * A contract is only recordable if discovery found it, because the point of the
+ * unit is to answer evidence rather than to invent subjects: a plan could
+ * otherwise clear its contract report by naming contracts nothing shows.
+ *
+ * A documented contract must also cite both sides. A page whose sources all sit
+ * in one participant is a page about that participant, and the fact it was
+ * supposed to carry - which side owns the state - is exactly what it will omit.
+ *
+ * @param entry - Candidate contract entry.
+ * @param known - Discovered candidates, by name.
+ * @returns Problems, empty when the entry is recordable.
+ */
+export function validateContract(
+  entry: ContractEntry,
+  known: Map<string, ContractCandidate>,
+): string[] {
+  const candidate = known.get(entry.contract);
+  if (!candidate) {
+    return [
+      `${entry.contract} is not a contract the repository shows. Use a name from list_shared_contracts, or drop it.`,
+    ];
+  }
+  if ("excluded" in entry) {
+    return [];
+  }
+  const problems: string[] = [];
+  const parties = new Set(candidate.areas);
+  const cited = new Set<string>();
+  for (const source of entry.page.sources) {
+    const bare = source.replace(/^\/+/u, "").split("#")[0] ?? "";
+    for (const party of parties) {
+      if (party && (bare === party || bare.startsWith(`${party}/`))) {
+        cited.add(party);
+      }
+    }
+  }
+  if (cited.size < 2) {
+    problems.push(
+      `${entry.contract} cites ${cited.size === 0 ? "no participant" : `only ${[...cited][0]}`}. A contract page needs an anchor in at least two of ${[...parties].join(", ")}, or it documents one side and omits the contract.`,
+    );
+  }
+  if (!entry.page.responsibility.trim()) {
+    problems.push(`${entry.contract} needs a responsibility naming which side is authoritative.`);
+  }
+  return problems;
+}
+
+/**
+ * Reports contracts the repository shows and the plan has not answered.
+ *
+ * Advisory: a coordinator that ignores it writes a wiki missing those facts,
+ * which is worse than the wiki it writes today but not nothing, and refusing to
+ * author over it is how a run ends with no wiki at all.
+ *
+ * @param candidates - Everything discovery found.
+ * @param contracts - What the plan has recorded.
+ * @param limit - Most to report at once.
+ * @returns Names and participants of the sharpest unanswered contracts.
+ */
+export function unhomedContracts(
+  candidates: ContractCandidate[],
+  contracts: ContractEntry[],
+  limit = 12,
+): string[] {
+  const answered = new Set(contracts.map((entry) => entry.contract));
+  return candidates
+    .filter(
+      (candidate) =>
+        !answered.has(candidate.name) &&
+        (candidate.kind === "parallel-impl" ||
+          (candidate.writers?.length ?? 0) > 1),
+    )
+    .slice(0, limit)
+    .map(
+      (candidate) =>
+        `${candidate.name} (${candidate.signal}; ${candidate.areas.filter(Boolean).join(", ")})`,
+    );
+}
+
 export function createOpenWikiPlanLedgerMiddleware(
   backend: LedgerBackend,
   store: PlanStore,
   qaGate?: QaGate,
   wikiRoot = "/openwiki",
+  repositoryRoot?: string,
 ) {
-  const setLedger = async (entries: PlanEntry[]) => {
+  // Discovered once. It is a pure function of the tree and costs seconds, but
+  // submit_plan is called many times over a planning phase.
+  let discovered: ContractCandidate[] | null = null;
+  const contractCandidates = async (): Promise<ContractCandidate[]> => {
+    if (discovered) return discovered;
+    if (!repositoryRoot) {
+      discovered = [];
+      return discovered;
+    }
+    try {
+      discovered = await discoverSharedContracts(repositoryRoot);
+    } catch {
+      // Discovery informs the plan; it cannot be allowed to stop one.
+      discovered = [];
+    }
+    return discovered;
+  };
+  const setLedger = async (entries: PlanEntry[], contracts: ContractEntry[]) => {
     // Keyed by normalized path, because the brief renderer and the completion
     // gate both look pages up and the plan spells them inconsistently.
     const pages = new Map<string, PlannedPage>();
@@ -555,10 +696,17 @@ export function createOpenWikiPlanLedgerMiddleware(
         pages.set(canonicalWikiPage(page.path), page);
       }
     }
-    store.set({ entries, pages });
+    // Contract pages join the same map: they are dispatched by the same pool and
+    // checked by the same completion gate. Only the plan's shape differs.
+    for (const contract of contracts) {
+      if ("page" in contract) {
+        pages.set(canonicalWikiPage(contract.page.path), contract.page);
+      }
+    }
+    store.set({ entries, contracts, pages });
     const written = await backend.write(
       `${wikiRoot}/_plan.md`,
-      renderPlanMarkdown(entries),
+      renderPlanMarkdown(entries, contracts),
     );
     return { plannedPages: [...pages.keys()], planWritten: !written.error };
   };
@@ -576,6 +724,51 @@ export function createOpenWikiPlanLedgerMiddleware(
     },
   );
 
+  const listContracts = tool(
+    async ({ kind }) => {
+      const all = await contractCandidates();
+      const filtered = kind ? all.filter((one) => one.kind === kind) : all;
+      // Bounded: the whole set would crowd out the plan it is meant to inform.
+      // The totals are reported so what is omitted is visible rather than
+      // implied.
+      const shown = filtered.slice(0, CONTRACTS_SHOWN);
+      return JSON.stringify({
+        found: all.length,
+        shown: shown.length,
+        byKind: all.reduce<Record<string, number>>((counts, one) => {
+          counts[one.kind] = (counts[one.kind] ?? 0) + 1;
+          return counts;
+        }, {}),
+        contracts: shown.map((one) => ({
+          contract: one.name,
+          kind: one.kind,
+          signal: one.signal,
+          participants: one.areas.filter(Boolean),
+          ...(one.writers ? { writers: one.writers.filter(Boolean) } : {}),
+          ...(one.consumers?.length
+            ? { readOnly: one.consumers.filter(Boolean) }
+            : {}),
+          evidence: one.evidence,
+          ...(one.tests.length > 0 ? { tests: one.tests } : {}),
+        })),
+      });
+    },
+    {
+      name: "list_shared_contracts",
+      description: [
+        "List the contracts between areas that this repository shows: a table several areas write, one route implemented in two languages, an area importing another.",
+        "These are facts about two areas, so no page about one area holds them - which is why they are the facts a wiki organised by directory misses. Each one either gets a page of its own, recorded through submit_plan's `contracts`, or gets an explicit exclusion saying why it needs none.",
+        "A contract page has to cite both sides: its sources must anchor in at least two participants, or it documents one of them and omits the contract. `writers` is the sharp part - when two areas write one table, say which is authoritative and what the other is doing.",
+        "Evidence and tests come with each contract, so its page does not need to be discovered again. Pass `kind` to see more of one class.",
+      ].join(" "),
+      schema: z.object({
+        kind: z
+          .enum(["divided-state", "parallel-impl", "cross-area-import"])
+          .optional(),
+      }),
+    },
+  );
+
   const submitPlan = tool(
     async (rawInput) => {
       const loose = SubmitPlanInputSchema.parse(rawInput);
@@ -583,7 +776,13 @@ export function createOpenWikiPlanLedgerMiddleware(
       if (!parsed.success) {
         return JSON.stringify({
           accepted: false,
-          problems: describeSchemaFailure(parsed.error, loose.entries),
+          problems: describeSchemaFailure(parsed.error, loose.entries ?? []),
+        });
+      }
+      if (!parsed.data.entries?.length && !parsed.data.contracts?.length) {
+        return JSON.stringify({
+          accepted: false,
+          problems: ["Send entries, contracts, or both."],
         });
       }
 
@@ -606,7 +805,7 @@ export function createOpenWikiPlanLedgerMiddleware(
       const view = await collectPlanningView(backend);
       const tree = view.directories;
       const rejected: string[] = [];
-      for (const entry of parsed.data.entries) {
+      for (const entry of parsed.data.entries ?? []) {
         const problems = validateEntry(entry, tree);
         if (problems.length > 0) {
           rejected.push(...problems);
@@ -621,7 +820,7 @@ export function createOpenWikiPlanLedgerMiddleware(
       // other entry had edges to. Dropped pages are reported rather than kept,
       // since removing one is also legitimate.
       const dropped: string[] = [];
-      for (const entry of parsed.data.entries) {
+      for (const entry of parsed.data.entries ?? []) {
         const before = previous.get(entry.directory);
         if (!before || before.disposition !== "document") continue;
         const after = merged.get(entry.directory);
@@ -635,6 +834,24 @@ export function createOpenWikiPlanLedgerMiddleware(
         }
       }
 
+      // Contracts merge by name the same way entries merge by directory.
+      const candidates = await contractCandidates();
+      const known = new Map(candidates.map((one) => [one.name, one]));
+      const mergedContracts = new Map<string, ContractEntry>();
+      for (const contract of store.get()?.contracts ?? []) {
+        mergedContracts.set(contract.contract, contract);
+      }
+      const rejectedContracts: string[] = [];
+      for (const contract of parsed.data.contracts ?? []) {
+        const problems = validateContract(contract as ContractEntry, known);
+        if (problems.length > 0) {
+          rejectedContracts.push(...problems);
+          continue;
+        }
+        mergedContracts.set(contract.contract, contract as ContractEntry);
+      }
+      const contracts = [...mergedContracts.values()];
+
       const entries = [...merged.values()];
       const uncovered = await findUncoveredDirectories(
         backend,
@@ -642,7 +859,7 @@ export function createOpenWikiPlanLedgerMiddleware(
       );
       const blocking = blockingProblems(entries, uncovered);
       const shortfall = advisoryProblems(entries, tree, view.sourceFiles);
-      await setLedger(entries);
+      await setLedger(entries, contracts);
       const documented = entries.filter(
         (entry) => entry.disposition === "document",
       ).length;
@@ -652,6 +869,18 @@ export function createOpenWikiPlanLedgerMiddleware(
         documented,
         plannedPages: store.get()?.pages.size ?? 0,
         ...(rejected.length > 0 ? { rejectedEntries: rejected } : {}),
+        ...(candidates.length > 0
+          ? {
+              contractsRecorded: contracts.length,
+              contractsFound: candidates.length,
+            }
+          : {}),
+        ...(rejectedContracts.length > 0
+          ? { rejectedContracts }
+          : {}),
+        ...(unhomedContracts(candidates, contracts).length > 0
+          ? { contractsUnanswered: unhomedContracts(candidates, contracts) }
+          : {}),
         // Two classes, named for what they cost. `blocking` stops authoring
         // until it clears; `shortfall` does not, and telling the coordinator
         // otherwise made it spend a run satisfying a floor that would have let
@@ -757,6 +986,6 @@ export function createOpenWikiPlanLedgerMiddleware(
 
   return createMiddleware({
     name: "OpenWikiPlanLedgerMiddleware",
-    tools: [listDirectories, submitPlan, finalizeWiki],
+    tools: [listDirectories, listContracts, submitPlan, finalizeWiki],
   });
 }

@@ -526,7 +526,13 @@ function createOpenWikiAgentGraph(
                   // the ledger: breadth stops being something the workflow asks
                   // for and becomes something it cannot skip.
                   createOpenWikiVerificationMiddleware(qaGate),
-                  createOpenWikiPlanLedgerMiddleware(wikiBackend, planStore, qaGate),
+                  createOpenWikiPlanLedgerMiddleware(
+                    wikiBackend,
+                    planStore,
+                    qaGate,
+                    undefined,
+                    options.cwd,
+                  ),
                 ]
               : []),
             ...(claimsIntegration?.middleware ?? []),
