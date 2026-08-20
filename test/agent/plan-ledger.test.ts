@@ -487,3 +487,50 @@ describe("finalize_wiki", () => {
     expect((await finalize(spent)).complete).toBe(true);
   });
 });
+
+describe("submit_plan schema failures", () => {
+  test("names the path and the nesting mistake instead of throwing", async () => {
+    // The failure that froze a plan at 19 pages: an entry object nested inside
+    // another entry's pages array, three times, each answered only with
+    // "Error invoking tool submit_plan with kwargs {...}".
+    const { call } = wire(stubBackend([]));
+    const out = await call("submit_plan", {
+      entries: [
+        {
+          disposition: "document",
+          directory: "/",
+          pages: [
+            {
+              path: "openwiki/a.md",
+              responsibility: "r",
+              entrypoint: "e",
+              sources: ["s"],
+              tests: ["t"],
+              edges: [],
+            },
+            { disposition: "document", directory: "/smith-go", pages: [] },
+          ],
+        },
+      ],
+    });
+    expect(out.accepted).toBe(false);
+    const problems = (out.problems as string[]).join(" ");
+    expect(problems).toContain("entries.0.pages.1");
+    expect(problems).toContain("looks like an entry rather than a page");
+  });
+
+  test("reports a missing field by its path", async () => {
+    const { call } = wire(stubBackend([]));
+    const out = await call("submit_plan", {
+      entries: [
+        {
+          disposition: "document",
+          directory: "/",
+          pages: [{ path: "openwiki/a.md", responsibility: "r" }],
+        },
+      ],
+    });
+    expect(out.accepted).toBe(false);
+    expect((out.problems as string[]).join(" ")).toContain("entries.0.pages.0");
+  });
+});

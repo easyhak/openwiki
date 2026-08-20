@@ -119,6 +119,61 @@ const SubmitPlanSchema = z.object({
 });
 
 /**
+ * What the model is asked for, loose enough that this code sees the mistake.
+ *
+ * The strict schema was declared on the tool, so LangChain rejected a malformed
+ * payload before the handler ran and the model saw only "Error invoking tool
+ * submit_plan with kwargs {...}" - no path, no reason. A run hit it three times
+ * with the same mistake, nested an entry object inside another entry's `pages`
+ * array, and gave up: its plan froze at 19 pages while two attempts to grow it
+ * to 24 and 18 died unexplained. Every other tool here returns readable
+ * problems; this one could not, because nothing of ours executed.
+ *
+ * So the declared schema accepts any object and the strict one runs inside,
+ * where a failure becomes a message naming the path that broke.
+ */
+const SubmitPlanInputSchema = z.object({
+  entries: z.array(z.record(z.string(), z.unknown())).min(1),
+});
+
+/**
+ * Formats a schema failure as something a model can act on.
+ *
+ * @param error - The Zod failure.
+ * @param entries - The payload as supplied, for shape-specific hints.
+ * @returns Problem strings naming the path and the likely mistake.
+ */
+function describeSchemaFailure(
+  error: z.ZodError,
+  entries: Record<string, unknown>[],
+): string[] {
+  const problems = error.issues.slice(0, 12).map((issue) => {
+    const path = issue.path.length > 0 ? issue.path.join(".") : "entries";
+    return `${path}: ${issue.message}`;
+  });
+  // One mistake is worth naming outright, because two nested arrays of objects
+  // invite it and the generic message does not point at it.
+  for (const [index, entry] of entries.entries()) {
+    const pages = (entry as { pages?: unknown }).pages;
+    if (!Array.isArray(pages)) {
+      continue;
+    }
+    for (const [pageIndex, page] of pages.entries()) {
+      if (
+        page !== null &&
+        typeof page === "object" &&
+        ("disposition" in page || "directory" in page)
+      ) {
+        problems.push(
+          `entries.${index}.pages.${pageIndex} looks like an entry rather than a page: it has a disposition or directory. Move it out into its own top-level entry.`,
+        );
+      }
+    }
+  }
+  return problems;
+}
+
+/**
  * Normalizes a page path to exactly one wiki-root prefix.
  *
  * finalize_wiki compared plan paths against a walk of the wiki tree, and the
@@ -314,7 +369,15 @@ export function createOpenWikiPlanLedgerMiddleware(
 
   const submitPlan = tool(
     async (rawInput) => {
-      const input = SubmitPlanSchema.parse(rawInput);
+      const loose = SubmitPlanInputSchema.parse(rawInput);
+      const parsed = SubmitPlanSchema.safeParse(rawInput);
+      if (!parsed.success) {
+        return JSON.stringify({
+          accepted: false,
+          problems: describeSchemaFailure(parsed.error, loose.entries),
+        });
+      }
+      const input = parsed.data;
       const directories = input.entries.map((entry) => entry.directory);
       const [tree, uncovered] = await Promise.all([
         collectDirectoryTree(backend),
@@ -343,8 +406,19 @@ export function createOpenWikiPlanLedgerMiddleware(
     {
       name: "submit_plan",
       description:
-        "Submit the plan: one entry per area of the repository, each with a disposition. A documented area lists its pages, and each page carries the evidence its author will be sent: responsibility in one line, the entrypoint a reader starts from, implementation paths and symbols rather than directories, the focused tests plus the command that runs them, and an edge per relationship saying what crosses the boundary in which direction. A page missing any of those is rejected, because an author sent without them writes what it can see and omits what a reader changing the code actually needs. Beyond that: Use document with the pages it owns; covered_by naming another entry's page and why, when the area is relevant but belongs on that page; or exclude with a reason, when the area is not a documentation subject at all. Excluding is a normal outcome, not a failure - fixtures, test data, generated output, scratch and personal experiments usually deserve it, and a page manufactured for one costs an author a real subsystem needed. It is also narrow: CI and release workflows, deployment and infrastructure definitions, migrations, schedulers, data stores, and configuration a reader needs to run the system are documented or covered_by, never excluded, because a reader changing code needs to know how it is built, released, and verified. A dedicated page needs evidence of an independent responsibility, owner and entrypoint, lifecycle or state boundary, public extension surface, or meaningful validation surface; a directory existing is not on its own a reason to document it. A large area is several pages: give one each to independently registered route families, distinct data models or stores, and subsystems that run on their own, because a single page cannot state the responsibility, boundary, and validation surface of each. Choose entry directories to match how the repository is organised, nest them where a directory has significant files beside significant subdirectories, and cover every directory from list_repository_directories - a plan missing one is rejected with the paths rather than partially applied. /openwiki/_plan.md is rendered from the accepted plan, so do not write or parse it yourself.",
-      schema: SubmitPlanSchema,
+        [
+          "Submit the plan: one entry per area of the repository, each with a disposition. Every directory from list_repository_directories must be covered by some entry, and entries may nest - a directory belongs to its deepest entry.",
+          "An entry is one of three shapes, and nothing else:",
+          '  {"disposition":"document","directory":"/smith-go","pages":[<page>, ...]}',
+          '  {"disposition":"covered_by","directory":"/supabase","page":"openwiki/operations/local-stack.md","reason":"..."}',
+          '  {"disposition":"exclude","directory":"/test_data","reason":"..."}',
+          "A page inside a document entry is:",
+          '  {"path":"openwiki/services/go-api.md","responsibility":"one line","entrypoint":"smith-go/main.go#main","sources":["smith-go/api/routes.go#Register"],"tests":["smith-go/api/routes_test.go - make test-dir DIR=api"],"edges":[{"page":"openwiki/data/postgres.md","relationship":"writes runs through it"}]}',
+          "Pages carry evidence because their author is sent nothing else: an implementation anchor and symbol rather than a directory, the focused tests plus the command that runs them, and an edge per relationship saying what crosses the boundary in which direction. A page missing responsibility, entrypoint, sources, or tests is rejected. Do not put an entry object inside a page array - that is the one mistake this rejects most often.",
+          "Excluding is a normal outcome, not a failure: fixtures, test data, generated output, and scratch usually deserve it. It is also narrow - CI and release workflows, deployment definitions, migrations, schedulers, data stores, and configuration a reader needs to run the system are documented or covered_by, never excluded. A large area is several pages: give one each to independently registered route families, distinct data models or stores, and subsystems that run on their own.",
+          "/openwiki/_plan.md is rendered from the accepted plan, so do not write or parse it yourself.",
+        ].join(" "),
+      schema: SubmitPlanInputSchema,
     },
   );
 
