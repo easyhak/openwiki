@@ -1,5 +1,26 @@
 import { describe, expect, test } from "vitest";
 import { createOpenWikiAuthoringPoolMiddleware } from "../../src/agent/authoring-pool.ts";
+import { createPlanStore, type PlannedPage } from "../../src/agent/plan-store.ts";
+
+/** A plan store holding complete evidence for the given pages. */
+function stubStore(paths: string[]) {
+  const store = createPlanStore();
+  const pages = new Map<string, PlannedPage>(
+    paths.map((path) => [
+      path.replace(/^\/+/u, ""),
+      {
+        path,
+        responsibility: "Owns the thing",
+        entrypoint: "main.go#main",
+        sources: ["smith-go/main.go#main"],
+        tests: ["smith-go/main_test.go — make test"],
+        edges: [],
+      },
+    ]),
+  );
+  store.set({ entries: [], pages });
+  return store;
+}
 
 /** Claim session stub: records what each page established. */
 function stubSession(claimsByPage: Record<string, number> = {}) {
@@ -12,10 +33,20 @@ function stubSession(claimsByPage: Record<string, number> = {}) {
 /** Wires the middleware to a scripted task tool, as the agent supplies it. */
 function authorPagesWith(
   respond: (description: string) => Promise<unknown>,
-  session?: Parameters<typeof createOpenWikiAuthoringPoolMiddleware>[0],
+  session?: Parameters<typeof createOpenWikiAuthoringPoolMiddleware>[1],
   record?: { inFlight: number; peak: number },
+  planned: string[] = [
+    "openwiki/a.md",
+    "openwiki/b.md",
+    "openwiki/c.md",
+    "openwiki/slow.md",
+    ...Array.from({ length: 8 }, (_, i) => `openwiki/p${i}.md`),
+  ],
 ) {
-  const middleware = createOpenWikiAuthoringPoolMiddleware(session);
+  const middleware = createOpenWikiAuthoringPoolMiddleware(
+    stubStore(planned),
+    session,
+  );
   const seen: string[] = [];
   const task = {
     name: "task",
@@ -64,8 +95,8 @@ describe("author_pages", () => {
     );
     const out = await h.run({
       assignments: [
-        { page: "a.md", brief: "a" },
-        { page: "openwiki/b.md", brief: "b" },
+        { page: "a.md" },
+        { page: "openwiki/b.md" },
       ],
     });
     expect(out.authored).toBe(2);
@@ -80,8 +111,8 @@ describe("author_pages", () => {
     const h = authorPagesWith(ok, stubSession({ "/openwiki/a.md": 30 }));
     const out = await h.run({
       assignments: [
-        { page: "a.md", brief: "a" },
-        { page: "b.md", brief: "b" },
+        { page: "a.md" },
+        { page: "b.md" },
       ],
     });
     expect(out.authored).toBe(1);
@@ -94,14 +125,16 @@ describe("author_pages", () => {
   test("one author's failure costs its page, not the pool", async () => {
     const h = authorPagesWith(
       (d) =>
-        d === "b" ? Promise.reject(new Error("author died")) : ok(),
+        d.includes("page b.md")
+          ? Promise.reject(new Error("author died"))
+          : ok(),
       stubSession({ "/openwiki/a.md": 5, "/openwiki/c.md": 5 }),
     );
     const out = await h.run({
       assignments: [
-        { page: "a.md", brief: "a" },
-        { page: "b.md", brief: "b" },
-        { page: "c.md", brief: "c" },
+        { page: "a.md" },
+        { page: "b.md" },
+        { page: "c.md" },
       ],
     });
     expect(out.authored).toBe(2);
@@ -115,17 +148,16 @@ describe("author_pages", () => {
     const h = authorPagesWith(
       (d) =>
         new Promise((resolve) =>
-          setTimeout(() => resolve("done"), d === "slow" ? 40 : 1),
+          setTimeout(() => resolve("done"), d.includes("slow.md") ? 40 : 1),
         ),
       stubSession(),
       record,
     );
     const out = await h.run({
       assignments: [
-        { page: "slow.md", brief: "slow" },
+        { page: "slow.md" },
         ...Array.from({ length: 8 }, (_, i) => ({
           page: `p${i}.md`,
-          brief: `p${i}`,
         })),
       ],
       concurrency: 2,
@@ -141,11 +173,12 @@ describe("author_pages", () => {
     const h = authorPagesWith(ok, stubSession());
     const out = await h.run({
       assignments: [
-        { page: "a.md", brief: "first" },
-        { page: "a.md", brief: "again" },
+        { page: "a.md" },
+        { page: "a.md" },
       ],
     });
-    expect(h.seen).toEqual(["first"]);
+    expect(h.seen).toHaveLength(1);
+    expect(h.seen[0]).toContain("Write the OpenWiki page openwiki/a.md");
     expect(out.duplicatePagesIgnored).toEqual(["a.md"]);
   });
 });

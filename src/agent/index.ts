@@ -515,6 +515,7 @@ function createOpenWikiAgentGraph(
             ...(options.command === "init" && options.outputMode === "repository"
               ? [
                   createOpenWikiAuthoringPoolMiddleware(
+                    planStore,
                     options.claimsRuntime?.session,
                   ),
                   // Enumeration, the ledger it feeds, and the gate that reads

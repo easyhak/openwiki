@@ -28,6 +28,7 @@ import { createMiddleware } from "langchain";
 import type { ClaimSession } from "../claims/brains/code/session.js";
 import { z } from "zod";
 import { normalizeWikiPage } from "./plan-ledger.js";
+import { missingEvidence, renderBrief, type PlanStore } from "./plan-store.js";
 import { dispatchSubagent, type TaskToolLike } from "./subagent-dispatch.js";
 
 /**
@@ -97,16 +98,11 @@ interface AuthorOutcome {
 
 const AssignmentSchema = z.object({
   page: z.string().min(1),
-  // Named `brief` for a repair as much as for a first draft, because an author
-  // has no memory of its first pass: a repair brief is the original brief plus
-  // the defect, not the defect alone. A graded run tried `{page, defect}` first
-  // and spent a round trip on the schema error, so the description says so.
-  brief: z
+  defect: z
     .string()
     .min(1)
-    .describe(
-      "Complete self-contained instruction for this page. For a repair, the original brief plus the defect to fix - never the defect alone, since the author cannot see its previous pass.",
-    ),
+    .optional()
+    .describe("What to fix, when re-authoring an existing page."),
 });
 
 const AuthorPagesInputSchema = z.object({
@@ -119,7 +115,10 @@ const AuthorPagesInputSchema = z.object({
  *
  * @returns Middleware exposing `author_pages`, for registration in `ptc`.
  */
-export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
+export function createOpenWikiAuthoringPoolMiddleware(
+  store: PlanStore,
+  session?: ClaimSession,
+) {
   // Narrow to what dispatch needs, because the request's tool union includes
   // shapes without `invoke` and this only ever calls one tool by name.
   let taskTool: TaskToolLike | null = null;
@@ -138,7 +137,7 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
       // and the loser's evidence is silently gone, so a repeated page is a
       // caller bug worth reporting rather than a request worth honouring.
       const seen = new Set<string>();
-      const assignments: { page: string; brief: string }[] = [];
+      const assignments: { page: string; defect?: string }[] = [];
       const duplicates: string[] = [];
       for (const assignment of input.assignments) {
         if (seen.has(assignment.page)) {
@@ -153,7 +152,46 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
         input.concurrency ?? DEFAULT_AUTHOR_CONCURRENCY,
         MAX_AUTHOR_CONCURRENCY,
       );
-      const outcomes = await pool(assignments, limit, async (assignment) => {
+
+      // The brief is rendered from the plan, not supplied by the caller. A
+      // free-form brief said "inspect the relevant source directory implied by
+      // this page path" and listed every page in the wiki as a link target,
+      // which is how the critic's evidence got discarded between planning and
+      // authoring.
+      const ledger = store.get();
+      if (!ledger) {
+        throw new Error(
+          "author_pages requires an accepted plan: call submit_plan first.",
+        );
+      }
+      const dispatchable: { page: string; brief: string }[] = [];
+      const undispatchable: { page: string; error: string }[] = [];
+      for (const assignment of assignments) {
+        const key = normalizeWikiPage(assignment.page);
+        const planned = ledger.pages.get(key);
+        if (!planned) {
+          undispatchable.push({
+            page: `/${key}`,
+            error:
+              "Not in the plan. Add it through submit_plan with its evidence, or drop it.",
+          });
+          continue;
+        }
+        const missing = missingEvidence(planned);
+        if (missing.length > 0) {
+          undispatchable.push({
+            page: `/${key}`,
+            error: `Plan entry is missing ${missing.join(", ")}; an author sent without them writes only what it can see.`,
+          });
+          continue;
+        }
+        dispatchable.push({
+          page: assignment.page,
+          brief: renderBrief(planned, assignment.defect),
+        });
+      }
+
+      const outcomes = await pool(dispatchable, limit, async (assignment) => {
         const output = await dispatchSubagent(
           dispatch,
           "page-author",
@@ -168,7 +206,7 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
       // through the same seam under a different name, and a report can disagree
       // with the store while the store cannot disagree with itself.
       const results: AuthorOutcome[] = outcomes.map((outcome, index) => {
-        const page = `/${normalizeWikiPage(assignments[index].page)}`;
+        const page = `/${normalizeWikiPage(dispatchable[index].page)}`;
         if (outcome.status === "rejected") {
           return {
             page,
@@ -192,7 +230,7 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
             "Author established no claims, so it wrote nothing. Do not re-dispatch this brief unchanged: give it the specific evidence anchors it lacked, or drop the page.";
         }
       }
-      const failed = results.filter((result) => result.error);
+      const failed = [...undispatchable, ...results.filter((r) => r.error)];
 
       return JSON.stringify({
         authored: results.length - failed.length,
@@ -207,7 +245,7 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
     {
       name: "author_pages",
       description:
-        "Dispatch one page-author per assignment as a refilling pool of twenty and return each page's outcome. Pass the whole phase - initial authoring or one repair wave - in a single call: it pools, refills as each author settles, dedupes repeated pages, and reports a failed author against its own page rather than losing the pool. Each author writes its page and establishes its own Claims, so you do not call resolve_claims for these pages; the counts come back from the claim store itself. A page under pagesWithNoClaims wrote prose it never grounded and is worth re-dispatching. Each assignment is {page, brief}, where brief is the complete self-contained instruction for that page, since an author cannot read the plan or its neighbours. Never call this once per page and never run two calls covering the same page at once.",
+        "Dispatch one page-author per assignment as a refilling pool of twenty and return each page's outcome. Pass the whole phase - initial authoring or one repair wave - in a single call: it pools, refills as each author settles, dedupes repeated pages, and reports a failed author against its own page rather than losing the pool. Each author writes its page and establishes its own Claims, so you do not call resolve_claims for these pages; the counts come back from the claim store itself. A page under pagesWithNoClaims wrote prose it never grounded and is worth re-dispatching. Each assignment is just {page}, plus {defect} when re-authoring: the brief is rendered from that page's plan entry, so its evidence, tests, and relationship edges reach the author without you composing anything, and only the pages it has an edge to are named as link targets. A page absent from the plan, or missing an anchor, entrypoint, or focused test, comes back under failed rather than being dispatched with a gap. Never call this once per page and never run two calls covering the same page at once.",
       schema: AuthorPagesInputSchema,
     },
   );
