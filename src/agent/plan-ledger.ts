@@ -373,9 +373,18 @@ export function advisoryProblems(
             (directory === other || directory.startsWith(`${other}/`)),
         ),
     );
-    if (beneath.length >= 4) {
+    // Proportional, with a floor of two. A single threshold let an area still
+    // owning 130 directories stop at two pages, and page count is the strongest
+    // correlate of reward while also being the least stable thing in the run:
+    // identical builds planned 64 pages and 101 pages, and the narrow runs
+    // scored worst. Tying the requirement to what an area still owns takes that
+    // swing out of the coordinator's ambition. One page per sixteen directories
+    // is a granularity claim - a page can say something useful about a dozen
+    // directories and nothing useful about a hundred - not a page target.
+    const required = Math.max(2, Math.ceil(beneath.length / 16));
+    if (beneath.length >= 4 && entry.pages.length < required) {
       problems.push(
-        `${entry.directory} plans 1 page for a subtree of ${beneath.length} directories and needs at least 2. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. A second page on this entry clears this immediately - adding deeper entries also works but only once the whole subtree is claimed, which is the long way round.`,
+        `${entry.directory} plans ${entry.pages.length} page(s) for a subtree of ${beneath.length} directories and needs at least ${required}. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. Adding pages to this entry clears it immediately - naming deeper entries also works but only once they claim the subtree, which is the long way round.`,
       );
     }
   }
