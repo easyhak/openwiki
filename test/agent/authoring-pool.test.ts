@@ -18,7 +18,7 @@ function stubStore(paths: string[]) {
         entrypoint: "main.go#main",
         sources: ["smith-go/main.go#main"],
         tests: ["smith-go/main_test.go — make test"],
-        edges: [],
+        edges: [{ page: path, relationship: "self" }],
       },
     ]),
   );
