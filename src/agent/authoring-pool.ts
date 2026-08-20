@@ -121,6 +121,7 @@ const AuthorPagesInputSchema = z.object({
  */
 export function createOpenWikiAuthoringPoolMiddleware(
   store: PlanStore,
+  readiness?: () => Promise<string[]>,
   session?: ClaimSession,
 ) {
   // Narrow to what dispatch needs, because the request's tool union includes
@@ -168,8 +169,19 @@ export function createOpenWikiAuthoringPoolMiddleware(
       const ledger = store.get();
       if (!ledger) {
         throw new Error(
-          "author_pages requires an accepted plan: call submit_plan first.",
+          "author_pages requires a recorded plan: call submit_plan first.",
         );
+      }
+      // submit_plan accumulates and no longer rejects an incomplete plan, so
+      // completeness is required here instead - authoring from a plan that
+      // defers most of the repository is how a run wrote three pages.
+      const blocking = readiness ? await readiness() : [];
+      if (blocking.length > 0) {
+        return JSON.stringify({
+          authored: 0,
+          blocked: blocking,
+          hint: "Fix these through submit_plan, then call author_pages again. Entries accumulate, so send only what changes.",
+        });
       }
       const dispatchable: { page: string; brief: string }[] = [];
       const undispatchable: { page: string; error: string }[] = [];

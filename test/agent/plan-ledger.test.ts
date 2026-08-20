@@ -3,7 +3,8 @@ import {
   createOpenWikiPlanLedgerMiddleware,
   normalizeWikiPage,
   renderPlanMarkdown,
-  validatePlan,
+  validateEntry,
+  validatePlanShape,
 } from "../../src/agent/plan-ledger.ts";
 import {
   canonicalWikiPage,
@@ -25,10 +26,67 @@ const page = (path: string, edges: { page: string; relationship: string }[] = []
   edges,
 });
 
-describe("validatePlan", () => {
+describe("plan validation", () => {
+  test("rejects one bad entry without discarding the others", () => {
+    // Submitting whole plans meant any single error discarded forty pages of
+    // evidence, and a coordinator that hit five rejections stopped trying:
+    // one run collapsed to a root entry, another deferred 37 of 38 areas to
+    // one page and authored three.
+    expect(
+      validateEntry(
+        { disposition: "exclude", directory: "/invented", reason: "no" },
+        TREE,
+      ).join(" "),
+    ).toContain("not a directory list_repository_directories returned");
+    expect(
+      validateEntry(
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: [{ ...page("openwiki/a.md"), tests: [] }],
+        },
+        TREE,
+      ).join(" "),
+    ).toContain("missing tests");
+    expect(
+      validateEntry(
+        {
+          disposition: "document",
+          directory: "/smith-go",
+          pages: [page("openwiki/a.md")],
+        },
+        TREE,
+      ),
+    ).toEqual([]);
+  });
+
+  test("refuses a plan that defers most of the repository", () => {
+    // Every cheap legal shape got used in turn; naming an area is not
+    // documenting it.
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      disposition: "covered_by" as const,
+      directory: `/d${i}`,
+      page: "openwiki/one.md",
+      reason: "documented there",
+    }));
+    const problems = validatePlanShape(
+      [
+        {
+          disposition: "document",
+          directory: "/",
+          pages: [page("openwiki/one.md")],
+        },
+        ...many,
+      ],
+      [],
+    ).join(" ");
+    expect(problems).toContain("of 13 areas are documented");
+    expect(problems).toContain("cannot document that many");
+  });
+
   test("accepts the three dispositions as peers", () => {
     expect(
-      validatePlan(
+      validatePlanShape(
         [
           {
             disposition: "document",
@@ -47,7 +105,6 @@ describe("validatePlan", () => {
             reason: "Its API is documented on the Go page",
           },
         ],
-        TREE,
         [],
       ),
     ).toEqual([]);
@@ -57,7 +114,7 @@ describe("validatePlan", () => {
     // Not documenting a directory is a first-class answer. Making it awkward is
     // how a run ended up planning pages for /secrets.example and /test_data.
     expect(
-      validatePlan(
+      validatePlanShape(
         [
           {
             disposition: "document",
@@ -75,7 +132,6 @@ describe("validatePlan", () => {
             reason: "Generated output",
           },
         ],
-        TREE,
         [],
       ),
     ).toEqual([]);
@@ -84,7 +140,7 @@ describe("validatePlan", () => {
   test("rejects covered_by pointing at a page nothing documents", () => {
     // Otherwise covered_by is an exclusion wearing a more reassuring word.
     expect(
-      validatePlan(
+      validatePlanShape(
         [
           {
             disposition: "document",
@@ -103,14 +159,13 @@ describe("validatePlan", () => {
             reason: "fixtures",
           },
         ],
-        TREE,
         [],
       ).join(" "),
     ).toContain("which no entry documents");
   });
 
   test("rejects a directory nobody planned, and one that does not exist", () => {
-    const problems = validatePlan(
+    const problems = validatePlanShape(
       [
         {
           disposition: "document",
@@ -123,17 +178,16 @@ describe("validatePlan", () => {
           reason: "nope",
         },
       ],
-      TREE,
       ["/", "/smith-backend"],
     ).join(" ");
+    // The unknown-directory check is per entry now, so it is asserted there.
     expect(problems).toContain("covered by no entry");
-    expect(problems).toContain("was not listed: /invented");
   });
 
   test("rejects two entries owning one page, normalizing the prefix", () => {
     // The two spellings are one page, and two authors on it race on write_file.
     expect(
-      validatePlan(
+      validatePlanShape(
         [
           { disposition: "document", directory: "/", pages: [page("shared.md")] },
           {
@@ -147,7 +201,6 @@ describe("validatePlan", () => {
             reason: "fixtures",
           },
         ],
-        TREE,
         [],
       ).join(" "),
     ).toContain("owned by both");
@@ -192,7 +245,7 @@ describe("validatePlan", () => {
   test("rejects an edge to a page nothing documents", () => {
     // Otherwise the author is told to link somewhere that will never exist.
     expect(
-      validatePlan(
+      validatePlanShape(
         [
           {
             disposition: "document",
@@ -208,7 +261,6 @@ describe("validatePlan", () => {
             reason: "fixtures",
           },
         ],
-        TREE,
         [],
       ).join(" "),
     ).toContain("edge to openwiki/ghost.md, which no entry documents");
@@ -396,7 +448,9 @@ describe("submit_plan", () => {
     expect(backend.written["/openwiki/_plan.md"]).toContain("| Page |");
   });
 
-  test("refuses a plan that leaves a directory uncovered", async () => {
+  test("records a partial plan and says what still blocks authoring", async () => {
+    // Coverage is no longer a rejection: the plan is built up over calls, so an
+    // incomplete plan is one in progress rather than one thrown away.
     const { call } = wire(stubBackend([]));
     const out = await call("submit_plan", {
       entries: [
@@ -407,8 +461,9 @@ describe("submit_plan", () => {
         },
       ],
     });
-    expect(out.accepted).toBe(false);
-    expect(String(out.problems)).toContain("covered by no entry");
+    expect(out.accepted).toBe(true);
+    expect(out.recorded).toBe(1);
+    expect(String(out.notYetAuthorable)).toContain("covered by no entry");
   });
 
   test("lists the directories a plan must cover", async () => {

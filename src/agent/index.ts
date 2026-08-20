@@ -48,7 +48,10 @@ import {
 import { OpenWikiLocalShellBackend } from "./docs-only-backend.js";
 import { getSelectedModelAvailability } from "../model-availability.js";
 import { createOpenWikiAuthoringPoolMiddleware } from "./authoring-pool.js";
-import { createOpenWikiPlanLedgerMiddleware } from "./plan-ledger.js";
+import {
+  createOpenWikiPlanLedgerMiddleware,
+  planReadiness,
+} from "./plan-ledger.js";
 import { createPlanStore } from "./plan-store.js";
 import {
   createOpenWikiVerificationMiddleware,
@@ -516,6 +519,7 @@ function createOpenWikiAgentGraph(
               ? [
                   createOpenWikiAuthoringPoolMiddleware(
                     planStore,
+                    () => planReadiness(planStore, wikiBackend),
                     options.claimsRuntime?.session,
                   ),
                   // Enumeration, the ledger it feeds, and the gate that reads

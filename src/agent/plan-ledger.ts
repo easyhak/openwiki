@@ -200,22 +200,48 @@ export function normalizeWikiPage(page: string, wikiRoot = "/openwiki"): string 
  * @param targets - Every survey target's path.
  * @returns Human-readable rejections, empty when the ledger is acceptable.
  */
-export function validatePlan(
-  entries: PlanEntry[],
+export function validateEntry(
+  entry: PlanEntry,
   tree: readonly string[],
+): string[] {
+  const problems: string[] = [];
+  if (!tree.includes(entry.directory)) {
+    // A directory not in the tree is a typo, and a typo can leave the directory
+    // it meant uncovered while looking like it was planned.
+    problems.push(
+      `${entry.directory}: not a directory list_repository_directories returned`,
+    );
+  }
+  if (entry.disposition === "document") {
+    for (const page of entry.pages) {
+      const missing = missingEvidence(page);
+      if (missing.length > 0) {
+        // An author is sent nothing but this, so a page without an anchor, an
+        // entrypoint, or a focused test writes only what it can see.
+        problems.push(`${page.path}: missing ${missing.join(", ")}`);
+      }
+    }
+  }
+  return problems;
+}
+
+/**
+ * Reports why the plan as a whole is not ready to author from.
+ *
+ * Separate from per-entry validity because the plan is built up over several
+ * calls: an incomplete plan is a plan in progress, not a rejected one.
+ *
+ * @param entries - Every recorded entry.
+ * @param uncovered - Directories no entry covers.
+ * @returns Problems that must clear before authoring.
+ */
+export function validatePlanShape(
+  entries: PlanEntry[],
   uncovered: readonly string[],
 ): string[] {
   const problems: string[] = [];
   const owners = new Map<string, string>();
-
   for (const entry of entries) {
-    // A directory not in the tree is a typo, and a typo can leave the directory
-    // it meant uncovered while looking like it was planned.
-    if (!tree.includes(entry.directory)) {
-      problems.push(
-        `Entry names a directory that does not exist or was not listed: ${entry.directory}`,
-      );
-    }
     if (entry.disposition !== "document") {
       continue;
     }
@@ -223,55 +249,63 @@ export function validatePlan(
       const key = canonicalWikiPage(page.path);
       const owner = owners.get(key);
       if (owner && owner !== entry.directory) {
-        // Two entries owning one page is two authors racing on one write, with
-        // the loser's work gone.
-        problems.push(
-          `Page ${key} is owned by both ${owner} and ${entry.directory}`,
-        );
+        // Two entries owning one page is two authors racing on one write.
+        problems.push(`${key} is owned by both ${owner} and ${entry.directory}`);
       }
       owners.set(key, entry.directory);
-      // A page without an implementation anchor, an entrypoint, or a focused
-      // test cannot be authored well: the author writes what it can see, and
-      // what it cannot see is what the grader asks for.
-      const missing = missingEvidence(page);
-      if (missing.length > 0) {
-        problems.push(`Page ${page.path} is missing ${missing.join(", ")}`);
+    }
+  }
+  for (const entry of entries) {
+    if (entry.disposition === "covered_by") {
+      if (!owners.has(canonicalWikiPage(entry.page))) {
+        problems.push(
+          `${entry.directory} is covered_by ${entry.page}, which no entry documents`,
+        );
       }
     }
-  }
-
-  for (const entry of entries) {
-    if (entry.disposition !== "covered_by") {
-      continue;
-    }
-    const key = canonicalWikiPage(entry.page);
-    if (!owners.has(key)) {
-      problems.push(
-        `${entry.directory} is covered_by ${key}, which no entry documents`,
-      );
-    }
-  }
-
-  // An edge naming a page nothing documents is a link the author would be told
-  // to make and could not.
-  for (const entry of entries) {
-    if (entry.disposition !== "document") {
-      continue;
-    }
-    for (const page of entry.pages) {
-      for (const edge of page.edges) {
-        if (!owners.has(canonicalWikiPage(edge.page))) {
-          problems.push(
-            `Page ${page.path} has an edge to ${edge.page}, which no entry documents`,
-          );
+    if (entry.disposition === "document") {
+      for (const page of entry.pages) {
+        for (const edge of page.edges) {
+          if (!owners.has(canonicalWikiPage(edge.page))) {
+            problems.push(
+              `${page.path} has an edge to ${edge.page}, which no entry documents`,
+            );
+          }
         }
       }
     }
   }
 
+  // Coverage by assertion invites gaming, and each cheap legal shape was found
+  // in turn: one entry on the root covering 964 directories, then sixteen
+  // exclusions, then thirty-seven areas all covered_by one page - three pages
+  // authored, reward 0.045. Naming an area is not documenting it.
+  const documented = entries.filter(
+    (entry) => entry.disposition === "document",
+  ).length;
+  if (entries.length >= 8 && documented * 2 < entries.length) {
+    problems.push(
+      `Only ${documented} of ${entries.length} areas are documented; most areas of a repository need a page of their own.`,
+    );
+  }
+  const absorbed = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.disposition === "covered_by") {
+      const key = canonicalWikiPage(entry.page);
+      absorbed.set(key, (absorbed.get(key) ?? 0) + 1);
+    }
+  }
+  for (const [page, count] of absorbed) {
+    if (count > 3) {
+      problems.push(
+        `${count} areas are covered_by ${page}; one page cannot document that many`,
+      );
+    }
+  }
+
   if (uncovered.length > 0) {
     problems.push(
-      `${uncovered.length} director(ies) are covered by no entry: ${uncovered.slice(0, 20).join(", ")}${uncovered.length > 20 ? ", ..." : ""}`,
+      `${uncovered.length} director(ies) covered by no entry: ${uncovered.slice(0, 20).join(", ")}${uncovered.length > 20 ? ", ..." : ""}`,
     );
   }
   return problems;
@@ -328,6 +362,32 @@ interface LedgerBackend extends ListingBackend {
  * @param wikiRoot - Directory generated pages live under.
  * @returns Middleware exposing survey_repository, submit_plan, finalize_wiki.
  */
+/**
+ * Reports why the recorded plan cannot be authored from yet.
+ *
+ * Shared with the authoring pool: submit_plan accumulates and no longer rejects
+ * an incomplete plan, so the completeness requirement has to bite where pages
+ * are actually dispatched.
+ *
+ * @param store - Shared plan store.
+ * @param backend - Repository backend, for the coverage walk.
+ * @returns Blocking problems, empty when the plan is authorable.
+ */
+export async function planReadiness(
+  store: PlanStore,
+  backend: LedgerBackend,
+): Promise<string[]> {
+  const entries = store.get()?.entries ?? [];
+  if (entries.length === 0) {
+    return ["No plan recorded; call submit_plan first."];
+  }
+  const uncovered = await findUncoveredDirectories(
+    backend,
+    entries.map((entry) => entry.directory),
+  );
+  return validatePlanShape(entries, uncovered);
+}
+
 export function createOpenWikiPlanLedgerMiddleware(
   backend: LedgerBackend,
   store: PlanStore,
@@ -377,47 +437,64 @@ export function createOpenWikiPlanLedgerMiddleware(
           problems: describeSchemaFailure(parsed.error, loose.entries),
         });
       }
-      const input = parsed.data;
-      const directories = input.entries.map((entry) => entry.directory);
-      const [tree, uncovered] = await Promise.all([
-        collectDirectoryTree(backend),
-        findUncoveredDirectories(backend, directories),
-      ]);
-      const problems = validatePlan(input.entries, tree, uncovered);
-      if (problems.length > 0) {
-        return JSON.stringify({ accepted: false, problems });
+
+      // Merge, never replace. Submitting the whole plan at once meant forty
+      // pages of evidence in one call where any single error discarded all of
+      // it, and a coordinator that hit five rejections in a row stopped trying
+      // to satisfy it: one run collapsed to a single root entry, another
+      // deferred 37 of 38 areas to one page and authored three. Accumulating
+      // lets a page's evidence be paid for once and kept.
+      const merged = new Map<string, PlanEntry>();
+      for (const entry of store.get()?.entries ?? []) {
+        merged.set(entry.directory, entry);
       }
-      const { plannedPages, planWritten } = await setLedger(input.entries);
+      const tree = await collectDirectoryTree(backend);
+      const rejected: string[] = [];
+      for (const entry of parsed.data.entries) {
+        const problems = validateEntry(entry, tree);
+        if (problems.length > 0) {
+          rejected.push(...problems);
+          continue;
+        }
+        merged.set(entry.directory, entry);
+      }
+
+      const entries = [...merged.values()];
+      const uncovered = await findUncoveredDirectories(
+        backend,
+        entries.map((entry) => entry.directory),
+      );
+      const shape = validatePlanShape(entries, uncovered);
+      await setLedger(entries);
+      const documented = entries.filter(
+        (entry) => entry.disposition === "document",
+      ).length;
       return JSON.stringify({
-        accepted: true,
-        directoriesCovered: tree.length,
-        entries: input.entries.length,
-        plannedPages: plannedPages.length,
-        planWritten,
-        documented: input.entries.filter((e) => e.disposition === "document")
-          .length,
-        coveredElsewhere: input.entries.filter(
-          (e) => e.disposition === "covered_by",
-        ).length,
-        excluded: input.entries.filter((e) => e.disposition === "exclude")
-          .length,
+        accepted: rejected.length === 0,
+        recorded: entries.length,
+        documented,
+        plannedPages: store.get()?.pages.size ?? 0,
+        ...(rejected.length > 0 ? { rejectedEntries: rejected } : {}),
+        // Not a rejection: the plan is built up over several calls, and it is
+        // authoring that requires it to be complete.
+        ...(shape.length > 0 ? { notYetAuthorable: shape } : {}),
       });
     },
     {
       name: "submit_plan",
-      description:
-        [
-          "Submit the plan: one entry per area of the repository, each with a disposition. Every directory from list_repository_directories must be covered by some entry, and entries may nest - a directory belongs to its deepest entry.",
-          "An entry is one of three shapes, and nothing else:",
-          '  {"disposition":"document","directory":"/smith-go","pages":[<page>, ...]}',
-          '  {"disposition":"covered_by","directory":"/supabase","page":"openwiki/operations/local-stack.md","reason":"..."}',
-          '  {"disposition":"exclude","directory":"/test_data","reason":"..."}',
-          "A page inside a document entry is:",
-          '  {"path":"openwiki/services/go-api.md","responsibility":"one line","entrypoint":"smith-go/main.go#main","sources":["smith-go/api/routes.go#Register"],"tests":["smith-go/api/routes_test.go - make test-dir DIR=api"],"edges":[{"page":"openwiki/data/postgres.md","relationship":"writes runs through it"}]}',
-          "Pages carry evidence because their author is sent nothing else: an implementation anchor and symbol rather than a directory, the focused tests plus the command that runs them, and an edge per relationship saying what crosses the boundary in which direction. A page missing responsibility, entrypoint, sources, or tests is rejected. Do not put an entry object inside a page array - that is the one mistake this rejects most often.",
-          "Excluding is a normal outcome, not a failure: fixtures, test data, generated output, and scratch usually deserve it. It is also narrow - CI and release workflows, deployment definitions, migrations, schedulers, data stores, and configuration a reader needs to run the system are documented or covered_by, never excluded. A large area is several pages: give one each to independently registered route families, distinct data models or stores, and subsystems that run on their own.",
-          "/openwiki/_plan.md is rendered from the accepted plan, so do not write or parse it yourself.",
-        ].join(" "),
+      description: [
+        "Record part or all of the plan. Calls accumulate: an entry replaces the one for the same directory and everything else is kept, so build the plan up a few areas at a time rather than sending it whole. An entry that is individually invalid is rejected by itself and the rest are still recorded.",
+        "Every directory from list_repository_directories must be covered before you can author, and entries may nest - a directory belongs to its deepest entry. An entry on / covers only the repository's own files.",
+        "An entry is one of three shapes, and nothing else:",
+        '  {"disposition":"document","directory":"/smith-go","pages":[<page>, ...]}',
+        '  {"disposition":"covered_by","directory":"/supabase","page":"openwiki/operations/local-stack.md","reason":"..."}',
+        '  {"disposition":"exclude","directory":"/test_data","reason":"..."}',
+        "A page inside a document entry is:",
+        '  {"path":"openwiki/services/go-api.md","responsibility":"one line","entrypoint":"smith-go/main.go#main","sources":["smith-go/api/routes.go#Register"],"tests":["smith-go/api/routes_test.go - make test-dir DIR=api"],"edges":[{"page":"openwiki/data/postgres.md","relationship":"writes runs through it"}]}',
+        "Pages carry evidence because their author is sent nothing else: an implementation anchor and symbol rather than a directory, the focused tests plus the command that runs them, and an edge per relationship saying what crosses the boundary in which direction. Never put an entry object inside a pages array.",
+        "Most areas of a repository need a page of their own. Excluding suits fixtures, test data, generated output, and scratch; CI and release workflows, deployment definitions, migrations, schedulers, data stores, and configuration a reader needs are documented or covered_by. covered_by is for an area genuinely documented on another page, not a way to avoid writing one, and one page cannot absorb more than a few areas. A large area is several pages: one each for independently registered route families, distinct data models or stores, and subsystems that run on their own.",
+        "notYetAuthorable in the response lists what still has to clear before author_pages will run. /openwiki/_plan.md is rendered from what is recorded, so do not write or parse it.",
+      ].join(" "),
       schema: SubmitPlanInputSchema,
     },
   );

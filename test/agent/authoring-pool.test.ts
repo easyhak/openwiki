@@ -37,7 +37,7 @@ function stubSession(claimsByPage: Record<string, number> = {}) {
 /** Wires the middleware to a scripted task tool, as the agent supplies it. */
 function authorPagesWith(
   respond: (description: string) => Promise<unknown>,
-  session?: Parameters<typeof createOpenWikiAuthoringPoolMiddleware>[1],
+  session?: Parameters<typeof createOpenWikiAuthoringPoolMiddleware>[2],
   record?: { inFlight: number; peak: number },
   planned: string[] = [
     "openwiki/a.md",
@@ -49,6 +49,8 @@ function authorPagesWith(
 ) {
   const middleware = createOpenWikiAuthoringPoolMiddleware(
     stubStore(planned),
+    // These tests are about the pool, so the plan is taken as ready.
+    () => Promise.resolve([]),
     session,
   );
   const seen: string[] = [];
@@ -184,5 +186,33 @@ describe("author_pages", () => {
     expect(h.seen).toHaveLength(1);
     expect(h.seen[0]).toContain("Write the OpenWiki page openwiki/a.md");
     expect(out.duplicatePagesIgnored).toEqual(["a.md"]);
+  });
+});
+
+describe("author_pages readiness gate", () => {
+  test("refuses to author from a plan that is not ready", async () => {
+    // submit_plan accumulates and no longer rejects an incomplete plan, so the
+    // requirement has to bite here: one run authored three pages from a plan
+    // that deferred 37 of 38 areas to a single page.
+    const middleware = createOpenWikiAuthoringPoolMiddleware(
+      stubStore(["openwiki/a.md"]),
+      () => Promise.resolve(["12 director(ies) covered by no entry: /x"]),
+    );
+    const tools = (
+      middleware as { tools: { invoke: (i: unknown) => Promise<unknown> }[] }
+    ).tools;
+    (
+      middleware as {
+        wrapModelCall: (r: unknown, h: (r: unknown) => unknown) => unknown;
+      }
+    ).wrapModelCall(
+      { tools: [{ name: "task", invoke: () => Promise.resolve("ok") }] },
+      (r) => r,
+    );
+    const out = JSON.parse(
+      String(await tools[0].invoke({ assignments: [{ page: "a.md" }] })),
+    ) as Record<string, unknown>;
+    expect(out.authored).toBe(0);
+    expect(String(out.blocked)).toContain("covered by no entry");
   });
 });
