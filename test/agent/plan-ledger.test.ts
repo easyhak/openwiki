@@ -19,7 +19,14 @@ import { createQaGate } from "../../src/agent/wiki-verification.ts";
 const TREE = ["/", "/smith-go", "/smith-backend"];
 
 /** A page carrying every piece of evidence an author needs. */
-const page = (path: string, edges: { page: string; relationship: string }[] = []) => ({
+// The default edge points at the page itself: these tests are not about edge
+// semantics, and a self-reference always resolves against the same plan.
+const page = (
+  path: string,
+  edges: { page: string; relationship: string }[] = [
+    { page: path, relationship: "self" },
+  ],
+) => ({
   path,
   responsibility: "Owns the thing",
   entrypoint: "main.go#main",
@@ -294,7 +301,13 @@ describe("plan validation", () => {
         tests: [],
         edges: [],
       }),
-    ).toEqual(["sources", "entrypoint", "tests", "responsibility"]);
+    ).toEqual([
+      "sources",
+      "entrypoint",
+      "tests",
+      "responsibility",
+      "at least one edge - what this depends on, or what depends on it",
+    ]);
     expect(missingEvidence(page("openwiki/a.md"))).toEqual([]);
   });
 
