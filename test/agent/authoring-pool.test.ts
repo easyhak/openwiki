@@ -50,7 +50,7 @@ function authorPagesWith(
   const middleware = createOpenWikiAuthoringPoolMiddleware(
     stubStore(planned),
     // These tests are about the pool, so the plan is taken as ready.
-    () => Promise.resolve([]),
+    () => Promise.resolve({ blocking: [], shortfall: [] }),
     session,
   );
   const seen: string[] = [];
@@ -191,12 +191,16 @@ describe("author_pages", () => {
 
 describe("author_pages readiness gate", () => {
   test("refuses to author from a plan that is not ready", async () => {
-    // submit_plan accumulates and no longer rejects an incomplete plan, so the
-    // requirement has to bite here: one run authored three pages from a plan
-    // that deferred 37 of 38 areas to a single page.
+    // submit_plan accumulates and no longer rejects an incomplete plan, so a
+    // subtree no entry covers has to be caught here - it would otherwise be
+    // absent from the result with nothing downstream able to tell.
     const middleware = createOpenWikiAuthoringPoolMiddleware(
       stubStore(["openwiki/a.md"]),
-      () => Promise.resolve(["12 director(ies) covered by no entry: /x"]),
+      () =>
+        Promise.resolve({
+          blocking: ["12 director(ies) covered by no entry: /x"],
+          shortfall: [],
+        }),
     );
     const tools = (
       middleware as { tools: { invoke: (i: unknown) => Promise<unknown> }[] }
@@ -217,14 +221,51 @@ describe("author_pages readiness gate", () => {
   });
 });
 
-describe("author_pages gate is bounded", () => {
-  test("yields after two refusals rather than authoring nothing", async () => {
-    // Refusing forever is worse than a coarse wiki: two trials built 84
-    // documented areas and 87 pages, were refused twice over one under-split
-    // area, and finished with one page on disk for 0.125.
+describe("author_pages and a thin plan", () => {
+  test("authors the pages anyway and reports the shortfall", async () => {
+    // The failure this guards: with decomposition refusing here, a plan short of
+    // what the repository holds produced ten runs that wrote one page each. A
+    // refusal at authoring cannot be undone - nothing reaches disk - so the
+    // shortfall travels back with the pages and finalize_wiki answers for it.
     const middleware = createOpenWikiAuthoringPoolMiddleware(
       stubStore(["openwiki/a.md"]),
-      () => Promise.resolve(["/big plans 1 page for a subtree of 40"]),
+      () =>
+        Promise.resolve({
+          blocking: [],
+          shortfall: ["/big plans 2 page(s) for 1537 source files"],
+        }),
+      stubSession({ "/openwiki/a.md": 7 }),
+    );
+    const tools = (
+      middleware as { tools: { invoke: (i: unknown) => Promise<unknown> }[] }
+    ).tools;
+    (
+      middleware as {
+        wrapModelCall: (r: unknown, h: (r: unknown) => unknown) => unknown;
+      }
+    ).wrapModelCall(
+      { tools: [{ name: "task", invoke: () => Promise.resolve("ok") }] },
+      (r) => r,
+    );
+    const out = JSON.parse(
+      String(await tools[0].invoke({ assignments: [{ page: "a.md" }] })),
+    ) as Record<string, unknown>;
+    expect(out.authored).toBe(1);
+    expect(String(out.planShortfall)).toContain("1537 source files");
+  });
+});
+
+describe("author_pages gate is bounded", () => {
+  test("yields after two refusals rather than authoring nothing", async () => {
+    // Refusing forever is worse than an incomplete wiki, so the coverage check
+    // yields once it has been ignored MAX_BLOCKED_ATTEMPTS times.
+    const middleware = createOpenWikiAuthoringPoolMiddleware(
+      stubStore(["openwiki/a.md"]),
+      () =>
+        Promise.resolve({
+          blocking: ["12 director(ies) covered by no entry: /x"],
+          shortfall: [],
+        }),
       stubSession({ "/openwiki/a.md": 7 }),
     );
     const tools = (

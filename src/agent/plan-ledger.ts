@@ -440,7 +440,7 @@ export function advisoryProblems(
     );
     if (entry.pages.length < required) {
       problems.push(
-        `${entry.directory} plans ${entry.pages.length} page(s) for ${volume} source files across ${beneath.length} directories it still owns, and needs at least ${required}. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. Adding pages to this entry clears it immediately - naming deeper entries also works but only once they claim the subtree, which is the long way round.`,
+        `${entry.directory} plans ${entry.pages.length} page(s) for ${volume} source files across ${beneath.length} directories it still owns, and needs at least ${required}. ${beneath.length === 0 ? "It owns no subdirectories, so name more pages on this entry: one per independently registered route family, distinct store, or subsystem inside it." : "Add pages to this entry - one each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. Naming deeper entries also works, but only once they claim the subtree, which is the long way round."}`,
       );
     }
   }
@@ -513,26 +513,25 @@ interface LedgerBackend extends ListingBackend {
 export async function planReadiness(
   store: PlanStore,
   backend: LedgerBackend,
-): Promise<string[]> {
+): Promise<{ blocking: string[]; shortfall: string[] }> {
   const entries = store.get()?.entries ?? [];
   if (entries.length === 0) {
-    return ["No plan recorded; call submit_plan first."];
+    return { blocking: ["No plan recorded; call submit_plan first."], shortfall: [] };
   }
   const uncovered = await findUncoveredDirectories(
     backend,
     entries.map((entry) => entry.directory),
   );
-  // Decomposition blocks rather than advises. Advisory, a coordinator can
-  // decline to split and nothing downstream recovers the lost structure, so the
-  // rule has to hold at submission or not exist. The deadlock that once
-  // prompted demoting it was the message, not the rule: it offered two remedies
-  // and coordinators took the one that never terminates. The message now leads
-  // with the second page that clears it in one step.
+  // Two classes, and the difference is whether the wiki comes out wrong or
+  // merely coarse. A directory no entry covers is wrong: that subtree is absent
+  // from the result and nothing downstream can tell. A thin plan is coarse, and
+  // refusing to author over it is what once left a run with a complete plan and
+  // one page on disk, so it travels back as a shortfall instead.
   const view = await collectPlanningView(backend);
-  return [
-    ...blockingProblems(entries, uncovered),
-    ...advisoryProblems(entries, view.directories, view.sourceFiles),
-  ];
+  return {
+    blocking: blockingProblems(entries, uncovered),
+    shortfall: advisoryProblems(entries, view.directories, view.sourceFiles),
+  };
 }
 
 export function createOpenWikiPlanLedgerMiddleware(
@@ -595,7 +594,12 @@ export function createOpenWikiPlanLedgerMiddleware(
       for (const entry of store.get()?.entries ?? []) {
         merged.set(entry.directory, entry);
       }
-      const tree = await collectDirectoryTree(backend);
+      // The same view the authoring gate uses. Validating here without the source
+      // counts made submit_plan blind to exactly what author_pages would refuse:
+      // volume read as zero, every area passed, and the coordinator was told its
+      // plan was accepted with nothing pending.
+      const view = await collectPlanningView(backend);
+      const tree = view.directories;
       const rejected: string[] = [];
       for (const entry of parsed.data.entries) {
         const problems = validateEntry(entry, tree);
@@ -611,7 +615,7 @@ export function createOpenWikiPlanLedgerMiddleware(
         backend,
         entries.map((entry) => entry.directory),
       );
-      const shape = validatePlanShape(entries, uncovered, tree);
+      const shape = validatePlanShape(entries, uncovered, tree, view.sourceFiles);
       await setLedger(entries);
       const documented = entries.filter(
         (entry) => entry.disposition === "document",
@@ -679,6 +683,19 @@ export function createOpenWikiPlanLedgerMiddleware(
         problems.push(
           `${absent.length} planned page(s) were never written: ${absent.slice(0, 10).join(", ")}${absent.length > 10 ? ", ..." : ""}`,
         );
+      }
+      // Decomposition is checked here as well as at planning, because this is the
+      // one place the pressure is free: the pages are already on disk, so a
+      // problem costs a turn rather than the wiki. The authoring gate cannot hold
+      // it - refusing there leaves nothing written at all.
+      const view = await collectPlanningView(backend);
+      const shortfalls = advisoryProblems(
+        ledger.entries,
+        view.directories,
+        view.sourceFiles,
+      );
+      if (shortfalls.length > 0) {
+        problems.push(...shortfalls);
       }
       const qaProblem = qaGate ? qaFinalizationProblem(qaGate) : null;
       if (qaProblem) {

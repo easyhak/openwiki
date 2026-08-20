@@ -46,18 +46,18 @@ import { dispatchSubagent, type TaskToolLike } from "./subagent-dispatch.js";
  */
 const DEFAULT_AUTHOR_CONCURRENCY = 20;
 
-/**
- * Times author_pages refuses an incomplete plan before authoring it anyway.
- *
- * The bound exists so a plan the gate never accepts still produces a wiki. It
- * is deliberately generous: a coordinator that acts on the refusal message
- * clears the gate in one or two calls, so reaching this many refusals means the
- * remedy is not being applied and further refusals will not help.
- */
-const MAX_BLOCKED_ATTEMPTS = 6;
-
 /** Hard ceiling, so a model-supplied concurrency cannot become a fork bomb. */
 const MAX_AUTHOR_CONCURRENCY = 32;
+
+/**
+ * Times author_pages refuses a plan that leaves part of the repository uncovered
+ * before authoring it anyway.
+ *
+ * The bound exists so a plan the check never passes still produces a wiki. A
+ * coordinator that acts on the message clears it in a call or two, so reaching
+ * this many refusals means the remedy is not being applied.
+ */
+const MAX_BLOCKED_ATTEMPTS = 6;
 
 /**
  * Runs `worker` over `items` as a refilling pool rather than as batches.
@@ -131,7 +131,7 @@ const AuthorPagesInputSchema = z.object({
  */
 export function createOpenWikiAuthoringPoolMiddleware(
   store: PlanStore,
-  readiness?: () => Promise<string[]>,
+  readiness?: () => Promise<{ blocking: string[]; shortfall: string[] }>,
   session?: ClaimSession,
 ) {
   // Narrow to what dispatch needs, because the request's tool union includes
@@ -186,21 +186,28 @@ export function createOpenWikiAuthoringPoolMiddleware(
       // submit_plan accumulates and no longer rejects an incomplete plan, so
       // completeness is required here instead: authoring from a plan that
       // defers most of the repository produces a wiki covering none of it.
-      const blocking = readiness ? await readiness() : [];
-      if (blocking.length > 0) {
+      const state = readiness
+        ? await readiness()
+        : { blocking: [], shortfall: [] };
+      // A directory no entry covers still stops authoring, bounded: that subtree
+      // is absent from the result and no later step can tell. Under-decomposition
+      // does not, because refusing over it is what once left a run with a
+      // complete plan and one page on disk - it travels back with the pages that
+      // were written, and finalize_wiki is where it has to be answered, by which
+      // point holding the run costs a turn rather than the wiki.
+      if (state.blocking.length > 0) {
         blockedAttempts += 1;
-        // Refusing forever is worse than authoring a coarse plan, so the gate
-        // yields once it has been ignored MAX_BLOCKED_ATTEMPTS times, with what
-        // it wanted still reported in `blocked`.
         if (blockedAttempts <= MAX_BLOCKED_ATTEMPTS) {
           return JSON.stringify({
             authored: 0,
-            blocked: blocking,
+            blocked: state.blocking,
             attemptsLeft: MAX_BLOCKED_ATTEMPTS - blockedAttempts + 1,
-            hint: "Fix these through submit_plan, then call author_pages again. Entries accumulate, so send only what changes. After this the pages are authored as planned regardless, so a plan left coarse stays coarse.",
+            hint: "Fix these through submit_plan, then call author_pages again. Entries accumulate, so send only what changes.",
           });
         }
       }
+      const shortfall =
+        state.shortfall.length > 0 ? state.shortfall : undefined;
       const dispatchable: { page: string; brief: string }[] = [];
       const undispatchable: { page: string; error: string }[] = [];
       for (const assignment of assignments) {
@@ -288,6 +295,12 @@ export function createOpenWikiAuthoringPoolMiddleware(
         ),
         failed,
         ...(duplicates.length > 0 ? { duplicatePagesIgnored: duplicates } : {}),
+        ...(shortfall
+          ? {
+              planShortfall: shortfall,
+              hint: "These pages were written. The plan is still short of what the repository holds, and finalize_wiki will not pass until it is not: add the pages through submit_plan and author them.",
+            }
+          : {}),
       });
     },
     {
