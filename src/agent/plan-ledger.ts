@@ -373,13 +373,7 @@ export function advisoryProblems(
             (directory === other || directory.startsWith(`${other}/`)),
         ),
     );
-    // Three rather than four. Across nine rounds the widest wikis score best -
-    // 95 pages gave 0.448, 90 gave 0.445, 79 gave 0.439 - and within the last
-    // round its four weakest trials were its four narrowest, at 69 to 73 pages
-    // against 90 and 80 for the two best. This is the rule that decides which
-    // end a run lands on, and at four it leaves three-directory areas
-    // undecomposed.
-    if (beneath.length >= 3) {
+    if (beneath.length >= 4) {
       problems.push(
         `${entry.directory} plans 1 page for a subtree of ${beneath.length} directories and needs at least 2. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. A second page on this entry clears this immediately - adding deeper entries also works but only once the whole subtree is claimed, which is the long way round.`,
       );
