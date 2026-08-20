@@ -715,14 +715,21 @@ export async function planReadiness(
   // recorded correctly in another entry - a precondition an area cannot meet on
   // its own. Missing surveys and undisposed claims stay blocking: those an area
   // can answer by itself.
+  // The survey is answered after authoring, not before it. Asked first, it was
+  // paid for out of breadth: the same planning turns that produced eighty-eight
+  // pages produced fifty-five once each area also needed surveying, and pages are
+  // the one thing with a measured relationship to how much a wiki answers. Asked
+  // after, it also has better evidence to work from - the authored pages report
+  // what their writers found in subtrees the planner had only sampled.
+  //
+  // So nothing here blocks on it, and finalize_wiki holds the run instead: by then
+  // the pages exist, so the pressure costs a turn rather than the wiki.
   const boundary = boundaryProblems(entries, ledger?.boundaries ?? []);
   return {
-    blocking: [
-      ...blockingProblems(entries, uncovered, ledger?.boundaries ?? []),
-      ...boundary.structural,
-    ],
+    blocking: blockingProblems(entries, uncovered, ledger?.boundaries ?? []),
     shortfall: [
       ...advisoryProblems(entries, view.directories, view.sourceFiles),
+      ...boundary.structural,
       ...boundary.reciprocity,
     ],
   };
@@ -1169,12 +1176,10 @@ export function createOpenWikiPlanLedgerMiddleware(
         entries.map((entry) => entry.directory),
       );
       const boundary = boundaryProblems(entries, boundaries);
-      const blocking = [
-        ...blockingProblems(entries, uncovered, boundaries),
-        ...boundary.structural,
-      ];
+      const blocking = blockingProblems(entries, uncovered, boundaries);
       const shortfall = [
         ...advisoryProblems(entries, tree, view.sourceFiles),
+        ...boundary.structural,
         ...boundary.reciprocity,
       ];
       await setLedger(entries, boundaries);
@@ -1217,7 +1222,7 @@ export function createOpenWikiPlanLedgerMiddleware(
         "A page inside a document entry is:",
         '  {"path":"openwiki/services/go-api.md","responsibility":"one line","entrypoint":"smith-go/main.go#main","sources":["smith-go/api/routes.go#Register"],"tests":["smith-go/api/routes_test.go - make test-dir DIR=api"],"edges":[{"page":"openwiki/data/postgres.md","relationship":"writes runs through it"}]}',
         "Pages carry evidence because their author is sent nothing else: an implementation anchor and symbol rather than a directory, the focused tests plus the command that runs them, and an edge per relationship saying what crosses the boundary in which direction. Never put an entry object inside a pages array.",
-        "Every entry you keep - document or covered_by - also carries a `survey` recording what you found when you looked at that area's outward relationships. Record it in the same call as the entry, while you are already reading the area; it is not a separate pass.",
+        "Every entry you keep - document or covered_by - eventually carries a `survey` of that area's outward relationships. Send it AFTER its pages are authored, not with the entry: surveying first is paid for out of the plan's breadth, and the authored pages are better evidence than the planner's sample - their writers read the subtree. Authoring does not wait for it; finalize_wiki does.",
         "The boundary is the entry's DIRECTORY, not its service. Anything leaving that directory crosses it, including a sibling directory in the same service and a parent entry that contains it: for /smith-go/runs, /smith-go/queue is across the boundary exactly as /smith-backend is. Being internal to one service is not a reason to report nothing - most relationships worth documenting are internal to a service, which is why they have no page of their own.",
         "Answer these about the area, rather than judging whether it has a boundary. What state does it write that another area also writes or reads - a table, a key, a queue, a file, a config value. What does it read that another area produces. What calls into it, and what does it call. What does it publish or consume. What does it depend on or deploy outside this repository. `none` to one of those is a narrow statement you can support; a blanket no_boundaries usually means the questions were not asked.",
         "Something outside the repository is a claim, not a reason for having none: a provider API, a managed service, a deploy target, a scheduled runner. Its counterparty is external:<name> and it needs no reciprocal - but it is still a relationship a reader has to know about.",
@@ -1288,6 +1293,11 @@ export function createOpenWikiPlanLedgerMiddleware(
         problems.push(...shortfalls);
       }
       problems.push(...blockingProblems(ledger.entries, [], ledger.boundaries));
+      // The survey's own requirements land here rather than at authoring: every
+      // kept area surveyed, every claim disposed of. Reciprocity stays advisory
+      // wherever it is checked, since one entry cannot satisfy it alone.
+      const boundary = boundaryProblems(ledger.entries, ledger.boundaries);
+      problems.push(...boundary.structural);
       const qaProblem = qaGate ? qaFinalizationProblem(qaGate) : null;
       if (qaProblem) {
         problems.push(qaProblem);

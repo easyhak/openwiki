@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   createOpenWikiPlanLedgerMiddleware,
   normalizeWikiPage,
+  planReadiness,
   renderPlanMarkdown,
   advisoryProblems,
   blockingProblems,
@@ -304,6 +305,7 @@ describe("plan validation", () => {
             disposition: "document",
             directory: "/",
             pages: [page("openwiki/a.md")],
+            survey: surveyed,
           },
           {
             disposition: "exclude",
@@ -330,6 +332,7 @@ describe("plan validation", () => {
             disposition: "document",
             directory: "/",
             pages: [page("openwiki/a.md")],
+            survey: surveyed,
           },
           {
             disposition: "covered_by",
@@ -607,11 +610,8 @@ function wire(
   backend: ReturnType<typeof stubBackend>,
   gate?: ReturnType<typeof createQaGate>,
 ) {
-  const middleware = createOpenWikiPlanLedgerMiddleware(
-    backend,
-    createPlanStore(),
-    gate,
-  );
+  const store = createPlanStore();
+  const middleware = createOpenWikiPlanLedgerMiddleware(backend, store, gate);
   const tools = Object.fromEntries(
     (
       middleware as {
@@ -624,7 +624,7 @@ function wire(
       string,
       unknown
     >;
-  return { call };
+  return { call, store };
 }
 
 describe("submit_plan", () => {
@@ -850,6 +850,15 @@ describe("submit_plan", () => {
   });
 });
 
+// finalize_wiki now holds the run until every kept area is surveyed, so a fixture
+// that means to test something else has to be surveyed first.
+const surveyed = {
+  status: "no_boundaries" as const,
+  inspected: ["README.md"],
+  reason: "Prose only: nothing here is imported, called, deployed, or written by another area.",
+  boundaries: [] as [],
+};
+
 describe("finalize_wiki", () => {
   test("refuses while a planned page is missing, and passes once written", async () => {
     // The 0.290 trial: 62 planned pages, 33 on disk, reported success.
@@ -860,6 +869,7 @@ describe("finalize_wiki", () => {
           disposition: "document",
           directory: "/",
           pages: [page("openwiki/a.md")],
+          survey: surveyed,
         },
         { disposition: "exclude", directory: "/smith-go", reason: "fixtures" },
       ],
@@ -875,6 +885,7 @@ describe("finalize_wiki", () => {
           disposition: "document",
           directory: "/",
           pages: [page("openwiki/a.md")],
+          survey: surveyed,
         },
         { disposition: "exclude", directory: "/smith-go", reason: "fixtures" },
       ],
@@ -898,6 +909,7 @@ describe("finalize_wiki", () => {
             disposition: "document",
             directory: "/",
             pages: [page("openwiki/a.md")],
+            survey: surveyed,
           },
           {
             disposition: "exclude",
@@ -1429,6 +1441,37 @@ describe("boundary dispositions", () => {
     expect(blockingProblems([], [], [dangling]).join(" ")).toContain(
       "which no entry documents",
     );
+  });
+});
+
+describe("the survey is answered after authoring", () => {
+  test("an unsurveyed plan authors, and then cannot finish", async () => {
+    // Asked before authoring, the survey was paid for out of breadth: the same
+    // planning turns that produced eighty-eight pages produced fifty-five once
+    // every area also needed surveying. Asked after, it cannot crowd them out,
+    // and the pages it reads are better evidence than the planner's sample.
+    const backend = stubBackend([]);
+    const ledger = wire(backend);
+    await ledger.call("submit_plan", {
+      entries: [
+        {
+          disposition: "document",
+          directory: "/",
+          pages: [page("openwiki/a.md")],
+        },
+        { disposition: "exclude", directory: "/smith-go", reason: "fixtures" },
+      ],
+    });
+
+    // Authoring proceeds with no survey recorded at all.
+    const readiness = await planReadiness(ledger.store, backend);
+    expect(readiness.blocking).toEqual([]);
+    expect(String(readiness.shortfall)).toContain("no boundary survey");
+
+    // Finishing does not.
+    const done = await ledger.call("finalize_wiki");
+    expect(done.complete).toBe(false);
+    expect(String(done.problems)).toContain("no boundary survey");
   });
 });
 
