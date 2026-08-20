@@ -21,6 +21,40 @@
  * write what it can see and the page will miss exactly what the grader asks.
  */
 
+/**
+ * The one canonical form of a wiki page path.
+ *
+ * A page was spelled four ways across one run - `architecture/overview`,
+ * `architecture/overview.md`, `openwiki/architecture/overview.md`, and
+ * `/openwiki/architecture/overview.md` - and each boundary normalized
+ * differently or not at all. The costs compounded: the plan stored the
+ * extensionless form, briefs correctly told authors to write the `.md` file, all
+ * 57 authors succeeded and established their claims, and then a count read on
+ * the un-suffixed path threw and discarded the whole pool result. The
+ * coordinator re-dispatched all 57 pages, which produced 120 author calls, a
+ * second independent draft of every page, and left 56 seconds for verification
+ * inside a 20-minute budget. The run scored 0.
+ *
+ * So every boundary calls this: planning, authoring, Claims, and finalization.
+ * An extensionless path is an alias rather than an error, because the intent is
+ * unambiguous and rejecting it only sent the coordinator round the loop again.
+ *
+ * @param page - Page path in any of the spellings a model produces.
+ * @returns Absolute path of the form /openwiki/<path>.md.
+ */
+export function canonicalWikiPage(page: string, wikiRoot = "openwiki"): string {
+  const bare = page
+    .trim()
+    .replace(/\\/gu, "/")
+    .replace(/^\/+/u, "")
+    .replace(/\/+$/u, "");
+  const rooted = bare.startsWith(`${wikiRoot}/`)
+    ? bare.slice(wikiRoot.length + 1)
+    : bare;
+  const withExtension = /\.md$/iu.test(rooted) ? rooted : `${rooted}.md`;
+  return `/${wikiRoot}/${withExtension}`;
+}
+
 /** One page the plan commits to, with the evidence its author needs. */
 export interface PlannedPage {
   path: string;
@@ -77,13 +111,6 @@ export function createPlanStore(): PlanStore {
  */
 export function missingEvidence(page: PlannedPage): string[] {
   const missing: string[] = [];
-  // The claim store accepts only a Markdown file below the wiki root and throws
-  // otherwise. A plan carrying "architecture/overview" therefore produced a
-  // page nothing could ever ground, and the throw surfaced from a count read
-  // deep inside the authoring pool rather than at the plan that caused it.
-  if (!/\.md$/u.test(page.path.trim())) {
-    missing.push("a .md page path");
-  }
   if (page.sources.length === 0) {
     missing.push("sources");
   }

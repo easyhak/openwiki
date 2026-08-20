@@ -36,6 +36,7 @@ import {
   type ListingBackend,
 } from "./repo-inventory.js";
 import {
+  canonicalWikiPage,
   missingEvidence,
   type PlanEntry,
   type PlannedPage,
@@ -148,7 +149,6 @@ export function validatePlan(
   entries: PlanEntry[],
   tree: readonly string[],
   uncovered: readonly string[],
-  wikiRoot = "/openwiki",
 ): string[] {
   const problems: string[] = [];
   const owners = new Map<string, string>();
@@ -165,7 +165,7 @@ export function validatePlan(
       continue;
     }
     for (const page of entry.pages) {
-      const key = normalizeWikiPage(page.path, wikiRoot);
+      const key = canonicalWikiPage(page.path);
       const owner = owners.get(key);
       if (owner && owner !== entry.directory) {
         // Two entries owning one page is two authors racing on one write, with
@@ -189,7 +189,7 @@ export function validatePlan(
     if (entry.disposition !== "covered_by") {
       continue;
     }
-    const key = normalizeWikiPage(entry.page, wikiRoot);
+    const key = canonicalWikiPage(entry.page);
     if (!owners.has(key)) {
       problems.push(
         `${entry.directory} is covered_by ${key}, which no entry documents`,
@@ -205,7 +205,7 @@ export function validatePlan(
     }
     for (const page of entry.pages) {
       for (const edge of page.edges) {
-        if (!owners.has(normalizeWikiPage(edge.page, wikiRoot))) {
+        if (!owners.has(canonicalWikiPage(edge.page))) {
           problems.push(
             `Page ${page.path} has an edge to ${edge.page}, which no entry documents`,
           );
@@ -288,7 +288,7 @@ export function createOpenWikiPlanLedgerMiddleware(
         continue;
       }
       for (const page of entry.pages) {
-        pages.set(normalizeWikiPage(page.path, wikiRoot), page);
+        pages.set(canonicalWikiPage(page.path), page);
       }
     }
     store.set({ entries, pages });
@@ -320,7 +320,7 @@ export function createOpenWikiPlanLedgerMiddleware(
         collectDirectoryTree(backend),
         findUncoveredDirectories(backend, directories),
       ]);
-      const problems = validatePlan(input.entries, tree, uncovered, wikiRoot);
+      const problems = validatePlan(input.entries, tree, uncovered);
       if (problems.length > 0) {
         return JSON.stringify({ accepted: false, problems });
       }
@@ -368,7 +368,7 @@ export function createOpenWikiPlanLedgerMiddleware(
           if (file.is_dir) {
             await collect(file.path, depth + 1);
           } else if (file.path.endsWith(".md")) {
-            existing.add(normalizeWikiPage(file.path, wikiRoot));
+            existing.add(canonicalWikiPage(file.path));
           }
         }
       };

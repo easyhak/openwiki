@@ -5,7 +5,11 @@ import {
   renderPlanMarkdown,
   validatePlan,
 } from "../../src/agent/plan-ledger.ts";
-import { createPlanStore, missingEvidence } from "../../src/agent/plan-store.ts";
+import {
+  canonicalWikiPage,
+  createPlanStore,
+  missingEvidence,
+} from "../../src/agent/plan-store.ts";
 import { findUncoveredDirectories } from "../../src/agent/repo-inventory.ts";
 import { createQaGate } from "../../src/agent/wiki-verification.ts";
 
@@ -174,26 +178,15 @@ describe("validatePlan", () => {
     // validation 57%, and neither is derivable from the author's own subtree.
     expect(
       missingEvidence({
-        path: "openwiki/a",
+        path: "openwiki/a.md",
         responsibility: "",
         entrypoint: "",
         sources: [],
         tests: [],
         edges: [],
       }),
-    ).toEqual([
-      "a .md page path",
-      "sources",
-      "entrypoint",
-      "tests",
-      "responsibility",
-    ]);
+    ).toEqual(["sources", "entrypoint", "tests", "responsibility"]);
     expect(missingEvidence(page("openwiki/a.md"))).toEqual([]);
-    // The path that crashed a run: the claim store throws on it, so it is
-    // refused at the plan rather than surfacing from a count read later.
-    expect(missingEvidence(page("architecture/overview"))).toEqual([
-      "a .md page path",
-    ]);
   });
 
   test("rejects an edge to a page nothing documents", () => {
@@ -219,6 +212,23 @@ describe("validatePlan", () => {
         [],
       ).join(" "),
     ).toContain("edge to openwiki/ghost.md, which no entry documents");
+  });
+
+  test("collapses every spelling of a page to one canonical path", () => {
+    // These four were all in one run, and each boundary normalized differently
+    // or not at all: the plan stored the extensionless form, the brief told the
+    // author to write the .md file, and a count read on the un-suffixed path
+    // threw and discarded a completed pool of 57 authors.
+    for (const spelling of [
+      "architecture/overview",
+      "architecture/overview.md",
+      "openwiki/architecture/overview.md",
+      "/openwiki/architecture/overview.md",
+    ]) {
+      expect(canonicalWikiPage(spelling)).toBe(
+        "/openwiki/architecture/overview.md",
+      );
+    }
   });
 
   test("normalizes a page path to one wiki-root prefix", () => {

@@ -1,13 +1,17 @@
 import { describe, expect, test } from "vitest";
 import { createOpenWikiAuthoringPoolMiddleware } from "../../src/agent/authoring-pool.ts";
-import { createPlanStore, type PlannedPage } from "../../src/agent/plan-store.ts";
+import {
+  canonicalWikiPage,
+  createPlanStore,
+  type PlannedPage,
+} from "../../src/agent/plan-store.ts";
 
 /** A plan store holding complete evidence for the given pages. */
 function stubStore(paths: string[]) {
   const store = createPlanStore();
   const pages = new Map<string, PlannedPage>(
     paths.map((path) => [
-      path.replace(/^\/+/u, ""),
+      canonicalWikiPage(path),
       {
         path,
         responsibility: "Owns the thing",

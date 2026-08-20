@@ -27,8 +27,12 @@ import { tool } from "@langchain/core/tools";
 import { createMiddleware } from "langchain";
 import type { ClaimSession } from "../claims/brains/code/session.js";
 import { z } from "zod";
-import { normalizeWikiPage } from "./plan-ledger.js";
-import { missingEvidence, renderBrief, type PlanStore } from "./plan-store.js";
+import {
+  canonicalWikiPage,
+  missingEvidence,
+  renderBrief,
+  type PlanStore,
+} from "./plan-store.js";
 import { dispatchSubagent, type TaskToolLike } from "./subagent-dispatch.js";
 
 /**
@@ -140,12 +144,15 @@ export function createOpenWikiAuthoringPoolMiddleware(
       const assignments: { page: string; defect?: string }[] = [];
       const duplicates: string[] = [];
       for (const assignment of input.assignments) {
-        if (seen.has(assignment.page)) {
+        // Canonical, so `a/b`, `a/b.md`, and `/openwiki/a/b.md` are one page
+        // rather than three authors racing on one file.
+        const key = canonicalWikiPage(assignment.page);
+        if (seen.has(key)) {
           duplicates.push(assignment.page);
           continue;
         }
-        seen.add(assignment.page);
-        assignments.push(assignment);
+        seen.add(key);
+        assignments.push({ ...assignment, page: key });
       }
 
       const limit = Math.min(
@@ -167,11 +174,11 @@ export function createOpenWikiAuthoringPoolMiddleware(
       const dispatchable: { page: string; brief: string }[] = [];
       const undispatchable: { page: string; error: string }[] = [];
       for (const assignment of assignments) {
-        const key = normalizeWikiPage(assignment.page);
+        const key = assignment.page;
         const planned = ledger.pages.get(key);
         if (!planned) {
           undispatchable.push({
-            page: `/${key}`,
+            page: key,
             error:
               "Not in the plan. Add it through submit_plan with its evidence, or drop it.",
           });
@@ -180,7 +187,7 @@ export function createOpenWikiAuthoringPoolMiddleware(
         const missing = missingEvidence(planned);
         if (missing.length > 0) {
           undispatchable.push({
-            page: `/${key}`,
+            page: key,
             error: `Plan entry is missing ${missing.join(", ")}; an author sent without them writes only what it can see.`,
           });
           continue;
@@ -206,7 +213,7 @@ export function createOpenWikiAuthoringPoolMiddleware(
       // through the same seam under a different name, and a report can disagree
       // with the store while the store cannot disagree with itself.
       const results: AuthorOutcome[] = outcomes.map((outcome, index) => {
-        const page = `/${normalizeWikiPage(dispatchable[index].page)}`;
+        const page = dispatchable[index].page;
         if (outcome.status === "rejected") {
           return {
             page,
