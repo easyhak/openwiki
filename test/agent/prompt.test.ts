@@ -366,7 +366,6 @@ describe("createSystemPrompt Claims workflow", () => {
         );
         expect(prompt).toContain("finalize_wiki");
         expect(prompt).toContain("verify_wiki");
-        expect(prompt).toContain("reconcile_boundaries");
         expect(prompt).toContain("submit_plan");
         expect(prompt).toContain("list_repository_directories");
         expect(prompt).toContain("submit_plan");
