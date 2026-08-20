@@ -47,7 +47,7 @@ describe("plan validation", () => {
     // one page and authored three.
     expect(
       validateEntry(
-        { disposition: "exclude", directory: "/invented", reason: "no" },
+        { disposition: "document", directory: "/invented", pages: [page("openwiki/a.md")] },
         TREE,
       ).join(" "),
     ).toContain("not a directory list_repository_directories returned");
@@ -105,6 +105,32 @@ describe("plan validation", () => {
     expect(problems).not.toContain("/ plans");
     // The areas that do own the volume are still asked for their pages.
     expect(problems).toContain("/svc plans 1 page(s) for 6000 source files");
+  });
+
+  test("an unlisted directory can still be excluded", () => {
+    // The coverage walk runs live and to any depth while the listing is bounded
+    // and read once, so it reports directories the listing never showed - one the
+    // run itself created, or one below the listing depth. Refusing the exclusion
+    // as well left the plan unable to answer a requirement it was held to, and
+    // authoring never started.
+    expect(
+      validateEntry(
+        {
+          disposition: "exclude",
+          directory: "/large_tool_results",
+          reason: "the agent's own spill directory, not part of the repository",
+        },
+        TREE,
+      ),
+    ).toEqual([]);
+    // A documented entry still has to name a directory the listing returned: a
+    // typo there hides a real area behind a page that looks planned.
+    expect(
+      validateEntry(
+        { disposition: "covered_by", directory: "/typo", page: "openwiki/a.md", reason: "x" },
+        TREE,
+      ).join(" "),
+    ).toContain("not a directory list_repository_directories returned");
   });
 
   test("scales the page floor with documentable source, not with nesting", () => {

@@ -44,6 +44,11 @@ const SKIP_DIRECTORIES = new Set([
   ".cache",
   "coverage",
   "openwiki",
+  // The agent's own spill directory, not a subject. The docs-only backend writes
+  // an over-limit tool result to /large_tool_results/<id>.txt, so this appears
+  // partway through a run: the coverage walk then reported an area the listing
+  // had never shown, which the plan could neither document nor exclude.
+  "large_tool_results",
 ]);
 
 /**
