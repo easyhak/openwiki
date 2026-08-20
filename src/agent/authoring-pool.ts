@@ -183,6 +183,12 @@ export function createOpenWikiAuthoringPoolMiddleware(
           hint: "Fix these through submit_plan, then call author_pages again. Entries accumulate, so send only what changes.",
         });
       }
+      // Every planned page's responsibility, so a brief can say what sits on
+      // the other side of each of its relationships.
+      const neighbours = new Map<string, string>();
+      for (const [key, planned] of ledger.pages) {
+        neighbours.set(key, planned.responsibility);
+      }
       const dispatchable: { page: string; brief: string }[] = [];
       const undispatchable: { page: string; error: string }[] = [];
       for (const assignment of assignments) {
@@ -206,7 +212,7 @@ export function createOpenWikiAuthoringPoolMiddleware(
         }
         dispatchable.push({
           page: assignment.page,
-          brief: renderBrief(planned, assignment.defect),
+          brief: renderBrief(planned, assignment.defect, neighbours),
         });
       }
 

@@ -149,12 +149,26 @@ export function missingEvidence(page: PlannedPage): string[] {
  * @param defect - What to fix, when this is a repair rather than a first draft.
  * @returns The complete brief.
  */
-export function renderBrief(page: PlannedPage, defect?: string): string {
+export function renderBrief(
+  page: PlannedPage,
+  defect?: string,
+  neighbours?: Map<string, string>,
+): string {
+  // Each edge carries the other side's responsibility, not just its path. A
+  // boundary fact is about two components and an author owns one of them, so
+  // "postgres.md: writes runs through it" leaves it guessing what postgres.md
+  // is for - and boundary is the claim role the grader finds absent most often,
+  // 59% to 79% across runs. The plan already holds every page's responsibility
+  // in one line; this is that line, delivered to the page on the other end.
+  const describe = (edge: { page: string; relationship: string }) => {
+    const theirs = neighbours?.get(edge.page.replace(/^\/+/u, ""));
+    return theirs
+      ? `  - ${edge.page} (${theirs}): ${edge.relationship}`
+      : `  - ${edge.page}: ${edge.relationship}`;
+  };
   const edges =
     page.edges.length > 0
-      ? page.edges
-          .map((edge) => `  - ${edge.page}: ${edge.relationship}`)
-          .join("\n")
+      ? page.edges.map(describe).join("\n")
       : "  - none recorded";
   return [
     `Write the OpenWiki page ${page.path}.`,
@@ -169,6 +183,7 @@ export function renderBrief(page: PlannedPage, defect?: string): string {
     edges,
     "",
     "Read the evidence above before drafting, and follow it into whatever it references - the Makefile target or CI job that runs those tests, and the module on the other side of each relationship. Both are things a reader changing this component needs and neither is inside your own directory.",
+    "For each relationship, state what actually crosses it: the call, the table, the queue, the header, the contract - in which direction, and what happens to it on the other side. The other page's own responsibility is given above so you can say what it does with what you send it, rather than only that the two are connected.",
     ...(defect
       ? [
           "",
