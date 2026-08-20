@@ -24,7 +24,7 @@
 
 import type { SubAgent } from "deepagents";
 import type { ClaimSession } from "../claims/brains/code/session.js";
-import { createWriteClaimedPageTool } from "./write-claimed-page.js";
+import { createAuthorWriteTools } from "./author-write.js";
 import {
   createFilesystemMiddleware,
   type AnyBackendProtocol,
@@ -69,7 +69,7 @@ export const AUTHOR_FILESYSTEM_TOOLS = [
 
 const PAGE_AUTHOR_DESCRIPTION = [
   "Writes one assigned wiki page from a supplied evidence brief and relationship edges, and establishes that page's Claims itself with repo:// evidence.",
-  "Dispatch concurrently through author_pages, one page per task. It returns a short plain-text note, not JSON: how many claims a page established comes from the claim store rather than from anything it says.",
+  "Dispatch concurrently through author_pages, one page per task. It establishes its claims and then writes its page, and returns a short plain-text note rather than JSON: how many claims a page established comes from the claim store.",
 ].join(" ");
 
 const PAGE_AUTHOR_SYSTEM_PROMPT = `You author exactly one wiki page and report what you established.
@@ -94,12 +94,13 @@ Establish the claims first, then write the page from them:
 - An agent or human should be able to understand this component and its workflows from your page without reading a single line of code outside the wiki.
 - State each supplied relationship in the prose that explains it, linking the target page by the path you were given. Do not invent link targets: another author may not have written that page yet, and a guessed path is a broken link.
 - Begin the file with OKF v0.1 front matter as your assignment specifies.
-- Claims are structured data passed to write_claimed_page, never text in the page. A line reading "Evidence: repo://..." in the Markdown is not a claim and grounds nothing.
+- Claims are structured data passed to establish_claims, never text in the page. A line reading "Evidence: repo://..." in the Markdown is not a claim and grounds nothing.
 
-Write the page with write_claimed_page:
-- It takes the complete Markdown and every material proposition the page states. Claims resolve first and the page is written only if they do, so there is no way to leave prose ungrounded and no separate write to reach for.
+Establish the claims, then write the page from them:
+- Call \`establish_claims\` with the material propositions you derived, in batches as you read rather than all at the end. Each is one concise atomic proposition with its evidence.
 - Evidence is \`repo://path\` or \`repo://path#symbol\`, and nothing else. No line ranges, no directories, no trailing slash. A symbol must be one the file actually declares; when unsure, cite the file.
-- If it refuses a resource, nothing was written. It names the resource: fix that one anchor - the symbol the file really declares, or the file itself - and call again with the same Markdown. Do not drop the claim and do not paste evidence into the prose instead.
+- If a resource is refused, nothing was established. It names the resource: fix that one anchor - the symbol the file really declares, or the file itself - and call again. Do not drop the claim and do not paste evidence into the prose instead.
+- Then call \`write_page\` with the complete Markdown. It refuses a page with no claims, so the propositions come first and the prose is written from them.
 
 Reporting:
 - Finish with a short plain-text note: what you wrote, and any assigned area you could not document from evidence and why. It is read by a person, not parsed, so do not wrap it in JSON.
@@ -160,9 +161,10 @@ export function resolvePageAuthorSubagents(
       // An author writes one page and grounds it. It has no use for
       // inspect_claims or delete_file, and the filesystem middleware below
       // supplies the rest of its surface.
-      tools: [
-        createWriteClaimedPageTool(session, backend),
-      ],
+      tools: createAuthorWriteTools(
+        session,
+        backend,
+      ),
       middleware: [
         ...(PAGE_AUTHOR_SUBAGENT.middleware ?? []),
         createFilesystemMiddleware({

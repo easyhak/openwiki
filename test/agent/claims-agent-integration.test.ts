@@ -175,7 +175,8 @@ describe("Claims agent graph integration", () => {
         // open. The read-only reviewers above still may not touch Claims.
         // The author cannot write prose without claims: there is one atomic
         // operation and no separate write on its surface.
-        expect(promptFor("page-author")).toContain("write_claimed_page");
+        expect(promptFor("page-author")).toContain("establish_claims");
+        expect(promptFor("page-author")).toContain("write_page");
       }
     },
   );
