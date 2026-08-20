@@ -32,7 +32,7 @@ import { createMiddleware } from "langchain";
 import { z } from "zod";
 import {
   type ContractCandidate,
-  discoverSharedContracts,
+  sharedContracts,
 } from "./concept-discovery.js";
 import {
   collectDirectoryTree,
@@ -557,6 +557,7 @@ interface LedgerBackend extends ListingBackend {
 export async function planReadiness(
   store: PlanStore,
   backend: LedgerBackend,
+  candidates?: () => Promise<ContractCandidate[]>,
 ): Promise<{ blocking: string[]; shortfall: string[] }> {
   const entries = store.get()?.entries ?? [];
   if (entries.length === 0) {
@@ -572,8 +573,18 @@ export async function planReadiness(
   // refusing to author over it is what once left a run with a complete plan and
   // one page on disk, so it travels back as a shortfall instead.
   const view = await collectPlanningView(backend);
+  const ledger = store.get();
   return {
-    blocking: blockingProblems(entries, uncovered),
+    blocking: [
+      ...blockingProblems(entries, uncovered),
+      ...(candidates
+        ? undisposedContracts(
+            await candidates(),
+            ledger?.contracts ?? [],
+            CONTRACTS_SHOWN,
+          )
+        : []),
+    ],
     shortfall: advisoryProblems(entries, view.directories, view.sourceFiles),
   };
 }
@@ -629,6 +640,46 @@ export function validateContract(
 }
 
 /**
+ * Contracts the plan must dispose of before authoring.
+ *
+ * Completeness rather than size: what has to be settled is that every contract
+ * the agent was shown has an answer, not that the wiki reaches any particular
+ * number of pages. An answer is a page or a reason, and a reason is one call for
+ * as many contracts as the coordinator wants to exclude at once.
+ *
+ * Bounded to what list_shared_contracts shows, because a coordinator cannot
+ * dispose of a contract it was never given, and an unanswerable precondition on
+ * authoring costs the whole wiki rather than the pages it wanted.
+ *
+ * @param candidates - Everything discovery found, sharpest first.
+ * @param contracts - What the plan has recorded.
+ * @param shown - How many of the candidates the listing tool reveals.
+ * @returns One problem naming what is undisposed, or nothing.
+ */
+export function undisposedContracts(
+  candidates: ContractCandidate[],
+  contracts: ContractEntry[],
+  shown: number,
+): string[] {
+  const answered = new Set(contracts.map((entry) => entry.contract));
+  const sharp = candidates
+    .filter(
+      (candidate) =>
+        candidate.kind === "parallel-impl" ||
+        (candidate.writers?.length ?? 0) > 1,
+    )
+    .slice(0, shown);
+  const missing = sharp.filter((candidate) => !answered.has(candidate.name));
+  if (missing.length === 0) {
+    return [];
+  }
+  const named = missing.slice(0, 20).map((candidate) => candidate.name);
+  return [
+    `${missing.length} of ${sharp.length} contracts from list_shared_contracts have no disposition: ${named.join(", ")}${missing.length > named.length ? ", ..." : ""}. Each needs a page whose sources cite two participants, or {"contract":"<name>","excluded":true,"reason":"..."}. Several exclusions can go in one submit_plan call.`,
+  ];
+}
+
+/**
  * Reports contracts the repository shows and the plan has not answered.
  *
  * Advisory: a coordinator that ignores it writes a wiki missing those facts,
@@ -669,21 +720,8 @@ export function createOpenWikiPlanLedgerMiddleware(
 ) {
   // Discovered once. It is a pure function of the tree and costs seconds, but
   // submit_plan is called many times over a planning phase.
-  let discovered: ContractCandidate[] | null = null;
-  const contractCandidates = async (): Promise<ContractCandidate[]> => {
-    if (discovered) return discovered;
-    if (!repositoryRoot) {
-      discovered = [];
-      return discovered;
-    }
-    try {
-      discovered = await discoverSharedContracts(repositoryRoot);
-    } catch {
-      // Discovery informs the plan; it cannot be allowed to stop one.
-      discovered = [];
-    }
-    return discovered;
-  };
+  const contractCandidates = async (): Promise<ContractCandidate[]> =>
+    repositoryRoot ? sharedContracts(repositoryRoot) : [];
   const setLedger = async (entries: PlanEntry[], contracts: ContractEntry[]) => {
     // Keyed by normalized path, because the brief renderer and the completion
     // gate both look pages up and the plan spells them inconsistently.
@@ -857,7 +895,10 @@ export function createOpenWikiPlanLedgerMiddleware(
         backend,
         entries.map((entry) => entry.directory),
       );
-      const blocking = blockingProblems(entries, uncovered);
+      const blocking = [
+        ...blockingProblems(entries, uncovered),
+        ...undisposedContracts(candidates, contracts, CONTRACTS_SHOWN),
+      ];
       const shortfall = advisoryProblems(entries, tree, view.sourceFiles);
       await setLedger(entries, contracts);
       const documented = entries.filter(

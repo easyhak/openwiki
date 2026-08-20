@@ -52,6 +52,7 @@ import {
   createOpenWikiPlanLedgerMiddleware,
   planReadiness,
 } from "./plan-ledger.js";
+import { sharedContracts } from "./concept-discovery.js";
 import { createPlanStore } from "./plan-store.js";
 import {
   createOpenWikiVerificationMiddleware,
@@ -519,7 +520,10 @@ function createOpenWikiAgentGraph(
               ? [
                   createOpenWikiAuthoringPoolMiddleware(
                     planStore,
-                    () => planReadiness(planStore, wikiBackend),
+                    () =>
+                      planReadiness(planStore, wikiBackend, () =>
+                        sharedContracts(options.cwd),
+                      ),
                     options.claimsRuntime?.session,
                   ),
                   // Enumeration, the ledger it feeds, and the gate that reads

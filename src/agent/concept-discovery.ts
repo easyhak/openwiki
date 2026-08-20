@@ -406,3 +406,31 @@ function resolveImport(
   }
   return undefined;
 }
+
+/**
+ * One discovery per repository, shared by the tools that need it.
+ *
+ * Both the plan tool and the authoring gate ask the same question of the same
+ * tree, and planning asks it many times. Keyed by root so a process serving more
+ * than one repository still answers about the right one.
+ */
+const shared = new Map<string, Promise<ContractCandidate[]>>();
+
+/**
+ * Discovers a repository's contracts once and reuses the result.
+ *
+ * Failure yields an empty set rather than throwing: discovery informs a plan and
+ * must not be able to stop one.
+ *
+ * @param rootDir - Absolute repository root.
+ * @returns Candidates, sharpest first.
+ */
+export async function sharedContracts(
+  rootDir: string,
+): Promise<ContractCandidate[]> {
+  const existing = shared.get(rootDir);
+  if (existing) return existing;
+  const pending = discoverSharedContracts(rootDir).catch(() => []);
+  shared.set(rootDir, pending);
+  return pending;
+}

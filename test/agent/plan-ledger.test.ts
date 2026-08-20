@@ -5,6 +5,7 @@ import {
   renderPlanMarkdown,
   advisoryProblems,
   blockingProblems,
+  undisposedContracts,
   unhomedContracts,
   validateContract,
   validateEntry,
@@ -869,6 +870,69 @@ describe("contract units", () => {
       },
     ];
     expect(unhomedContracts(quiet, [])).toEqual([]);
+  });
+});
+
+describe("contract dispositions block, page counts do not", () => {
+  const candidate = (name: string, kind: "divided-state" | "parallel-impl") => ({
+    kind,
+    name,
+    signal: kind === "parallel-impl" ? "go+python" : "written by several areas",
+    areas: ["api-go", "api-py"],
+    ...(kind === "divided-state"
+      ? { writers: ["api-go", "api-py"], consumers: [] }
+      : {}),
+    evidence: [],
+    tests: [],
+    weight: 100,
+  });
+
+  test("an undisposed contract blocks, and an exclusion clears it", () => {
+    const found = [candidate("sessions", "divided-state")];
+    expect(undisposedContracts(found, [], 60).join(" ")).toContain("sessions");
+    expect(
+      undisposedContracts(found, [
+        { contract: "sessions", excluded: true, reason: "x".repeat(25) },
+      ], 60),
+    ).toEqual([]);
+  });
+
+  test("only what the listing shows can block", () => {
+    // A coordinator cannot dispose of a contract it was never given, and an
+    // authoring precondition it cannot satisfy costs the wiki, not the page.
+    const many = Array.from({ length: 200 }, (_, index) =>
+      candidate(`table_${index}`, "divided-state"),
+    );
+    const problems = undisposedContracts(many, [], 5);
+    expect(problems.join(" ")).toContain("of 5 contracts");
+    expect(problems.join(" ")).not.toContain("table_9");
+  });
+
+  test("a weak candidate never blocks", () => {
+    const weak = [
+      {
+        kind: "divided-state" as const,
+        name: "private_notes",
+        signal: "written by one, read by others",
+        areas: ["api-py"],
+        writers: ["api-py"],
+        consumers: [],
+        evidence: [],
+        tests: [],
+        weight: 60,
+      },
+    ];
+    expect(undisposedContracts(weak, [], 60)).toEqual([]);
+  });
+
+  test("the message says exclusion is an answer and can be batched", () => {
+    const problems = undisposedContracts(
+      [candidate("runs", "parallel-impl")],
+      [],
+      60,
+    );
+    expect(problems.join(" ")).toContain("excluded");
+    expect(problems.join(" ")).toContain("one submit_plan call");
   });
 });
 
