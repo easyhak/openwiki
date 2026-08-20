@@ -35,6 +35,12 @@ import {
   findUncoveredDirectories,
   type ListingBackend,
 } from "./repo-inventory.js";
+import {
+  missingEvidence,
+  type PlanEntry,
+  type PlannedPage,
+  type PlanStore,
+} from "./plan-store.js";
 import { qaFinalizationProblem, type QaGate } from "./wiki-verification.js";
 
 /**
@@ -50,12 +56,44 @@ import { qaFinalizationProblem, type QaGate } from "./wiki-verification.js";
  * directory is a normal, first-class answer, and saying so costs a reason
  * rather than an apology.
  */
+const PlannedPageSchema = z
+  .object({
+    path: z.string().min(1),
+    responsibility: z.string().min(1).describe("One line: what this owns."),
+    entrypoint: z
+      .string()
+      .min(1)
+      .describe("The named symbol or file a reader starts from."),
+    sources: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe("Implementation paths and symbols, not directories."),
+    tests: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe(
+        "Focused tests and the command that runs them - the Make target or CI job, not just the file.",
+      ),
+    edges: z
+      .array(
+        z.object({
+          page: z.string().min(1),
+          relationship: z
+            .string()
+            .min(1)
+            .describe("What crosses the boundary, in which direction."),
+        }),
+      )
+      .default([]),
+  })
+  .strict();
+
 const EntrySchema = z.discriminatedUnion("disposition", [
   z
     .object({
       disposition: z.literal("document"),
       directory: z.string().min(1),
-      pages: z.array(z.string().min(1)).min(1),
+      pages: z.array(PlannedPageSchema).min(1),
     })
     .strict(),
   z
@@ -78,14 +116,6 @@ const EntrySchema = z.discriminatedUnion("disposition", [
 const SubmitPlanSchema = z.object({
   entries: z.array(EntrySchema).min(1),
 });
-
-type PlanEntry = z.infer<typeof EntrySchema>;
-
-/** What the ledger holds once a plan is accepted. */
-export interface PlanLedger {
-  entries: PlanEntry[];
-  plannedPages: string[];
-}
 
 /**
  * Normalizes a page path to exactly one wiki-root prefix.
@@ -135,21 +165,26 @@ export function validatePlan(
       continue;
     }
     for (const page of entry.pages) {
-      const key = normalizeWikiPage(page, wikiRoot);
+      const key = normalizeWikiPage(page.path, wikiRoot);
       const owner = owners.get(key);
       if (owner && owner !== entry.directory) {
-        // Two entries owning one page is two authors racing on one write_file,
-        // with the loser's evidence gone.
+        // Two entries owning one page is two authors racing on one write, with
+        // the loser's work gone.
         problems.push(
           `Page ${key} is owned by both ${owner} and ${entry.directory}`,
         );
       }
       owners.set(key, entry.directory);
+      // A page without an implementation anchor, an entrypoint, or a focused
+      // test cannot be authored well: the author writes what it can see, and
+      // what it cannot see is what the grader asks for.
+      const missing = missingEvidence(page);
+      if (missing.length > 0) {
+        problems.push(`Page ${page.path} is missing ${missing.join(", ")}`);
+      }
     }
   }
 
-  // covered_by has to point at a page something actually writes, or it is an
-  // exclusion wearing a more reassuring word.
   for (const entry of entries) {
     if (entry.disposition !== "covered_by") {
       continue;
@@ -159,6 +194,23 @@ export function validatePlan(
       problems.push(
         `${entry.directory} is covered_by ${key}, which no entry documents`,
       );
+    }
+  }
+
+  // An edge naming a page nothing documents is a link the author would be told
+  // to make and could not.
+  for (const entry of entries) {
+    if (entry.disposition !== "document") {
+      continue;
+    }
+    for (const page of entry.pages) {
+      for (const edge of page.edges) {
+        if (!owners.has(normalizeWikiPage(edge.page, wikiRoot))) {
+          problems.push(
+            `Page ${page.path} has an edge to ${edge.page}, which no entry documents`,
+          );
+        }
+      }
     }
   }
 
@@ -176,32 +228,34 @@ export function validatePlan(
  * @param ledger - Accepted plan.
  * @returns Markdown for `/openwiki/_plan.md`.
  */
-export function renderPlanMarkdown(ledger: PlanLedger): string {
-  const counts = {
-    document: 0,
-    covered_by: 0,
-    exclude: 0,
-  };
-  for (const entry of ledger.entries) {
+export function renderPlanMarkdown(entries: PlanEntry[]): string {
+  const counts = { document: 0, covered_by: 0, exclude: 0 };
+  for (const entry of entries) {
     counts[entry.disposition] += 1;
   }
+  const pages = entries.flatMap((entry) =>
+    entry.disposition === "document" ? entry.pages : [],
+  );
   return [
     "# Plan",
     "",
-    `${ledger.entries.length} directories: ${counts.document} documented, ${counts.covered_by} covered elsewhere, ${counts.exclude} excluded. ${ledger.plannedPages.length} pages.`,
+    `${entries.length} directories: ${counts.document} documented, ${counts.covered_by} covered elsewhere, ${counts.exclude} excluded. ${pages.length} pages.`,
     "",
-    "| Directory | Disposition | Pages | Note |",
-    "| --- | --- | --- | --- |",
-    ...ledger.entries.map((entry) => {
-      const pages =
-        entry.disposition === "document"
-          ? entry.pages.join("<br>")
-          : entry.disposition === "covered_by"
-            ? entry.page
-            : "-";
-      const note = entry.disposition === "document" ? "" : entry.reason;
-      return `| ${entry.directory} | ${entry.disposition} | ${pages} | ${note} |`;
-    }),
+    "| Page | Responsibility | Entrypoint | Tests | Relates to |",
+    "| --- | --- | --- | --- | --- |",
+    ...pages.map(
+      (page) =>
+        `| ${page.path} | ${page.responsibility} | ${page.entrypoint} | ${page.tests.join("<br>")} | ${page.edges.map((edge) => edge.page).join("<br>") || "-"} |`,
+    ),
+    "",
+    "| Directory | Disposition | Note |",
+    "| --- | --- | --- |",
+    ...entries
+      .filter((entry) => entry.disposition !== "document")
+      .map(
+        (entry) =>
+          `| ${entry.directory} | ${entry.disposition} | ${"reason" in entry ? entry.reason : ""} |`,
+      ),
     "",
   ].join("\n");
 }
@@ -221,25 +275,28 @@ interface LedgerBackend extends ListingBackend {
  */
 export function createOpenWikiPlanLedgerMiddleware(
   backend: LedgerBackend,
+  store: PlanStore,
   qaGate?: QaGate,
   wikiRoot = "/openwiki",
 ) {
-  let ledger: PlanLedger | null = null;
-
   const setLedger = async (entries: PlanEntry[]) => {
-    const plannedPages = [
-      ...new Set(
-        entries.flatMap((entry) =>
-          entry.disposition === "document" ? entry.pages : [],
-        ),
-      ),
-    ].map((page) => normalizeWikiPage(page, wikiRoot));
-    ledger = { entries, plannedPages };
+    // Keyed by normalized path, because the brief renderer and the completion
+    // gate both look pages up and the plan spells them inconsistently.
+    const pages = new Map<string, PlannedPage>();
+    for (const entry of entries) {
+      if (entry.disposition !== "document") {
+        continue;
+      }
+      for (const page of entry.pages) {
+        pages.set(normalizeWikiPage(page.path, wikiRoot), page);
+      }
+    }
+    store.set({ entries, pages });
     const written = await backend.write(
       `${wikiRoot}/_plan.md`,
-      renderPlanMarkdown(ledger),
+      renderPlanMarkdown(entries),
     );
-    return { plannedPages, planWritten: !written.error };
+    return { plannedPages: [...pages.keys()], planWritten: !written.error };
   };
 
   const listDirectories = tool(
@@ -286,19 +343,18 @@ export function createOpenWikiPlanLedgerMiddleware(
     {
       name: "submit_plan",
       description:
-        "Submit the plan: one entry per area of the repository, each with a disposition. Use document with the pages it owns; covered_by naming another entry's page and why, when the area is relevant but belongs on that page; or exclude with a reason, when the area is not a documentation subject at all. Excluding is a normal outcome, not a failure - fixtures, test data, generated output, scratch and personal experiments usually deserve it, and a page manufactured for one costs an author a real subsystem needed. It is also narrow: CI and release workflows, deployment and infrastructure definitions, migrations, schedulers, data stores, and configuration a reader needs to run the system are documented or covered_by, never excluded, because a reader changing code needs to know how it is built, released, and verified. A dedicated page needs evidence of an independent responsibility, owner and entrypoint, lifecycle or state boundary, public extension surface, or meaningful validation surface; a directory existing is not on its own a reason to document it. A large area is several pages: give one each to independently registered route families, distinct data models or stores, and subsystems that run on their own, because a single page cannot state the responsibility, boundary, and validation surface of each. Choose entry directories to match how the repository is organised, nest them where a directory has significant files beside significant subdirectories, and cover every directory from list_repository_directories - a plan missing one is rejected with the paths rather than partially applied. /openwiki/_plan.md is rendered from the accepted plan, so do not write or parse it yourself.",
+        "Submit the plan: one entry per area of the repository, each with a disposition. A documented area lists its pages, and each page carries the evidence its author will be sent: responsibility in one line, the entrypoint a reader starts from, implementation paths and symbols rather than directories, the focused tests plus the command that runs them, and an edge per relationship saying what crosses the boundary in which direction. A page missing any of those is rejected, because an author sent without them writes what it can see and omits what a reader changing the code actually needs. Beyond that: Use document with the pages it owns; covered_by naming another entry's page and why, when the area is relevant but belongs on that page; or exclude with a reason, when the area is not a documentation subject at all. Excluding is a normal outcome, not a failure - fixtures, test data, generated output, scratch and personal experiments usually deserve it, and a page manufactured for one costs an author a real subsystem needed. It is also narrow: CI and release workflows, deployment and infrastructure definitions, migrations, schedulers, data stores, and configuration a reader needs to run the system are documented or covered_by, never excluded, because a reader changing code needs to know how it is built, released, and verified. A dedicated page needs evidence of an independent responsibility, owner and entrypoint, lifecycle or state boundary, public extension surface, or meaningful validation surface; a directory existing is not on its own a reason to document it. A large area is several pages: give one each to independently registered route families, distinct data models or stores, and subsystems that run on their own, because a single page cannot state the responsibility, boundary, and validation surface of each. Choose entry directories to match how the repository is organised, nest them where a directory has significant files beside significant subdirectories, and cover every directory from list_repository_directories - a plan missing one is rejected with the paths rather than partially applied. /openwiki/_plan.md is rendered from the accepted plan, so do not write or parse it yourself.",
       schema: SubmitPlanSchema,
     },
   );
 
   const finalizeWiki = tool(
     async () => {
+      const ledger = store.get();
       if (!ledger) {
         return JSON.stringify({
           complete: false,
-          problems: [
-            "No plan exists; call submit_plan before finishing.",
-          ],
+          problems: ["No plan exists; call submit_plan before finishing."],
         });
       }
       const problems: string[] = [];
@@ -318,7 +374,9 @@ export function createOpenWikiPlanLedgerMiddleware(
       };
       await collect(wikiRoot, 0);
 
-      const absent = ledger.plannedPages.filter((page) => !existing.has(page));
+      const absent = [...ledger.pages.keys()].filter(
+        (page) => !existing.has(page),
+      );
       if (absent.length > 0) {
         problems.push(
           `${absent.length} planned page(s) were never written: ${absent.slice(0, 10).join(", ")}${absent.length > 10 ? ", ..." : ""}`,
@@ -331,7 +389,7 @@ export function createOpenWikiPlanLedgerMiddleware(
 
       return JSON.stringify({
         complete: problems.length === 0,
-        plannedPages: ledger.plannedPages.length,
+        plannedPages: ledger.pages.size,
         pagesOnDisk: existing.size,
         ...(qaGate ? { qaMode: qaGate.mode, qaStatus: qaGate.status } : {}),
         problems,

@@ -49,6 +49,7 @@ import { OpenWikiLocalShellBackend } from "./docs-only-backend.js";
 import { getSelectedModelAvailability } from "../model-availability.js";
 import { createOpenWikiAuthoringPoolMiddleware } from "./authoring-pool.js";
 import { createOpenWikiPlanLedgerMiddleware } from "./plan-ledger.js";
+import { createPlanStore } from "./plan-store.js";
 import {
   createOpenWikiVerificationMiddleware,
   createQaGate,
@@ -440,6 +441,8 @@ function createOpenWikiAgentGraph(
   // One gate shared by verify_wiki and finalize_wiki. OPENWIKI_QA_MODE=off
   // turns semantic QA into a no-op that still finalizes, which is the control
   // arm for measuring whether it earns its cost.
+  // One plan, shared by the tool that accepts it and the tools that consume it.
+  const planStore = createPlanStore();
   const qaGate = createQaGate(
     process.env.OPENWIKI_QA_MODE === "off" ? "off" : "full",
   );
@@ -518,7 +521,7 @@ function createOpenWikiAgentGraph(
                   // the ledger: breadth stops being something the workflow asks
                   // for and becomes something it cannot skip.
                   createOpenWikiVerificationMiddleware(qaGate),
-                  createOpenWikiPlanLedgerMiddleware(wikiBackend, qaGate),
+                  createOpenWikiPlanLedgerMiddleware(wikiBackend, planStore, qaGate),
                 ]
               : []),
             ...(claimsIntegration?.middleware ?? []),
