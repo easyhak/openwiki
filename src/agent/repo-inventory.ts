@@ -114,6 +114,36 @@ function isWalkable(name: string): boolean {
   return !name.startsWith(".") || name === ".github";
 }
 
+/** Extensions counted as documentable source. */
+const SOURCE_EXTENSIONS = new Set([
+  ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".kt", ".scala",
+  ".rb", ".php", ".cs", ".swift", ".m", ".c", ".cc", ".cpp", ".h", ".hpp",
+  ".sql", ".proto", ".sh",
+]);
+
+/** Names that mark a file as a test, wherever it sits. */
+const TEST_FILE = /(_test\.|\.test\.|\.spec\.|^test_|^conftest\.py$|_tests\.)/u;
+
+/** Names that mark a file as generated rather than written. */
+const GENERATED_FILE = /(\.pb\.|_pb2\.|_grpc\.py$|\.generated\.|zz_generated)/u;
+
+/**
+ * Reports whether a file is source a page could be written about.
+ *
+ * Test and generated files are excluded because they scale with things other
+ * than how much there is to document - test volume follows a project's testing
+ * culture, and generated volume follows its schema size.
+ *
+ * @param name - Bare file name.
+ * @returns Whether it counts towards documentable volume.
+ */
+export function isDocumentableSource(name: string): boolean {
+  if (TEST_FILE.test(name) || GENERATED_FILE.test(name)) {
+    return false;
+  }
+  return SOURCE_EXTENSIONS.has(path.posix.extname(name).toLowerCase());
+}
+
 /**
  * Lists the walkable child directories of one directory.
  *
@@ -148,19 +178,51 @@ async function childDirectories(
 export async function collectDirectoryTree(
   backend: ListingBackend,
 ): Promise<string[]> {
+  return (await collectPlanningView(backend)).directories;
+}
+
+/**
+ * The planning view: the same bounded directory list, plus how much documentable
+ * source each directory holds directly.
+ *
+ * Both come out of one walk because `ls` returns files alongside directories, so
+ * counting costs no extra listings.
+ *
+ * @param backend - Filesystem backend rooted at the repository.
+ * @returns Sorted directories, and documentable file counts per directory.
+ */
+export async function collectPlanningView(backend: ListingBackend): Promise<{
+  directories: string[];
+  sourceFiles: Map<string, number>;
+}> {
   const found: string[] = ["/"];
+  const sourceFiles = new Map<string, number>();
   const walk = async (directory: string, depth: number): Promise<void> => {
     if (depth > LISTING_DEPTH) {
       return;
     }
-    for (const child of await childDirectories(backend, directory)) {
+    const listed = await backend.ls(directory === "" ? "/" : directory);
+    let own = 0;
+    const children: string[] = [];
+    for (const entry of listed.files ?? []) {
+      const name = path.posix.basename(entry.path.replace(/\/+$/u, ""));
+      if (entry.is_dir) {
+        if (isWalkable(name)) {
+          children.push(`${directory}/${name}`);
+        }
+      } else if (isDocumentableSource(name)) {
+        own += 1;
+      }
+    }
+    sourceFiles.set(directory === "" ? "/" : directory, own);
+    for (const child of children) {
       found.push(child);
       await walk(child, depth + 1);
     }
   };
   await walk("", 0);
   found.sort();
-  return found;
+  return { directories: found, sourceFiles };
 }
 
 /**

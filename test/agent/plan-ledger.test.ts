@@ -69,6 +69,44 @@ describe("plan validation", () => {
     ).toEqual([]);
   });
 
+  test("scales the page floor with documentable source, not with nesting", () => {
+    const tree = ["/", "/svc", "/svc/a", "/svc/b", "/svc/c", "/svc/d"];
+    // One page, so the rule applies. Entries already holding two or more pages
+    // are exempt regardless of volume; see the loop in advisoryProblems.
+    const planned = [
+      {
+        disposition: "document" as const,
+        directory: "/svc",
+        pages: [page("openwiki/svc.md")],
+      },
+      { disposition: "exclude" as const, directory: "/", reason: "root files" },
+    ];
+
+    // 40 files is under one page's worth, so only the floor of two applies.
+    const light = new Map([
+      ["/svc", 10],
+      ["/svc/a", 10],
+      ["/svc/b", 10],
+      ["/svc/c", 10],
+      ["/svc/d", 0],
+    ]);
+    expect(validatePlanShape(planned, [], tree, light).join(" ")).toContain(
+      "holding 40 source files, and needs at least 2",
+    );
+
+    // The identical directory shape holding 600 files needs six.
+    const heavy = new Map([
+      ["/svc", 100],
+      ["/svc/a", 150],
+      ["/svc/b", 150],
+      ["/svc/c", 100],
+      ["/svc/d", 100],
+    ]);
+    expect(validatePlanShape(planned, [], tree, heavy).join(" ")).toContain(
+      "holding 600 source files, and needs at least 6",
+    );
+  });
+
   test("refuses one page standing in for a whole subtree", () => {
     // Breadth is what moves the score: 37 pages scored 0.263, 49 scored 0.331,
     // 71 scored 0.404 at identical page density. It collapses when an area
@@ -95,7 +133,9 @@ describe("plan validation", () => {
       [],
       tree,
     ).join(" ");
-    expect(problems).toContain("plans 1 page(s) for a subtree of 4 directories and needs at least 2");
+    expect(problems).toContain(
+      "plans 1 page(s) for a subtree of 4 directories holding 0 source files, and needs at least 2",
+    );
 
     // A deeper entry claiming them is the other way to satisfy it.
     expect(

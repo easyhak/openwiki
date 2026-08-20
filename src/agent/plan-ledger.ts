@@ -32,6 +32,7 @@ import { createMiddleware } from "langchain";
 import { z } from "zod";
 import {
   collectDirectoryTree,
+  collectPlanningView,
   findUncoveredDirectories,
   type ListingBackend,
 } from "./repo-inventory.js";
@@ -239,10 +240,11 @@ export function validatePlanShape(
   entries: PlanEntry[],
   uncovered: readonly string[],
   tree: readonly string[] = [],
+  sourceFiles: ReadonlyMap<string, number> = new Map(),
 ): string[] {
   return [
     ...blockingProblems(entries, uncovered),
-    ...advisoryProblems(entries, tree),
+    ...advisoryProblems(entries, tree, sourceFiles),
   ];
 }
 
@@ -308,15 +310,24 @@ export function blockingProblems(
 }
 
 /**
- * Directories one page is expected to be able to describe.
+ * Documentable source files one page is expected to be able to describe.
  *
- * Used only to turn an area's own directory count into a page floor. See the
- * caller for why this is the weakest constant in the gate.
+ * The unit is files rather than directories because a directory is not a unit of
+ * information: in a monorepo the median directory holds a handful of files and
+ * the largest holds hundreds, so a directory count says more about nesting
+ * convention than about how much there is to write. File counts are available
+ * from the same listing the walk already performs, so the better unit is free.
+ *
+ * Override per repository through `directoriesPerPage`'s replacement option when
+ * a project's layout makes the default a poor fit.
  */
-const DIRECTORIES_PER_PAGE = 16;
+const SOURCE_FILES_PER_PAGE = 100;
 
 /** Page floor for any area the decomposition rule applies to. */
 const MIN_PAGES_PER_AREA = 2;
+
+/** Directories beneath an area before the decomposition rule applies at all. */
+const DECOMPOSITION_THRESHOLD = 4;
 
 /**
  * Problems worth telling the planner about that must not stop it authoring.
@@ -339,6 +350,8 @@ const MIN_PAGES_PER_AREA = 2;
 export function advisoryProblems(
   entries: PlanEntry[],
   tree: readonly string[] = [],
+  sourceFiles: ReadonlyMap<string, number> = new Map(),
+  sourceFilesPerPage: number = SOURCE_FILES_PER_PAGE,
 ): string[] {
   const problems: string[] = [];
   const documented = entries.filter(
@@ -384,24 +397,26 @@ export function advisoryProblems(
             (directory === other || directory.startsWith(`${other}/`)),
         ),
     );
-    // Proportional, with a floor of two: a flat threshold lets an area still
-    // owning a hundred directories stop at two pages, which is the collapse this
-    // is here to catch. The requirement follows what the area still owns, so it
-    // does not depend on how ambitious the planner happens to be.
+    // Proportional, with a floor of two: a flat floor lets an area still owning
+    // a hundred directories stop at two pages, which is the collapse this is
+    // here to catch. The requirement follows the documentable source the area
+    // still owns, so it tracks how much there is to write rather than how deeply
+    // the repository happens to be nested.
     //
-    // DIRECTORIES_PER_PAGE is a granularity judgement, not a page target - a page
-    // can say something useful about a dozen directories and nothing useful about
-    // a hundred. It is also the weakest thing here: it scales linearly with
-    // repository size, so a very large tree is asked for proportionally many
-    // pages. A structural signal - independently registered subsystems rather
-    // than a directory count - would carry the same intent without the scaling.
+    // Directories are still what decides whether the rule APPLIES, because an
+    // area with one directory is one subject however large its files are. Volume
+    // decides how many pages that subject needs.
+    const volume = beneath.reduce(
+      (total, directory) => total + (sourceFiles.get(directory) ?? 0),
+      sourceFiles.get(entry.directory) ?? 0,
+    );
     const required = Math.max(
       MIN_PAGES_PER_AREA,
-      Math.ceil(beneath.length / DIRECTORIES_PER_PAGE),
+      Math.ceil(volume / sourceFilesPerPage),
     );
-    if (beneath.length >= 4 && entry.pages.length < required) {
+    if (beneath.length >= DECOMPOSITION_THRESHOLD && entry.pages.length < required) {
       problems.push(
-        `${entry.directory} plans ${entry.pages.length} page(s) for a subtree of ${beneath.length} directories and needs at least ${required}. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. Adding pages to this entry clears it immediately - naming deeper entries also works but only once they claim the subtree, which is the long way round.`,
+        `${entry.directory} plans ${entry.pages.length} page(s) for a subtree of ${beneath.length} directories holding ${volume} source files, and needs at least ${required}. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. Adding pages to this entry clears it immediately - naming deeper entries also works but only once they claim the subtree, which is the long way round.`,
       );
     }
   }
@@ -489,9 +504,10 @@ export async function planReadiness(
   // prompted demoting it was the message, not the rule: it offered two remedies
   // and coordinators took the one that never terminates. The message now leads
   // with the second page that clears it in one step.
+  const view = await collectPlanningView(backend);
   return [
     ...blockingProblems(entries, uncovered),
-    ...advisoryProblems(entries, await collectDirectoryTree(backend)),
+    ...advisoryProblems(entries, view.directories, view.sourceFiles),
   ];
 }
 
