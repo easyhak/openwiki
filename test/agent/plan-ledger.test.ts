@@ -3,6 +3,8 @@ import {
   createOpenWikiPlanLedgerMiddleware,
   normalizeWikiPage,
   renderPlanMarkdown,
+  advisoryProblems,
+  blockingProblems,
   validateEntry,
   validatePlanShape,
 } from "../../src/agent/plan-ledger.ts";
@@ -93,7 +95,7 @@ describe("plan validation", () => {
       [],
       tree,
     ).join(" ");
-    expect(problems).toContain("holds 4 directories of its own and plans one page");
+    expect(problems).toContain("plans 1 page for a subtree of 4 directories");
 
     // A deeper entry claiming them is the other way to satisfy it.
     expect(
@@ -118,7 +120,7 @@ describe("plan validation", () => {
         [],
         tree,
       ).join(" "),
-    ).not.toContain("plans one page");
+    ).not.toContain("needs at least 2");
   });
 
   test("refuses a plan that defers most of the repository", () => {
@@ -670,5 +672,36 @@ describe("submit_plan schema failures", () => {
     });
     expect(out.accepted).toBe(false);
     expect((out.problems as string[]).join(" ")).toContain("entries.0.pages.0");
+  });
+});
+
+describe("blocking versus advisory", () => {
+  const tree = ["/", "/big", "/big/a", "/big/b", "/big/c", "/big/d"];
+  const coarse: Parameters<typeof advisoryProblems>[0] = [
+    {
+      disposition: "document",
+      directory: "/big",
+      pages: [page("openwiki/big.md")],
+    },
+    { disposition: "exclude", directory: "/", reason: "root files" },
+  ];
+
+  test("a coarse plan is advised, not blocked", () => {
+    // A nudge that can zero a run is not a nudge. Making decomposition
+    // blocking cost a trial everything: 84 documented areas and 87 pages
+    // planned, author_pages refused twice over one under-split area, and the
+    // wiki finished with a single page on disk for 0.125.
+    expect(advisoryProblems(coarse, tree).join(" ")).toContain(
+      "needs at least 2",
+    );
+    expect(blockingProblems(coarse, [])).toEqual([]);
+  });
+
+  test("an uncovered directory still blocks", () => {
+    // This one is not quality: a subtree nobody planned is invisible in the
+    // result, so it has to stop authoring.
+    expect(blockingProblems(coarse, ["/unplanned"]).join(" ")).toContain(
+      "covered by no entry",
+    );
   });
 });

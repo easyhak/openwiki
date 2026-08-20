@@ -240,6 +240,28 @@ export function validatePlanShape(
   uncovered: readonly string[],
   tree: readonly string[] = [],
 ): string[] {
+  return [
+    ...blockingProblems(entries, uncovered),
+    ...advisoryProblems(entries, tree),
+  ];
+}
+
+/**
+ * Problems that must clear before authoring, because they mean the wiki would
+ * be wrong rather than merely coarse.
+ *
+ * An uncovered directory is a subtree nobody planned, which is invisible in the
+ * result. A dangling page reference is an author told to link somewhere that
+ * will never exist.
+ *
+ * @param entries - Every recorded entry.
+ * @param uncovered - Directories no entry covers.
+ * @returns Blocking problems.
+ */
+export function blockingProblems(
+  entries: PlanEntry[],
+  uncovered: readonly string[],
+): string[] {
   const problems: string[] = [];
   const owners = new Map<string, string>();
   for (const entry of entries) {
@@ -277,10 +299,37 @@ export function validatePlanShape(
     }
   }
 
-  // Coverage by assertion invites gaming, and each cheap legal shape was found
-  // in turn: one entry on the root covering 964 directories, then sixteen
-  // exclusions, then thirty-seven areas all covered_by one page - three pages
-  // authored, reward 0.045. Naming an area is not documenting it.
+  if (uncovered.length > 0) {
+    problems.push(
+      `${uncovered.length} director(ies) covered by no entry: ${uncovered.slice(0, 20).join(", ")}${uncovered.length > 20 ? ", ..." : ""}`,
+    );
+  }
+  return problems;
+}
+
+/**
+ * Problems worth telling the planner about that must not stop it authoring.
+ *
+ * Decomposition and proportion are quality: a coarse plan writes a worse wiki,
+ * not a wrong one. Making them blocking cost a run everything - a coordinator
+ * built 84 documented areas and 87 pages, then author_pages refused twice over
+ * "/smith-go holds 165 directories and plans one page", it answered by adding
+ * deeper entries instead of a second page, chipped 165 down to 131 across
+ * twelve calls, and the trial finished with one page on disk and 0.125. Two of
+ * two trials did that, against none of the ten before it.
+ *
+ * A nudge that can zero a run is not a nudge. These are reported and the run
+ * proceeds.
+ *
+ * @param entries - Every recorded entry.
+ * @param tree - Every directory, for measuring decomposition.
+ * @returns Advisory problems.
+ */
+export function advisoryProblems(
+  entries: PlanEntry[],
+  tree: readonly string[] = [],
+): string[] {
+  const problems: string[] = [];
   const documented = entries.filter(
     (entry) => entry.disposition === "document",
   ).length;
@@ -326,16 +375,11 @@ export function validatePlanShape(
     );
     if (beneath.length >= 4) {
       problems.push(
-        `${entry.directory} holds ${beneath.length} directories of its own and plans one page. Give a page each to its independently registered route families, distinct stores, and subsystems that run on their own, or name a deeper entry for them.`,
+        `${entry.directory} plans 1 page for a subtree of ${beneath.length} directories and needs at least 2. Split it: a page each for the independently registered route families, distinct stores, and subsystems that run on their own inside it. A second page on this entry clears this immediately - adding deeper entries also works but only once the whole subtree is claimed, which is the long way round.`,
       );
     }
   }
 
-  if (uncovered.length > 0) {
-    problems.push(
-      `${uncovered.length} director(ies) covered by no entry: ${uncovered.slice(0, 20).join(", ")}${uncovered.length > 20 ? ", ..." : ""}`,
-    );
-  }
   return problems;
 }
 
@@ -413,7 +457,7 @@ export async function planReadiness(
     backend,
     entries.map((entry) => entry.directory),
   );
-  return validatePlanShape(entries, uncovered, await collectDirectoryTree(backend));
+  return blockingProblems(entries, uncovered);
 }
 
 export function createOpenWikiPlanLedgerMiddleware(
