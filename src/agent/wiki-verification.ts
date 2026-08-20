@@ -1,18 +1,13 @@
 /**
  * Host-owned semantic QA.
  *
- * QA fired in seven of ten graded trials, and the three that skipped it
- * reported success indistinguishably from the seven that ran it. Its measured
- * correlation with reward is +0.28, which is uninterpretable: "QA enabled"
- * meant a different program every run - four waves against an unchanged wiki in
- * one, a text block indexed as an array in another, none at all in three - so
- * the comparison was never between QA and no QA.
+ * The wave structure, the parsing and the budget live here rather than in a
+ * prompt, so that QA either runs as this program or does not run at all - an
+ * agent cannot skip it and report success, and cannot improvise a different
+ * number of waves. `off` and `full` therefore differ in exactly one thing.
  *
- * This makes the treatment clean. The wave structure, the parsing, and the
- * budget live here, so `off` versus `full` differs in exactly one thing. It is
- * deliberately not a mandate: `off` is a supported mode that finalizes without
- * QA, because the point is to find out whether semantic QA earns its cost, not
- * to assume it.
+ * `off` is a supported mode that finalizes without QA; running it is a
+ * configuration choice, not something this module mandates.
  *
  * The budget is one initial wave over every question, then one wave over only
  * what stayed unresolved. Questions are generated once and never regenerated:
@@ -58,11 +53,10 @@ const MAX_WAVES = 2;
  * Reports why QA should block finishing, or null when it should not.
  *
  * Policy lives here rather than in the completion gate because it depends on
- * the wave budget, and the two drifting apart deadlocks the run: with the
- * budget spent and questions still unresolved, a gate that blocks on `failed`
- * can never be satisfied, and every trial burns to its timeout having authored
- * a complete wiki. The gate exists to stop QA being SKIPPED, not to demand that
- * every question passes.
+ * the wave budget. If the two disagree the run deadlocks: with the budget spent
+ * and questions still unresolved, a gate that blocks on `failed` can never be
+ * satisfied. The gate exists to stop QA being SKIPPED, not to demand that every
+ * question passes.
  *
  * So `failed` blocks only while a wave remains to fix it. Once the budget is
  * spent, unresolved questions are a recorded outcome. `infrastructure_error`

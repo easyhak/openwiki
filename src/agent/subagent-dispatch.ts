@@ -6,18 +6,14 @@
  * as a string; with one it returns a Command carrying a state update, because
  * that is how a model-invoked tool writes messages back into the graph.
  *
- * A host-side tool that dispatches subagents wants the string, always. Which it
- * got depended on an accident of registration: `author_pages` runs as a PTC
- * tool called from inside the REPL, whose config has no toolCall, so it parsed
- * 3,221 propositions out of 67 authors. `verify_wiki` runs as an ordinary model
- * tool, so its config had one, its dispatch returned a Command, `String()` gave
- * "[object Object]", and the question-finder's perfectly well-formed [Q-NN]
- * block was reported as an infrastructure failure. Semantic QA did not run at
- * all in that trial, and nothing said so except the status.
+ * A host-side tool that dispatches subagents wants the string, always -
+ * otherwise which shape it receives depends on how the dispatching tool happens
+ * to be registered: a PTC tool called from inside the REPL has no toolCall in
+ * its config, while an ordinary model tool does, and stringifying a Command
+ * yields "[object Object]" rather than failing.
  *
- * So the toolCall is stripped here, and the Command form is unwrapped anyway if
- * some future path still produces one - the shape is documented, and guessing
- * wrong is silent.
+ * So the toolCall is stripped here, and the Command form is unwrapped anyway in
+ * case some other path still produces one.
  */
 
 /** The subagent task tool, narrowed to what dispatching needs. */

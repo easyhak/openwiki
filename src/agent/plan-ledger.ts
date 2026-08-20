@@ -16,15 +16,15 @@
  * with pages or with a stated reason for none; a subtree nobody mentions is
  * indistinguishable from a subtree nobody read.
  *
- * And finishing is a gate rather than an instruction. A trial reconciled at 62
- * planned pages, dispatched 41 authors, wrote 33 pages, and reported success,
- * because reconciliation was step 8 of a workflow and an instruction cannot
+ * And finishing is a gate rather than an instruction. A run once planned 62
+ * pages, dispatched 41 authors, wrote 33 pages, and reported success, because
+ * reconciliation was a numbered step in a workflow and an instruction cannot
  * refuse to finish.
  *
- * The gate is a floor, never a target. Reward correlates with page count at
- * +0.52 across ten trials and at -0.42 once the collapsed one is dropped: below
- * the floor breadth collapse destroys the score, above it more pages buy
- * nothing.
+ * The gate is a floor, never a target. Its job is to catch a plan that has
+ * collapsed - one page standing in for a subsystem - not to push a plan towards
+ * any particular size. A wiki wide enough to have a page per subsystem is wide
+ * enough; beyond that, more pages are a judgement for the planner, not this.
  */
 
 import { tool } from "@langchain/core/tools";
@@ -176,12 +176,12 @@ function describeSchemaFailure(
 /**
  * Normalizes a page path to exactly one wiki-root prefix.
  *
- * finalize_wiki compared plan paths against a walk of the wiki tree, and the
- * plan wrote `architecture/overview.md` while the walk produced
- * `openwiki/architecture/overview.md`. Nothing ever matched, so the gate told a
- * run that had written 72 pages that all 70 of its planned pages were missing,
- * and it authored every one of them a second time: 200 authors for 70 pages and
- * twice the token spend of any other run. Both sides normalize through here now.
+ * finalize_wiki compares plan paths against a walk of the wiki tree, and the
+ * two sources spell the same page differently: a plan may say
+ * `architecture/overview.md` where the walk yields
+ * `openwiki/architecture/overview.md`. Comparing them unnormalized matches
+ * nothing, which reads as every planned page being missing. Both sides
+ * normalize through here.
  *
  * @param page - Page path as planned or as found on disk.
  * @param wikiRoot - Directory generated pages live under.
@@ -311,12 +311,12 @@ export function blockingProblems(
  * Problems worth telling the planner about that must not stop it authoring.
  *
  * Decomposition and proportion are quality: a coarse plan writes a worse wiki,
- * not a wrong one. Making them blocking cost a run everything - a coordinator
- * built 84 documented areas and 87 pages, then author_pages refused twice over
+ * not a wrong one. Making them blocking once cost a run everything - a
+ * coordinator built a large, healthy plan, then authoring refused it over
  * "/smith-go holds 165 directories and plans one page", it answered by adding
- * deeper entries instead of a second page, chipped 165 down to 131 across
- * twelve calls, and the trial finished with one page on disk and 0.125. Two of
- * two trials did that, against none of the ten before it.
+ * deeper entries instead of a second page, and the run finished with a single
+ * page on disk. The remedy it chose was one the message offered and one that
+ * never terminates.
  *
  * A nudge that can zero a run is not a nudge. These are reported and the run
  * proceeds.
@@ -353,12 +353,12 @@ export function advisoryProblems(
     }
   }
 
-  // Under-decomposition, measured against the repository rather than a page
-  // target. Every clean trial ranks the same way - 37 pages scored 0.263, 49
-  // scored 0.331, 71 scored 0.404 at identical page density - so breadth is
-  // doing the work, and it collapses when one page stands in for a whole
-  // subtree. An area holding several directories of its own that no deeper
-  // entry claims is several pages, and the count comes from the tree.
+  // Under-decomposition, measured against the repository rather than against a
+  // page target. One page cannot describe a subtree of independent subsystems:
+  // it can name them, but it cannot say what each is responsible for. An area
+  // holding several directories of its own that no deeper entry claims is
+  // several pages, and the count comes from the tree rather than from a
+  // constant chosen here.
   const claimed = entries.map((entry) => entry.directory);
   for (const entry of entries) {
     if (entry.disposition !== "document" || entry.pages.length > 1) {
@@ -457,13 +457,12 @@ export async function planReadiness(
     backend,
     entries.map((entry) => entry.directory),
   );
-  // Decomposition blocks again. Demoting it to advice cost the mechanism that
-  // made the best round work: with it blocking, plans averaged 88 pages and the
-  // round scored 0.394; advisory, the coordinator could decline to split and
-  // plans fell to 74 pages for 0.352, at identical page density. The deadlock
-  // that prompted the demotion was the message, not the rule - it offered two
-  // remedies and coordinators took the one that never terminates - and the
-  // message now leads with the second page that clears it in one step.
+  // Decomposition blocks rather than advises. Advisory, a coordinator can
+  // decline to split and nothing downstream recovers the lost structure, so the
+  // rule has to hold at submission or not exist. The deadlock that once
+  // prompted demoting it was the message, not the rule: it offered two remedies
+  // and coordinators took the one that never terminates. The message now leads
+  // with the second page that clears it in one step.
   return [
     ...blockingProblems(entries, uncovered),
     ...advisoryProblems(entries, await collectDirectoryTree(backend)),

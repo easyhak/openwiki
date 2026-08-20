@@ -1,24 +1,16 @@
 /**
- * Atomic page write: prose and Claims, or neither.
+ * The author's page write: prose and Claims, or neither.
  *
- * Every arrangement that let these two happen separately has failed. Authors
- * returned propositions for the coordinator to establish, and the payload
- * overflowed a tool result, the page path was spelled two ways, and one
- * unresolvable symbol atomically discarded a page's whole claim set. Then
- * authors were given resolve_claims and told to call it, and a graded run wrote
- * 68 pages, established zero claims, and put `Evidence: repo://...` in the
- * Markdown instead - the tool was on the surface and simply never called.
+ * Grounding is enforced by the tool surface rather than requested in a prompt.
+ * The author has no call that writes prose on its own, so a page cannot exist
+ * without claims behind it, and the coordinator never has to carry an author's
+ * propositions through a tool result.
  *
- * Exposure is not enforcement. So writing a page and grounding it become one
- * operation that cannot half-succeed: claims resolve first, and the Markdown is
- * written only if they did. An author cannot produce ungrounded prose because
- * there is no call that does it.
- *
- * The failure is loud in both directions. Evidence the resolver refuses returns
- * the resource it refused with nothing written, so the author - which is holding
- * the file - fixes the anchor and calls again. And a page that never called this
- * at all has no prose, which the pool sees as an author that did nothing rather
- * than as a page that needs re-authoring.
+ * Both failure directions are explicit. Evidence the resolver refuses comes back
+ * naming the resource it refused, with nothing written, so the author - which
+ * still holds the file - can fix that one anchor and call again. A page that was
+ * never written has no prose at all, which the pool reads as an author that did
+ * nothing rather than as a page needing repair.
  */
 
 import { tool } from "@langchain/core/tools";
@@ -95,18 +87,12 @@ export function normalizeEvidence(resource: string): string {
 /**
  * Creates the author's two-step write: claims, then prose.
  *
- * One atomic call made an author emit a 1,500-word page and forty claims with
- * evidence in a single completion, and the page lost. Measured on clean
- * single-draft runs: 1,142 mean words against 1,439 with a separate write, and
- * the share of the grader's required facts absent rose from 47% to 54% - every
- * claim role worse, including the two an author reads straight off its own
- * subtree, which denser grounding would not have touched.
- *
- * Splitting them keeps the invariant and drops the competition. establish_claims
- * takes the propositions; write_page refuses a page with no claims. Prose still
- * cannot exist ungrounded, because there is no call that writes it alone, and
- * each output gets a completion to itself. It also restores claim-first order:
- * derive the propositions, then write the page from them.
+ * Two calls rather than one, because a single call asking for both a page and
+ * its claims makes them compete for one completion and the prose is what gives
+ * way. establish_claims takes the propositions; write_page refuses a page with
+ * no claims. Prose therefore cannot exist ungrounded - there is no call that
+ * writes it alone - and each output gets a completion to itself. The order is
+ * claims first, so the page is written from propositions already derived.
  *
  * @param session - Run-scoped claim state.
  * @param backend - Wiki filesystem backend.

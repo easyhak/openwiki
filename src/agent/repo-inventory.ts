@@ -182,10 +182,9 @@ function rooted(directory: string): string {
  */
 function isCovered(directory: string, entries: readonly string[]): boolean {
   // "/" covers only itself - the repository's own files, which belong to no
-  // subdirectory. Letting it cover the whole tree made the guarantee vacuous:
-  // a coordinator blocked twice on schema errors collapsed its plan to one root
-  // entry with twenty pages, passed coverage on 964 directories, and scored
-  // 0.230. A plan has to name the areas it documents.
+  // subdirectory. If it covered the whole tree the coverage guarantee would be
+  // vacuous: a single root entry would satisfy it for every directory in the
+  // repository. A plan has to name the areas it documents.
   return entries.some(
     (entry) => directory === entry || directory.startsWith(`${entry}/`),
   );
