@@ -1432,6 +1432,27 @@ describe("boundary dispositions", () => {
   });
 });
 
+describe("what the survey asks for", () => {
+  test("the ask defines the boundary by directory and names the alternatives", () => {
+    // Surveys reported "internal to Go service" for twenty subsystems of one
+    // service, which is a coherent reading of a boundary between services and the
+    // wrong one here: most relationships worth documenting are inside a service,
+    // which is exactly why no page owns them.
+    const middleware = createOpenWikiPlanLedgerMiddleware(
+      stubBackend([]),
+      createPlanStore(),
+    ) as { tools: { name: string; description: string }[] };
+    const submit = middleware.tools.find((one) => one.name === "submit_plan");
+    const text = String(submit?.description);
+    expect(text).toContain("DIRECTORY, not its service");
+    expect(text).toContain("sibling directory in the same service");
+    // The three answers that were being collapsed into no_boundaries.
+    expect(text).toContain("external:<name>");
+    expect(text).toContain("does not discharge a claim");
+    expect(text).toContain("pure algorithm");
+  });
+});
+
 describe("boundary pairing and missing tests", () => {
   const claim = (
     id: string,
