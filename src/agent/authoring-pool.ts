@@ -134,7 +134,7 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
       }
       const dispatch = taskTool;
 
-      // One author per page, ever. Two authors on one page race on write_file
+      // One author per page, ever. Two authors on one page race on the write
       // and the loser's evidence is silently gone, so a repeated page is a
       // caller bug worth reporting rather than a request worth honouring.
       const seen = new Set<string>();
@@ -182,10 +182,17 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
         return { page, claims: session ? session.inspectClaims(page).length : 0 };
       });
 
+      // Zero claims is a failed task, not a page needing another pass. A page
+      // is written only alongside its claims now, so an author that established
+      // none produced nothing - and re-dispatching the same brief that already
+      // produced nothing is how a run spent 136 author calls on 68 pages.
+      for (const result of results) {
+        if (!result.error && result.claims === 0) {
+          result.error =
+            "Author established no claims, so it wrote nothing. Do not re-dispatch this brief unchanged: give it the specific evidence anchors it lacked, or drop the page.";
+        }
+      }
       const failed = results.filter((result) => result.error);
-      const withoutClaims = results.filter(
-        (result) => !result.error && result.claims === 0,
-      );
 
       return JSON.stringify({
         authored: results.length - failed.length,
@@ -193,7 +200,6 @@ export function createOpenWikiAuthoringPoolMiddleware(session?: ClaimSession) {
           (total, result) => total + result.claims,
           0,
         ),
-        pagesWithNoClaims: withoutClaims.map((result) => result.page),
         failed,
         ...(duplicates.length > 0 ? { duplicatePagesIgnored: duplicates } : {}),
       });

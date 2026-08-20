@@ -70,10 +70,13 @@ describe("author_pages", () => {
     });
     expect(out.authored).toBe(2);
     expect(out.claimsEstablished).toBe(53);
-    expect(out.pagesWithNoClaims).toEqual([]);
+    expect(out.failed).toEqual([]);
   });
 
-  test("surfaces a page that wrote prose it never grounded", async () => {
+  test("treats zero claims as a failed task, not a page to re-dispatch", async () => {
+    // A page is written only alongside its claims, so an author that
+    // established none produced nothing. Re-dispatching the same brief that
+    // already produced nothing is how a run spent 136 author calls on 68 pages.
     const h = authorPagesWith(ok, stubSession({ "/openwiki/a.md": 30 }));
     const out = await h.run({
       assignments: [
@@ -81,8 +84,11 @@ describe("author_pages", () => {
         { page: "b.md", brief: "b" },
       ],
     });
+    expect(out.authored).toBe(1);
     expect(out.claimsEstablished).toBe(30);
-    expect(out.pagesWithNoClaims).toEqual(["/openwiki/b.md"]);
+    const failed = out.failed as { page: string; error: string }[];
+    expect(failed[0].page).toBe("/openwiki/b.md");
+    expect(failed[0].error).toContain("Do not re-dispatch this brief unchanged");
   });
 
   test("one author's failure costs its page, not the pool", async () => {
@@ -124,7 +130,9 @@ describe("author_pages", () => {
       ],
       concurrency: 2,
     });
-    expect(out.authored).toBe(9);
+    // Every page in this stub established zero claims, so all nine are failed
+    // tasks; what is being asserted here is the pool's shape, not their success.
+    expect((out.failed as unknown[]).length).toBe(9);
     expect(record.peak).toBeLessThanOrEqual(2);
   });
 

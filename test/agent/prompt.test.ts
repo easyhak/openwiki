@@ -362,7 +362,7 @@ describe("createSystemPrompt Claims workflow", () => {
         // Claims for pooled pages are established inside author_pages now, so
         // the prompt's job is to stop the coordinator doing it a second time.
         expect(prompt).toContain(
-          "author_pages establishes every proposition its authors report",
+          "Each author establishes its own page's Claims",
         );
         expect(prompt).toContain("finalize_wiki");
         expect(prompt).toContain("verify_wiki");

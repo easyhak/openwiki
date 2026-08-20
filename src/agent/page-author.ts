@@ -23,6 +23,8 @@
  */
 
 import type { SubAgent } from "deepagents";
+import type { ClaimSession } from "../claims/brains/code/session.js";
+import { createWriteClaimedPageTool } from "./write-claimed-page.js";
 import {
   createFilesystemMiddleware,
   type AnyBackendProtocol,
@@ -47,12 +49,21 @@ import type { OpenWikiCommand, OpenWikiOutputMode } from "./types.js";
  * coordinator's instruction, and the state backend merges concurrent page
  * writes rather than losing them.
  */
+/**
+ * The author's filesystem surface.
+ *
+ * `write_file` is deliberately absent. An author that can write prose directly
+ * will: given resolve_claims and told to use it, a graded run wrote 68 pages,
+ * established zero claims, and put `Evidence: repo://...` in the Markdown.
+ * Creating a page goes through write_claimed_page, which establishes its claims
+ * in the same operation, so ungrounded prose is not a thing the author can
+ * produce. `edit_file` stays for refining a page that already has claims.
+ */
 export const AUTHOR_FILESYSTEM_TOOLS = [
   "read_file",
   "ls",
   "glob",
   "grep",
-  "write_file",
   "edit_file",
 ] as const satisfies readonly FsToolName[];
 
@@ -83,12 +94,12 @@ Establish the claims first, then write the page from them:
 - An agent or human should be able to understand this component and its workflows from your page without reading a single line of code outside the wiki.
 - State each supplied relationship in the prose that explains it, linking the target page by the path you were given. Do not invent link targets: another author may not have written that page yet, and a guessed path is a broken link.
 - Begin the file with OKF v0.1 front matter as your assignment specifies.
+- Claims are structured data passed to write_claimed_page, never text in the page. A line reading "Evidence: repo://..." in the Markdown is not a claim and grounds nothing.
 
-Establish your claims yourself, with resolve_claims:
-- Call it for your page with the propositions you derived. You own your page's claim set; nobody establishes it on your behalf, and a proposition you never establish is one the wiki cannot re-verify however well the prose reads.
-- Evidence is \`repo://path\` or \`repo://path#symbol\`, and nothing else. No line ranges, no directories, no trailing slash. A symbol must be one the file actually declares - if you are unsure a name resolves, cite the file.
-- If it rejects a resource, that is a fact about your evidence and you have the file open: cite the symbol the file really declares, or cite the file. Do not abandon the claim.
-- Establish in batches rather than one call per proposition, and do it as you go rather than saving it for the end, so a page that runs long still has grounded claims.
+Write the page with write_claimed_page:
+- It takes the complete Markdown and every material proposition the page states. Claims resolve first and the page is written only if they do, so there is no way to leave prose ungrounded and no separate write to reach for.
+- Evidence is \`repo://path\` or \`repo://path#symbol\`, and nothing else. No line ranges, no directories, no trailing slash. A symbol must be one the file actually declares; when unsure, cite the file.
+- If it refuses a resource, nothing was written. It names the resource: fix that one anchor - the symbol the file really declares, or the file itself - and call again with the same Markdown. Do not drop the claim and do not paste evidence into the prose instead.
 
 Reporting:
 - Finish with a short plain-text note: what you wrote, and any assigned area you could not document from evidence and why. It is read by a person, not parsed, so do not wrap it in JSON.
@@ -132,17 +143,26 @@ export function resolvePageAuthorSubagents(
   command: OpenWikiCommand,
   outputMode: OpenWikiOutputMode,
   backend: AnyBackendProtocol,
+  session: ClaimSession,
 ): SubAgent[] {
   if (command !== "init" || outputMode !== "repository") {
     return [];
   }
 
-  // Same-name middleware replaces DeepAgents' default filesystem middleware
-  // rather than sitting alongside it, which is what keeps `execute` off the
-  // surface instead of merely unused.
+  // Named explicitly rather than inherited. DeepAgents gives a subagent
+  // `agentParams.tools ?? defaultTools`, so an author with no tools field
+  // silently receives whatever the graph exposes - which made "does the author
+  // have a claims tool" a question about two files in different packages,
+  // answered wrongly in a comment.
   return [
     {
       ...PAGE_AUTHOR_SUBAGENT,
+      // An author writes one page and grounds it. It has no use for
+      // inspect_claims or delete_file, and the filesystem middleware below
+      // supplies the rest of its surface.
+      tools: [
+        createWriteClaimedPageTool(session, backend),
+      ],
       middleware: [
         ...(PAGE_AUTHOR_SUBAGENT.middleware ?? []),
         createFilesystemMiddleware({

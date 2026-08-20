@@ -173,9 +173,9 @@ describe("Claims agent graph integration", () => {
         // The author establishes its own page's claims now: it is the only
         // participant that can repair bad evidence, because it has the file
         // open. The read-only reviewers above still may not touch Claims.
-        expect(promptFor("page-author")).toContain(
-          "You own your page's claim set",
-        );
+        // The author cannot write prose without claims: there is one atomic
+        // operation and no separate write on its surface.
+        expect(promptFor("page-author")).toContain("write_claimed_page");
       }
     },
   );

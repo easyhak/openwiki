@@ -538,11 +538,14 @@ function createOpenWikiAgentGraph(
       ),
       // Authoring is the run's dominant cost and the only phase that cannot move
       // into the REPL, so it scales by fanning out instead.
-      ...resolvePageAuthorSubagents(
-        options.command,
-        options.outputMode,
-        backend,
-      ),
+      ...(options.claimsRuntime
+        ? resolvePageAuthorSubagents(
+            options.command,
+            options.outputMode,
+            backend,
+            options.claimsRuntime.session,
+          )
+        : []),
     ],
     permissions: AGENT_FILESYSTEM_PERMISSIONS,
     systemPrompt: createSystemPrompt(

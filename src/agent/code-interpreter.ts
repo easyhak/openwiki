@@ -81,6 +81,12 @@ import { createCodeInterpreterMiddleware } from "@langchain/quickjs";
  * do not get it: fifty-seven concurrent writers is a different question about
  * the store, and the ownership split is what keeps a proposition traceable to
  * the agent that read the evidence.
+ *
+ * That last part outlived itself: authors DO establish their own claims now,
+ * because an author is the only participant holding the file when the resolver
+ * refuses a symbol. resolve_claims stays here for the coordinator's own pages,
+ * such as the quickstart, and page-author asks for it by name in its own spec
+ * rather than inheriting it.
  */
 const PTC_TOOLS = [
   "ls",
