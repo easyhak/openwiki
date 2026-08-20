@@ -96,7 +96,7 @@ describe("plan validation", () => {
       [],
       tree,
     ).join(" ");
-    expect(problems).toContain("plans 1 page(s) for a subtree of 4 directories and needs at least 2");
+    expect(problems).toContain("plans 1 page for a subtree of 4 directories");
 
     // A deeper entry claiming them is the other way to satisfy it.
     expect(
