@@ -105,7 +105,7 @@ export const InspectClaimsInputSchema = z
  */
 export const RESOLVE_CLAIMS_DESCRIPTION = `${CLAIMS_SUBSTANCE_GUIDANCE}
 
-Maintain those Claims for one or more wiki pages in one call. Put every affected page in pages: a whole authoring or repair phase is one call, and calling this once per page in a loop is always wrong. Each page's operations apply atomically and each page succeeds or fails on its own - successful pages come back under pages, failures under failed with their own error - so retry only the failures and never replay a page that already succeeded. Keep each statement concise, not an excerpt, list, compound summary, or paragraph. Use confirm when a claim remains true, update to change its statement or evidence, retract when it is obsolete, and add for a new material fact. For an update, call this tool before writing the corresponding new or materially changed factual prose; scope an existing page to facts changed by the update rather than backfilling untouched prose. Style- or navigation-only edits need no Claims call. Claims currently support repository evidence only; do not invent repository evidence for connector-derived facts, and leave LangSmith-only facts unclaimed. Cite bounded language-agnostic line ranges as repo://path#L10-L24. Use repo://path only when the whole file is the evidence.`;
+Maintain those Claims for one or more wiki pages in one call. Put every affected page in pages: a whole authoring or repair phase is one call, and calling this once per page in a loop is always wrong. Each page's operations apply atomically and each page succeeds or fails on its own - successful pages come back under pages, failures under failed with their own error - so retry only the failures and never replay a page that already succeeded. Keep each statement concise, not an excerpt, list, compound summary, or paragraph. Use confirm when a claim remains true, update to change its statement or evidence, retract when it is obsolete, and add for a new material fact. An update must carry at least one of statement or evidence. For an update, call this tool before writing the corresponding new or materially changed factual prose; scope an existing page to facts changed by the update rather than backfilling untouched prose. Style- or navigation-only edits need no Claims call. Claims currently support repository evidence only; do not invent repository evidence for connector-derived facts, and leave LangSmith-only facts unclaimed. Cite bounded language-agnostic line ranges as repo://path#L10-L24. Use repo://path only when the whole file is the evidence.`;
 
 /**
  * Shared model guidance for Claims inspection tools across agent transports.
@@ -194,10 +194,14 @@ export function createClaimsTools(
                           evidence: evidenceArraySchema(),
                         },
                         required: ["op", "id"],
-                        anyOf: [
-                          { required: ["statement"] },
-                          { required: ["evidence"] },
-                        ],
+                        // "at least one of statement or evidence" is stated in the
+                        // description and enforced by ClaimOperationSchema rather than
+                        // expressed here as an anyOf of required-only branches. That is
+                        // valid JSON Schema, but a provider is free to reject a keyword
+                        // combination it does not implement, and one that refuses the
+                        // branches rejects the whole tool on the first call - so the
+                        // constraint would cost every Claims tool rather than guard one
+                        // field. The refine still rejects an update carrying neither.
                         additionalProperties: false,
                       },
                       {
