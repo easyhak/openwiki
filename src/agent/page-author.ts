@@ -51,6 +51,21 @@ const PAGE_AUTHOR_DESCRIPTION = [
   "Dispatch concurrently through author_pages, one page per task. It establishes its claims and then writes its page, and returns a short plain-text note rather than JSON: how many claims a page established comes from the claim store.",
 ].join(" ");
 
+/**
+ * Batching is a hard constraint rather than a preference.
+ *
+ * An author's cost is not the evidence it reads, it is that evidence resent once
+ * per turn: the transcript carries every prior result forward, so turn count
+ * multiplies the whole accumulated context. A page gathered one call per turn and
+ * the same page gathered several calls per turn read identical files and produce
+ * identical claims, at several times the tokens and several times the wall clock
+ * for the serial one - and the wall clock is what puts a slow author, and the
+ * pages behind it in the pool, past the run's budget.
+ *
+ * The assignment is what makes this available. It names the evidence paths,
+ * symbols and tests up front, so the first wave of reads is knowable before any
+ * of them return; only the follow-up reads are genuinely sequential.
+ */
 const PAGE_AUTHOR_SYSTEM_PROMPT = `You author exactly one wiki page and report what you established.
 
 Your assignment names one canonical page path, its inventory unit, the evidence paths and symbols to inspect, its focused tests, and its relationship edges. Write that page and nothing else.
@@ -60,6 +75,7 @@ Hard constraints:
 - Do not read /openwiki/_plan.md or any other wiki page. Your assignment is complete by construction: if something you need is missing from it, say so in your report rather than going to look for it. Your neighbours' pages are being written while you work, so what you would read is half-finished.
 - Read repository source and tests as evidence, starting from the paths and symbols your assignment names. Never document a secret, credential, token, or .env value.
 - Prefer grep and targeted reads over reading a large file whole.
+- Issue every independent search and read in the same turn. Your assignment names its evidence up front, so most of what you have to inspect does not depend on what you find: put those greps, globs, ls calls and reads in one turn together rather than one per turn, and spend a following turn only on the reads a previous result actually determined. Everything you have read so far is resent on every turn you take, so the same evidence gathered one call at a time costs several times what it costs gathered in parallel.
 - Do not invent files, modules, APIs, or behavior. Every material proposition must be supported by source or tests you inspected.
 
 Establish the claims first, then write the page from them:
