@@ -12,9 +12,10 @@ const HOST_ID_PATTERN = /^[a-z0-9-]{1,64}$/u;
 export type HostRunMode = "init" | "update";
 
 /**
- * Stable names in the complete V1 host lifecycle tool set.
+ * Stable names in the complete host integration tool set.
  */
 export type ProtocolToolName =
+  | "openwiki_context"
   | "openwiki_begin"
   | "openwiki_inspect_claims"
   | "openwiki_resolve_claims"
@@ -53,6 +54,52 @@ export interface RunRequest {
 }
 
 /**
+ * Validated task-oriented context request.
+ */
+export interface ContextRequest {
+  /**
+   * Absolute path inside the Git repository to query.
+   */
+  root: string;
+
+  /**
+   * Exact coding task supplied by the host.
+   */
+  task: string;
+
+  /**
+   * Optional follow-up question or subsystem focus.
+   */
+  focus?: string;
+
+  /**
+   * Optional repository-relative paths already known to be changing.
+   */
+  changedPaths?: string[];
+
+  /**
+   * Maximum number of behavior contracts to return.
+   *
+   * @default 8
+   */
+  maxContracts: number;
+
+  /**
+   * Approximate maximum serialized response characters.
+   *
+   * @default 12000
+   */
+  maxChars: number;
+
+  /**
+   * Whether strong direct matches may add one-hop related contracts.
+   *
+   * @default true
+   */
+  includeRelationships: boolean;
+}
+
+/**
  * Validated input accepted by `openwiki_begin`.
  */
 export const BeginInput: z.ZodType<BeginRequest> = z
@@ -69,6 +116,36 @@ export const BeginInput: z.ZodType<BeginRequest> = z
 export const RunInput: z.ZodType<RunRequest> = z
   .object({
     runId: z.string().uuid(),
+  })
+  .strict();
+
+const RepositoryRelativePath = z
+  .string()
+  .trim()
+  .min(1)
+  .max(500)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.startsWith("\\") &&
+      !/^[A-Za-z]:[\\/]/u.test(value) &&
+      !value.split(/[\\/]/u).includes("..") &&
+      !value.includes("\0"),
+    "Changed paths must be safe repository-relative paths",
+  );
+
+/**
+ * Validated input accepted by `openwiki_context`.
+ */
+export const ContextInput: z.ZodType<ContextRequest> = z
+  .object({
+    root: z.string().trim().min(1),
+    task: z.string().trim().min(1).max(4_000),
+    focus: z.string().trim().min(1).max(2_000).optional(),
+    changedPaths: z.array(RepositoryRelativePath).max(50).optional(),
+    maxContracts: z.number().int().min(1).max(20).default(8),
+    maxChars: z.number().int().min(4_000).max(30_000).default(12_000),
+    includeRelationships: z.boolean().default(true),
   })
   .strict();
 

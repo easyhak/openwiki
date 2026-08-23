@@ -41,14 +41,17 @@ import {
   type ClaimsRuntime,
 } from "../../claims/brains/code/runtime.js";
 import { ClaimsStore } from "../../claims/brains/code/store.js";
+import { retrieveOpenWikiContext } from "../context/retrieval.js";
 import { HostIntegrationError } from "./errors.js";
 import {
   BeginInput,
+  ContextInput,
   InspectClaimsInput,
   ResolveClaimsInput,
   RunInput,
   isValidHostId,
   type BeginRequest,
+  type ContextRequest,
   type HostRunMode,
   type InspectClaimsRequest,
   type ProtocolTool,
@@ -516,12 +519,29 @@ export class HostSessionManager {
   }
 
   /**
-   * Returns the complete transport-neutral host authoring tool set.
+   * Retrieves read-only task context without creating or requiring a run.
    *
-   * @returns Begin and finish tools bound to this manager.
+   * @param input - Repository, task, impact hints, and response budget.
+   * @returns Ranked behavior contracts and source/test routing.
+   */
+  async context(input: ContextRequest): Promise<unknown> {
+    return await retrieveOpenWikiContext(input);
+  }
+
+  /**
+   * Returns the complete transport-neutral context and authoring tool set.
+   *
+   * @returns Context and lifecycle tools bound to this manager.
    */
   tools(): readonly ProtocolTool[] {
     return [
+      {
+        name: "openwiki_context",
+        description:
+          "Retrieve read-only task context, implementation entrypoints, invariants, impact relationships, and focused tests from a repository OpenWiki catalog. No begin run is required.",
+        schema: ContextInput,
+        handle: async (input) => this.context(ContextInput.parse(input)),
+      },
       {
         name: "openwiki_begin",
         description:

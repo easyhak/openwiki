@@ -48,6 +48,12 @@ describe("ensureCodeModeRepoSetup agent files", () => {
       expect(content).toContain(SNIPPET_END);
       expect(content).toContain("## OpenWiki");
     }
+
+    const agentsContent = await readIfPresent(path.join(repo, "AGENTS.md"));
+    expect(agentsContent).toContain("call `openwiki_context`");
+    expect(agentsContent).toContain("with the exact task");
+    expect(agentsContent).toContain("changed paths");
+    expect(agentsContent).toContain("source code and tests as authoritative");
   });
 
   test("CLAUDE.md is a simple reference to AGENTS.md, not a copy of its full content", async () => {

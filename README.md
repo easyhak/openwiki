@@ -89,6 +89,17 @@ For an existing wiki, ask:
 Update this repository's OpenWiki for changes since its last successful run.
 ```
 
+For ordinary coding work, repositories with a structured OpenWiki context
+catalog can use the integration's read-only `openwiki_context` tool before broad
+exploration. It accepts the exact task plus optional focused questions or
+changed paths, then returns ranked behavior contracts, implementation and test
+entrypoints, invariants, failure modes, impact relationships, confidence, and
+narrow validation commands. It does not start an init/update session, and its
+output is orientation rather than authority—source and tests still decide
+behavior. The supported catalog location is
+`openwiki/knowledge/catalog.json`; catalog generation is not yet part of normal
+OpenWiki runs.
+
 Host-driven runs currently support repository code wikis, not personal brains. They use the coding agent's authenticated model session, so OpenWiki provider credentials are not required. OpenWiki still owns deterministic setup and finalization; the coding agent owns research, planning, factual authoring, and semantic review.
 
 External coding-agent integrations currently use repository source and tests only. Connector-sourced context, including LangSmith, is not yet supported.

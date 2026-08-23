@@ -1,6 +1,6 @@
 ---
 name: openwiki
-description: Initialize, update, or repair an OpenWiki repository wiki using OpenWiki lifecycle tools and native repository tools. Use when asked to document a repository, run OpenWiki init or update, refresh stale OpenWiki pages, reconcile documentation after source changes, or repair an interrupted OpenWiki run.
+description: Retrieve task-oriented coding context from an OpenWiki repository, or initialize, update, and repair its wiki using OpenWiki tools and native repository tools. Use for non-trivial coding work when an OpenWiki context catalog is present, or when asked to document a repository, run OpenWiki init or update, refresh stale pages, reconcile documentation after source changes, or repair an interrupted OpenWiki run.
 ---
 
 # OpenWiki
@@ -8,6 +8,22 @@ description: Initialize, update, or repair an OpenWiki repository wiki using Ope
 Use OpenWiki for deterministic preparation and finalization. Perform repository
 investigation, planning, review, and factual Markdown authoring with native host
 tools and host-native delegation.
+
+## Read-only coding context
+
+For a non-trivial or cross-cutting coding task, resolve the exact Git root as
+described below and call `openwiki_context` with that root and the user's exact
+task before broad repository exploration. This read-only call does not start a
+wiki lifecycle run. Use returned contracts to choose source, tests, invariants,
+and impact edges, but verify every material statement in source code and tests.
+Call it again with `focus` or `changedPaths` when entering an unfamiliar
+subsystem or when the first packet is insufficient. When confidence is `none`
+or no catalog exists, fall back to native repository discovery. Skip retrieval
+for small work that is already localized.
+
+Do not call `openwiki_begin` for an ordinary coding task. The lifecycle sequence
+below applies only when the user asked to initialize, update, or repair the
+generated wiki.
 
 ## Required sequence
 

@@ -48,6 +48,18 @@ function section(markdown: string, heading: string): string {
 }
 
 describe("canonical OpenWiki host skill", () => {
+  test("uses read-only context before broad coding exploration without starting a run", async () => {
+    const skill = await readFile(SKILL_PATH, "utf8");
+    const context = section(skill, "Read-only coding context");
+
+    expect(context).toContain("`openwiki_context`");
+    expect(context).toMatch(/user's exact\s+task/u);
+    expect(context).toMatch(/does not start a\s+wiki lifecycle run/u);
+    expect(context).toContain("verify every material statement");
+    expect(context).toContain("confidence is `none`");
+    expect(context).toContain("Do not call `openwiki_begin`");
+  });
+
   test("uses only supported discovery frontmatter fields", async () => {
     const skill = await readFile(SKILL_PATH, "utf8");
     const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(skill);
@@ -307,7 +319,7 @@ describe("canonical OpenWiki host skill", () => {
     );
   });
 
-  test("contains no lifecycle or page-transaction tool drift", async () => {
+  test("contains no context, lifecycle, or page-transaction tool drift", async () => {
     const bundle = (
       await Promise.all(
         MARKDOWN_PATHS.map((relativePath) =>
@@ -325,6 +337,7 @@ describe("canonical OpenWiki host skill", () => {
 
     expect(toolNames).toEqual([
       "openwiki_begin",
+      "openwiki_context",
       "openwiki_finish",
       "openwiki_inspect_claims",
       "openwiki_resolve_claims",

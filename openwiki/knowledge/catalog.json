@@ -1,0 +1,1386 @@
+{
+  "schemaVersion": 1,
+  "repository": "openwiki",
+  "authority": "Source code and tests are authoritative; catalog entries are routing hypotheses.",
+  "contracts": [
+    {
+      "id": "run.persisted-lifecycle",
+      "status": "current",
+      "title": "Persisted init/update lifecycle",
+      "summary": "runOpenWikiAgent owns preparation, streaming, Claims finalization, completion metadata, crash cleanup, and checkpoint pruning for native runs.",
+      "keywords": [
+        "init",
+        "update",
+        "runOpenWikiAgent",
+        "interrupted",
+        "metadata",
+        "checkpoint",
+        "finalization"
+      ],
+      "pages": ["system/run-lifecycle.md", "system/architecture.md"],
+      "implementation": [
+        "src/agent/index.ts",
+        "src/agent/crash-guard.ts",
+        "src/agent/utils.ts"
+      ],
+      "tests": [
+        "test/agent/claims-run-lifecycle.test.ts",
+        "test/agent/run-metadata.test.ts",
+        "test/agent/crash-guard.test.ts"
+      ],
+      "invariants": [
+        "Claims finalization precedes complete metadata.",
+        "A stream or finalization failure records interrupted state without replacing the original error."
+      ],
+      "failureModes": [
+        "Cleanup, checkpoint pruning, and interrupted stamping are best-effort secondary operations."
+      ],
+      "changeSignals": [
+        "Changing completion ordering requires Claims, metadata, crash-guard, telemetry, and replacement review."
+      ],
+      "relationships": [
+        "claims.finalization-policy",
+        "run.transactional-init",
+        "telemetry.run-boundary"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/agent/claims-run-lifecycle.test.ts test/agent/run-metadata.test.ts test/agent/crash-guard.test.ts"
+      ]
+    },
+    {
+      "id": "run.transactional-init",
+      "status": "current",
+      "title": "Transactional repository init replacement",
+      "summary": "Existing repository wiki state is backed up, only safe INSTRUCTIONS.md is initially preserved, and commit occurs after the complete run boundary succeeds.",
+      "keywords": [
+        "rollback",
+        "replacement",
+        "wiki-replacement",
+        "SIGINT",
+        "SIGTERM",
+        "INSTRUCTIONS.md",
+        "transactional init"
+      ],
+      "pages": [
+        "system/run-lifecycle.md",
+        "system/security-and-failures.md",
+        "integrations/host-lifecycle.md"
+      ],
+      "implementation": [
+        "src/agent/wiki-replacement.ts",
+        "src/agent/index.ts",
+        "src/integrations/core/session-manager.ts"
+      ],
+      "tests": [
+        "test/agent/wiki-replacement.test.ts",
+        "test/agent/claims-run-lifecycle.test.ts",
+        "test/integrations/session-manager.test.ts"
+      ],
+      "invariants": [
+        "No replacement commit occurs before finalization and complete metadata.",
+        "Symlinked wiki roots or instructions are refused."
+      ],
+      "failureModes": [
+        "Failure or termination restores the old wiki when a backup exists; incomplete rollback is surfaced."
+      ],
+      "changeSignals": [
+        "Any new fatal finalizer must execute before replacement commit."
+      ],
+      "relationships": [
+        "run.persisted-lifecycle",
+        "integration.host-lifecycle",
+        "claims.finalization-policy"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/agent/wiki-replacement.test.ts test/agent/claims-run-lifecycle.test.ts test/integrations/session-manager.test.ts"
+      ]
+    },
+    {
+      "id": "run.update-noop",
+      "status": "current",
+      "title": "Message-free repository update no-op",
+      "summary": "A repository update skips the model only when prior completion, language, worktree, and Git history prove no meaningful change; Claims still finalize.",
+      "keywords": [
+        "noop",
+        "no-op",
+        "skip model",
+        "last-update",
+        "git head",
+        "language change",
+        "worktree"
+      ],
+      "pages": ["system/run-lifecycle.md", "cli/runtime.md"],
+      "implementation": [
+        "src/agent/utils.ts",
+        "src/agent/index.ts",
+        "src/cli/startup.ts"
+      ],
+      "tests": ["test/agent/update-noop.test.ts", "test/cli/startup.test.ts"],
+      "invariants": [
+        "An explicit user message bypasses no-op.",
+        "No-op still finalizes Claims and reports noop telemetry."
+      ],
+      "failureModes": [
+        "Interrupted prior state, language change, relevant commit, or meaningful worktree change forces work."
+      ],
+      "changeSignals": [
+        "Changing ignore or metadata semantics changes the no-op decision matrix."
+      ],
+      "relationships": [
+        "run.persisted-lifecycle",
+        "claims.finalization-policy",
+        "cli.runtime"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/agent/update-noop.test.ts test/cli/startup.test.ts"
+      ]
+    },
+    {
+      "id": "agent.graph-and-confinement",
+      "status": "current",
+      "title": "Deep Agent graph and guarded backend",
+      "summary": "The low-level graph composes model, tools, middleware, mounts, and checkpoints while the backend independently enforces ignore, docs-only writes, and hidden Claims state.",
+      "keywords": [
+        "createOpenWikiAgent",
+        "deepagents",
+        "backend",
+        "docs-only",
+        ".openwikiignore",
+        "mount",
+        "conversation_history",
+        "tool"
+      ],
+      "pages": ["agent/runtime.md", "system/security-and-failures.md"],
+      "implementation": [
+        "src/agent/index.ts",
+        "src/agent/docs-only-backend.ts",
+        "src/agent/openwiki-ignore.ts"
+      ],
+      "tests": [
+        "test/agent/create-openwiki-agent.test.ts",
+        "test/agent/docs-only-backend.test.ts",
+        "test/agent/openwiki-ignore.test.ts"
+      ],
+      "invariants": [
+        "Repository init/update writes stay below openwiki/.",
+        "Claims sidecars and ignored paths remain unavailable to generic model tools."
+      ],
+      "failureModes": [
+        "Active ignore rules disable arbitrary shell execution because shell reads cannot be proven safe."
+      ],
+      "changeSignals": [
+        "A new tool or mount requires permission, persistence, event, and prompt review."
+      ],
+      "relationships": [
+        "agent.authoring-pipeline",
+        "claims.mutation-session",
+        "platform.security-portability"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/agent/create-openwiki-agent.test.ts test/agent/docs-only-backend.test.ts test/agent/openwiki-ignore.test.ts"
+      ]
+    },
+    {
+      "id": "agent.authoring-pipeline",
+      "status": "current",
+      "title": "Prompt-owned authoring and deterministic finalizers",
+      "summary": "Repository authoring combines model-followed planning/review/Claims guidance with code-owned frontmatter, Mermaid, index, link, source, and provenance finalization.",
+      "keywords": [
+        "prompt",
+        "reviewer",
+        "skeleton critic",
+        "question finder",
+        "translation",
+        "middleware",
+        "wiki-finalizer",
+        "Mermaid",
+        "provenance"
+      ],
+      "pages": ["agent/authoring-pipeline.md", "knowledge/okf.md"],
+      "implementation": [
+        "src/agent/prompts/code.ts",
+        "src/agent/review-subagents.ts",
+        "src/agent/okf-middleware.ts",
+        "src/agent/wiki-finalizer.ts",
+        "src/agent/translation-middleware.ts"
+      ],
+      "tests": [
+        "test/agent/prompt.test.ts",
+        "test/agent/review-subagents.test.ts",
+        "test/agent/index-middleware.test.ts",
+        "test/agent/wiki-finalizer.test.ts",
+        "test/agent/translation-middleware.test.ts"
+      ],
+      "invariants": [
+        "Material Claims are instructed before factual writes.",
+        "Deterministic finalizer order is Mermaid, indexes, links, Claims sources, then generated provenance."
+      ],
+      "failureModes": [
+        "Prompt contracts do not mechanically prove model compliance or semantic completeness.",
+        "Translation failures are page-local and retryable."
+      ],
+      "changeSignals": [
+        "A new finalizer operation affects middleware order, telemetry taxonomy, and tests."
+      ],
+      "relationships": [
+        "agent.graph-and-confinement",
+        "knowledge.okf-finalization",
+        "claims.finalization-policy",
+        "operations.visualization"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/agent/prompt.test.ts test/agent/review-subagents.test.ts test/agent/index-middleware.test.ts test/agent/wiki-finalizer.test.ts test/agent/translation-middleware.test.ts"
+      ]
+    },
+    {
+      "id": "agent.provider-resolution",
+      "status": "current",
+      "title": "Model provider selection and transport",
+      "summary": "A declarative provider registry plus imperative model factory resolves credentials, model identity, availability, retries, reasoning, and provider-specific transports.",
+      "keywords": [
+        "provider",
+        "model",
+        "OPENWIKI_PROVIDER",
+        "OPENWIKI_MODEL_ID",
+        "OpenAI",
+        "Anthropic",
+        "Gemini",
+        "Bedrock",
+        "Copilot",
+        "Responses",
+        "streaming"
+      ],
+      "pages": ["agent/providers.md", "identity/auth-and-credentials.md"],
+      "implementation": [
+        "src/config/constants.ts",
+        "src/agent/index.ts",
+        "src/model-availability.ts",
+        "src/agent/openai-chatgpt-oauth.ts",
+        "src/agent/vertex-surface.ts"
+      ],
+      "tests": [
+        "test/agent/create-model.test.ts",
+        "test/agent/model-resolution.test.ts",
+        "test/model-availability.test.ts",
+        "test/openai-compatible-responses.test.ts"
+      ],
+      "invariants": [
+        "Explicit run model wins over environment and provider default.",
+        "Availability unknown warns; unavailable fails."
+      ],
+      "failureModes": [
+        "Custom gateways can make provider-family mismatch advisory rather than fatal."
+      ],
+      "changeSignals": [
+        "A new provider usually changes registry, credentials UI, factory, availability, diagnostics, and tests."
+      ],
+      "relationships": [
+        "identity.auth-credentials",
+        "config.state-ownership",
+        "platform.security-portability"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/agent/create-model.test.ts test/agent/model-resolution.test.ts test/model-availability.test.ts test/openai-compatible-responses.test.ts"
+      ]
+    },
+    {
+      "id": "cli.runtime",
+      "status": "current",
+      "title": "CLI grammar, startup, print, and TUI runtime",
+      "summary": "The CLI parses a closed command union, applies mode and startup guards, then dispatches specialized, print, or Ink paths that must preserve orchestration parity.",
+      "keywords": [
+        "CLI",
+        "command",
+        "flag",
+        "option",
+        "TTY",
+        "print",
+        "Ink",
+        "Ctrl-C",
+        "startup",
+        "dispatch",
+        "exit code"
+      ],
+      "pages": ["cli/runtime.md"],
+      "implementation": [
+        "src/cli/cli.tsx",
+        "src/cli/commands.ts",
+        "src/cli/startup.ts",
+        "src/cli/runners.ts",
+        "src/cli/app/app.tsx",
+        "src/cli/process-interrupt.ts"
+      ],
+      "tests": [
+        "test/cli/commands.test.ts",
+        "test/cli/startup.test.ts",
+        "test/cli/runners.test.ts",
+        "test/cli/process-interrupt.test.ts"
+      ],
+      "invariants": [
+        "Code init/update and personal chat defaults are distinct.",
+        "Pre-agent setup and execution stay inside one telemetry wrapper in print and interactive paths."
+      ],
+      "failureModes": [
+        "Interactive orchestration parity has less direct integration proof than print mode."
+      ],
+      "changeSignals": [
+        "New flags touch parser/help, command types, startup, both run paths, and tests."
+      ],
+      "relationships": [
+        "run.persisted-lifecycle",
+        "telemetry.run-boundary",
+        "data.code-ingestion"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/cli/commands.test.ts test/cli/startup.test.ts test/cli/runners.test.ts test/cli/process-interrupt.test.ts"
+      ]
+    },
+    {
+      "id": "claims.mutation-session",
+      "status": "current",
+      "title": "Atomic Claim mutation and run session",
+      "summary": "Claims are atomic evidence-backed propositions; mutations are page-local transactions and ClaimSession owns run-scoped uniqueness, issues, dirtiness, and inspection.",
+      "keywords": [
+        "Claim",
+        "ClaimSession",
+        "add Claim",
+        "confirm",
+        "update Claim",
+        "retract",
+        "atomic",
+        "resolve_claims",
+        "inspect_claims"
+      ],
+      "pages": ["claims/model-and-runtime.md"],
+      "implementation": [
+        "src/claims/core/types.ts",
+        "src/claims/core/mutations.ts",
+        "src/claims/brains/code/session.ts",
+        "src/claims/brains/code/tools.ts"
+      ],
+      "tests": [
+        "test/claims/core/mutations.test.ts",
+        "test/claims/brains/code/session.test.ts",
+        "test/claims/brains/code/tools.test.ts"
+      ],
+      "invariants": [
+        "All evidence resolves before one page's cloned state commits.",
+        "A multi-page call is not a cross-page transaction."
+      ],
+      "failureModes": [
+        "Duplicate targets, unknown IDs, collisions, empty evidence, and unresolved evidence reject the page batch."
+      ],
+      "changeSignals": [
+        "Mutation changes affect native tools, MCP tools, preflight, and persistence."
+      ],
+      "relationships": [
+        "claims.evidence-sidecars",
+        "claims.finalization-policy",
+        "integration.host-lifecycle"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/claims/core/mutations.test.ts test/claims/brains/code/session.test.ts test/claims/brains/code/tools.test.ts"
+      ]
+    },
+    {
+      "id": "claims.evidence-sidecars",
+      "status": "current",
+      "title": "Repository evidence and Claims sidecars",
+      "summary": "Canonical repo:// resources resolve whole files or relocatable line ranges into schema-v1 per-page sidecars with strict containment and atomic writes.",
+      "keywords": [
+        "repo://",
+        "evidence",
+        "resolver",
+        "sidecar",
+        ".claims",
+        "schemaVersion",
+        "preflight",
+        "stale",
+        "unresolved",
+        "symlink"
+      ],
+      "pages": [
+        "claims/evidence-and-persistence.md",
+        "system/security-and-failures.md"
+      ],
+      "implementation": [
+        "src/claims/evidence/repository/resource.ts",
+        "src/claims/evidence/repository/resolver.ts",
+        "src/claims/brains/code/store.ts",
+        "src/claims/brains/code/preflight.ts",
+        "src/claims/brains/code/types.ts"
+      ],
+      "tests": [
+        "test/claims/evidence/repository/resource.test.ts",
+        "test/claims/evidence/repository/resolver.test.ts",
+        "test/claims/brains/code/store.test.ts",
+        "test/claims/brains/code/preflight.test.ts"
+      ],
+      "invariants": [
+        "Generated openwiki content, .git, traversal, symlinks, and physical aliases cannot be evidence.",
+        "Sidecar schema remains literal version 1."
+      ],
+      "failureModes": [
+        "Missing or ambiguous evidence becomes unresolved; ignored paths and operational failures throw."
+      ],
+      "changeSignals": [
+        "Resource version changes affect mutation, preflight, sidecars, and OKF projection."
+      ],
+      "relationships": [
+        "claims.mutation-session",
+        "claims.finalization-policy",
+        "knowledge.okf-finalization"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/claims/evidence/repository/resource.test.ts test/claims/evidence/repository/resolver.test.ts test/claims/brains/code/store.test.ts test/claims/brains/code/preflight.test.ts"
+      ]
+    },
+    {
+      "id": "claims.finalization-policy",
+      "status": "current",
+      "title": "Best-effort Claims finalization",
+      "summary": "Dirty/deleted/orphan Claim state is rechecked and persisted; recoverable page-local problems warn, security errors fail, and warnings currently do not fail native or host completion.",
+      "keywords": [
+        "Claims finalization",
+        "warning",
+        "strict",
+        "OPENWIKI_CLAIMS_STRICT",
+        "stale",
+        "unresolved",
+        "verification",
+        "retry"
+      ],
+      "pages": [
+        "claims/model-and-runtime.md",
+        "system/run-lifecycle.md",
+        "integrations/host-lifecycle.md",
+        "examples/strict-claims-context.md"
+      ],
+      "implementation": [
+        "src/claims/brains/code/session.ts",
+        "src/claims/brains/code/runtime.ts",
+        "src/agent/index.ts",
+        "src/integrations/core/session-manager.ts"
+      ],
+      "tests": [
+        "test/claims/brains/code/runtime.test.ts",
+        "test/claims/brains/code/session.test.ts",
+        "test/agent/claims-run-lifecycle.test.ts",
+        "test/integrations/session-manager.test.ts"
+      ],
+      "invariants": [
+        "Security/containment errors remain fatal.",
+        "Claims run only for repository init/update.",
+        "Current sidecar schema has no policy field."
+      ],
+      "failureModes": [
+        "Recoverable page-local problems are warnings and warning-sink failure is swallowed."
+      ],
+      "changeSignals": [
+        "A strict gate must precede complete metadata and init commit while preserving retryable host finish."
+      ],
+      "relationships": [
+        "run.persisted-lifecycle",
+        "run.transactional-init",
+        "claims.evidence-sidecars",
+        "integration.host-lifecycle"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/claims/brains/code/runtime.test.ts test/claims/brains/code/session.test.ts test/agent/claims-run-lifecycle.test.ts test/integrations/session-manager.test.ts"
+      ],
+      "gaps": [
+        "OPENWIKI_CLAIMS_STRICT is not implemented in this checkout.",
+        "A future strict mode needs a structured warning taxonomy rather than string matching."
+      ]
+    },
+    {
+      "id": "integration.host-lifecycle",
+      "status": "current",
+      "title": "MCP host-authored lifecycle",
+      "summary": "Four strict lifecycle tools wrap a serialized session manager for repository authoring, while openwiki_context adds a session-independent read-only retrieval surface.",
+      "keywords": [
+        "MCP",
+        "openwiki_begin",
+        "openwiki_finish",
+        "openwiki_inspect_claims",
+        "openwiki_resolve_claims",
+        "session manager",
+        "retryable"
+      ],
+      "pages": ["integrations/host-lifecycle.md"],
+      "implementation": [
+        "src/integrations/core/protocol.ts",
+        "src/integrations/core/repository-root.ts",
+        "src/integrations/core/session-manager.ts",
+        "src/integrations/mcp/server.ts",
+        "src/integrations/mcp/stdio.ts"
+      ],
+      "tests": [
+        "test/integrations/protocol.test.ts",
+        "test/integrations/repository-root.test.ts",
+        "test/integrations/session-manager.test.ts",
+        "test/integrations/mcp-server.test.ts",
+        "test/integrations/mcp-stdio.test.ts"
+      ],
+      "invariants": [
+        "Only one operation and one active session exist per manager.",
+        "Finish failure before commit leaves the session active for retry.",
+        "Unknown transport errors are generic and bounded."
+      ],
+      "failureModes": [
+        "Begin failure restores the prior session and init backup; incomplete cleanup is aggregated."
+      ],
+      "changeSignals": [
+        "New tools require protocol, server, manager, installed skill, and package updates."
+      ],
+      "relationships": [
+        "run.transactional-init",
+        "claims.mutation-session",
+        "claims.finalization-policy",
+        "integration.installation",
+        "context.current-boundary"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/integrations/protocol.test.ts test/integrations/repository-root.test.ts test/integrations/session-manager.test.ts test/integrations/mcp-server.test.ts test/integrations/mcp-stdio.test.ts"
+      ]
+    },
+    {
+      "id": "context.current-boundary",
+      "status": "current",
+      "title": "Session-independent host context boundary",
+      "summary": "The shipped openwiki_context tool retrieves repository-owned behavior contracts without creating or requiring an init/update lifecycle session.",
+      "keywords": [
+        "openwiki_context",
+        "context",
+        "retrieval",
+        "BeginResult",
+        "host",
+        "MCP",
+        "read-only"
+      ],
+      "pages": [
+        "integrations/context-retrieval.md",
+        "context/openwiki-context-v2.md"
+      ],
+      "implementation": [
+        "src/integrations/context/retrieval.ts",
+        "src/integrations/core/protocol.ts",
+        "src/integrations/core/session-manager.ts",
+        "src/integrations/mcp/server.ts"
+      ],
+      "tests": [
+        "test/integrations/context-retrieval.test.ts",
+        "test/integrations/mcp-server.test.ts",
+        "test/integrations/protocol.test.ts"
+      ],
+      "invariants": [
+        "Context retrieval is read-only and independent from begin/finish sessions.",
+        "The response routes to source and tests but does not return their contents or environment values."
+      ],
+      "failureModes": [
+        "No catalog match must mean retrieval gap, never behavior absence."
+      ],
+      "changeSignals": [
+        "Tool changes span protocol, safe catalog loading, ranking, MCP guidance, installed skill instructions, and managed agent snippets."
+      ],
+      "relationships": [
+        "integration.host-lifecycle",
+        "context.proposed-v2",
+        "claims.mutation-session"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/integrations/context-retrieval.test.ts test/integrations/protocol.test.ts test/integrations/mcp-server.test.ts"
+      ],
+      "gaps": [
+        "Normal OpenWiki runs do not yet generate the structured context catalog."
+      ]
+    },
+    {
+      "id": "context.proposed-v2",
+      "status": "current",
+      "title": "Task-oriented context retrieval v2",
+      "summary": "A read-only tool ranks structured behavior contracts, expands one relationship hop, exposes match reasons and freshness, and returns bounded source/test routing rather than untrusted file dumps.",
+      "keywords": [
+        "openwiki_context v2",
+        "ranking",
+        "task packet",
+        "catalog",
+        "confidence",
+        "freshness",
+        "token budget",
+        "changedPaths"
+      ],
+      "pages": [
+        "context/openwiki-context-v2.md",
+        "knowledge-model.md",
+        "integrations/context-retrieval.md"
+      ],
+      "implementation": [
+        "src/integrations/context/retrieval.ts",
+        "openwiki/tools/context.mjs",
+        "openwiki/knowledge/catalog.json"
+      ],
+      "tests": [
+        "test/integrations/context-retrieval.test.ts",
+        "openwiki/tools/validate.mjs"
+      ],
+      "invariants": [
+        "Retrieval confidence is not truth confidence.",
+        "Every returned contract includes implementation and proof paths.",
+        "Source and tests remain authoritative."
+      ],
+      "failureModes": [
+        "Unknown or stale tasks fall back to native source discovery instead of fabricated generic context."
+      ],
+      "changeSignals": [
+        "Ranking or response changes require retrieval fixtures, budget/security tests, installed guidance review, and utility evaluation."
+      ],
+      "relationships": [
+        "context.current-boundary",
+        "quality.agent-utility-eval"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/integrations/context-retrieval.test.ts",
+        "node openwiki/tools/validate.mjs",
+        "node openwiki/tools/context.mjs openwiki_context retrieval"
+      ],
+      "gaps": [
+        "Freshness is unknown until catalogs carry source-revision provenance.",
+        "Catalog generation and task-outcome evaluation remain future work."
+      ]
+    },
+    {
+      "id": "integration.installation",
+      "status": "current",
+      "title": "Codex and Claude integration installation",
+      "summary": "Scoped installation uses contained paths, canonical bundle receipts, surgical JSON/TOML adapters, staging, rollback, backups, and exact managed-state uninstall.",
+      "keywords": [
+        "integration install",
+        "Codex",
+        "Claude",
+        "receipt",
+        "config.toml",
+        "config.json",
+        "uninstall",
+        "force",
+        "backup",
+        "skill bundle"
+      ],
+      "pages": [
+        "integrations/installation.md",
+        "development/build-release-and-packaging.md"
+      ],
+      "implementation": [
+        "src/integrations/install/registry.ts",
+        "src/integrations/install/installer.ts",
+        "src/integrations/install/install-paths.ts",
+        "src/integrations/install/skill-bundle.ts",
+        "src/integrations/install/config-json.ts",
+        "src/integrations/install/config-toml.ts"
+      ],
+      "tests": [
+        "test/integrations/installer.test.ts",
+        "test/integrations/config-adapters.test.ts",
+        "test/integrations/skill.test.ts",
+        "test/integrations/package-contents.test.ts"
+      ],
+      "invariants": [
+        "Unmanaged or modified state is not overwritten without force.",
+        "Symlink components and scope escapes are refused.",
+        "Unrelated host config bytes/keys are preserved."
+      ],
+      "failureModes": [
+        "Commit failure rolls back skill and config; incomplete rollback is aggregated or a backup is retained."
+      ],
+      "changeSignals": [
+        "A new host affects registry, CLI, config adapters, producer mapping, bundle, and package tests."
+      ],
+      "relationships": [
+        "integration.host-lifecycle",
+        "development.build-release"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/integrations/installer.test.ts test/integrations/config-adapters.test.ts test/integrations/skill.test.ts test/integrations/package-contents.test.ts"
+      ]
+    },
+    {
+      "id": "knowledge.okf-finalization",
+      "status": "current",
+      "title": "OKF frontmatter, indexes, sources, and provenance",
+      "summary": "OKF v0.2 concept metadata is repaired and finalized deterministically while generated, verified, sources, indexes, and producer extensions retain separate ownership.",
+      "keywords": [
+        "OKF",
+        "frontmatter",
+        "index",
+        "generated",
+        "verified",
+        "sources",
+        "provenance",
+        "body hash",
+        "openwiki-source"
+      ],
+      "pages": ["knowledge/okf.md", "agent/authoring-pipeline.md"],
+      "implementation": [
+        "src/okf/frontmatter.ts",
+        "src/okf/index-sync.ts",
+        "src/okf/generated-provenance.ts",
+        "src/okf/claim-sources.ts",
+        "src/okf/claims-verification.ts",
+        "src/agent/wiki-finalizer.ts"
+      ],
+      "tests": [
+        "test/okf/frontmatter.test.ts",
+        "test/okf/claim-sources.test.ts",
+        "test/okf/claims-verification.test.ts",
+        "test/agent/wiki-finalizer.test.ts"
+      ],
+      "invariants": [
+        "type is the only required concept field.",
+        "Body-only changes advance generated provenance.",
+        "Claims sidecars remain authoritative over OKF projections."
+      ],
+      "failureModes": [
+        "Invalid frontmatter is minimally rebuilt; deterministic finalizer IO errors remain actionable."
+      ],
+      "changeSignals": [
+        "Frontmatter edits affect translation, indexing, Claims projection, provenance, and validation."
+      ],
+      "relationships": [
+        "agent.authoring-pipeline",
+        "claims.evidence-sidecars",
+        "operations.visualization"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/okf test/agent/wiki-finalizer.test.ts test/agent/frontmatter-validator.test.ts"
+      ]
+    },
+    {
+      "id": "data.connector-runtime",
+      "status": "current",
+      "title": "Connector registry and acquisition runtime",
+      "summary": "Nine registered connectors share private config/state/raw ownership, resilient HTTP, bounded MCP transport, exact discovered tools, and explicit mode scoping.",
+      "keywords": [
+        "connector",
+        "registry",
+        "Custom MCP",
+        "Notion",
+        "Gmail",
+        "Slack",
+        "X/Twitter",
+        "Tavily",
+        "Hacker News",
+        "LangSmith",
+        "raw",
+        "state"
+      ],
+      "pages": ["data/connectors.md", "data/ingestion.md"],
+      "implementation": [
+        "src/connectors/types.ts",
+        "src/connectors/registry.ts",
+        "src/connectors/tools.ts",
+        "src/connectors/mcp-client.ts",
+        "src/connectors/mcp-runtime.ts",
+        "src/connectors/sources"
+      ],
+      "tests": [
+        "test/connectors",
+        "test/ingestion/ingestion.test.ts",
+        "test/ingestion/code-mode.test.ts"
+      ],
+      "invariants": [
+        "Personal connector tools are absent in repository agent runs.",
+        "MCP calls use exact discovered names and explicit read-only policy.",
+        "Raw reads reject symlinks and escape."
+      ],
+      "failureModes": [
+        "HTTP retries only bounded transient classes; auth/ordinary 4xx return directly."
+      ],
+      "changeSignals": [
+        "A connector change spans adapter, registry, config/state, auth/onboarding, ingestion, and tests."
+      ],
+      "relationships": [
+        "data.personal-ingestion",
+        "data.code-ingestion",
+        "identity.auth-credentials"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/connectors test/ingestion/ingestion.test.ts test/ingestion/code-mode.test.ts"
+      ]
+    },
+    {
+      "id": "data.personal-ingestion",
+      "status": "current",
+      "title": "Sequential personal-source ingestion",
+      "summary": "Each configured personal source runs deterministic acquisition followed by source-scoped local-wiki synthesis; failures are isolated and sources execute sequentially.",
+      "keywords": [
+        "ingest",
+        "personal",
+        "source instance",
+        "raw files",
+        "24 hours",
+        "agent-updated",
+        "sequential"
+      ],
+      "pages": ["data/ingestion.md", "data/connectors.md"],
+      "implementation": [
+        "src/ingestion/ingestion.ts",
+        "src/connectors/tools.ts"
+      ],
+      "tests": [
+        "test/ingestion/ingestion.test.ts",
+        "test/ingestion/ingestion-run.test.ts"
+      ],
+      "invariants": [
+        "A deterministic error with no raw files skips synthesis for that source.",
+        "One source failure does not prevent later sources."
+      ],
+      "failureModes": [
+        "Agent output files are prevalidated but concurrent disk writes are not transactionally atomic."
+      ],
+      "changeSignals": [
+        "Orchestration changes affect target parsing, source state, telemetry, prompts, and isolation."
+      ],
+      "relationships": [
+        "data.connector-runtime",
+        "identity.auth-credentials",
+        "operations.scheduling"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/ingestion/ingestion.test.ts test/ingestion/ingestion-run.test.ts"
+      ]
+    },
+    {
+      "id": "data.code-ingestion",
+      "status": "current",
+      "title": "Repository setup and code connector augmentation",
+      "summary": "Code mode refreshes managed agent instructions, creates the scheduled workflow only on init when absent, and fail-open augments authoring with LangSmith observations.",
+      "keywords": [
+        "code mode",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "workflow",
+        "LangSmith",
+        "last update",
+        "createWorkflow"
+      ],
+      "pages": [
+        "data/ingestion.md",
+        "data/connectors.md",
+        "operations/scheduling.md"
+      ],
+      "implementation": [
+        "src/ingestion/code-mode.ts",
+        "src/connectors/sources/langsmith"
+      ],
+      "tests": [
+        "test/ingestion/code-mode.test.ts",
+        "test/ingestion/langsmith-modes.test.ts"
+      ],
+      "invariants": [
+        "Existing scheduled workflow content is preserved.",
+        "Code connector failure cannot block source-based wiki generation."
+      ],
+      "failureModes": [
+        "Missing or invalid last-update time removes the ingestion floor."
+      ],
+      "changeSignals": [
+        "Managed-block ownership and create-on-init semantics need regression proof."
+      ],
+      "relationships": [
+        "data.connector-runtime",
+        "run.persisted-lifecycle",
+        "operations.scheduling"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/ingestion/code-mode.test.ts test/ingestion/langsmith-modes.test.ts"
+      ]
+    },
+    {
+      "id": "identity.auth-credentials",
+      "status": "current",
+      "title": "OAuth, provider credentials, and setup state",
+      "summary": "Connector OAuth and model authentication are distinct; private environment saves are serialized and atomic, and readiness requires credentials plus mode-specific onboarding.",
+      "keywords": [
+        "OAuth",
+        "PKCE",
+        "state",
+        "callback",
+        "token refresh",
+        "credential",
+        ".env",
+        "onboarding",
+        "setup",
+        "0600",
+        "0700"
+      ],
+      "pages": [
+        "identity/auth-and-credentials.md",
+        "system/configuration-and-state.md"
+      ],
+      "implementation": [
+        "src/auth/oauth.ts",
+        "src/auth/oauth-discovery.ts",
+        "src/auth/tokens.ts",
+        "src/config/env.ts",
+        "src/setup/onboarding.ts",
+        "src/setup/credentials"
+      ],
+      "tests": [
+        "test/auth",
+        "test/config/env.test.ts",
+        "test/config/env-behavior.test.ts",
+        "test/setup"
+      ],
+      "invariants": [
+        "Process environment overrides saved values.",
+        "OAuth discovery validates every candidate endpoint.",
+        "Secrets remain outside connector config and committed files."
+      ],
+      "failureModes": [
+        "Windows ACL hardening is best-effort; unsafe redirects and invalid discovery are hard failures."
+      ],
+      "changeSignals": [
+        "Auth changes span registry, redirect/discovery, persistence, setup gates, diagnostics, and tests."
+      ],
+      "relationships": [
+        "agent.provider-resolution",
+        "data.connector-runtime",
+        "config.state-ownership",
+        "platform.security-portability"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/auth test/config/env.test.ts test/config/env-behavior.test.ts test/setup"
+      ]
+    },
+    {
+      "id": "config.state-ownership",
+      "status": "current",
+      "title": "Private and repository state ownership",
+      "summary": "OpenWiki separates private home credentials, personal wiki, connector state, history, and skills from repository wiki, Claims, metadata, workflow, and managed instruction blocks.",
+      "keywords": [
+        "OPENWIKI_CONFIG_DIR",
+        "OpenWiki home",
+        "state",
+        "persistence",
+        "checkpoint",
+        "conversation_history",
+        ".last-update.json",
+        ".claims"
+      ],
+      "pages": [
+        "system/configuration-and-state.md",
+        "platform/runtime-and-portability.md"
+      ],
+      "implementation": [
+        "src/config/openwiki-home.ts",
+        "src/config/env.ts",
+        "src/agent/index.ts",
+        "src/agent/wiki-replacement.ts"
+      ],
+      "tests": [
+        "test/config/openwiki-home.test.ts",
+        "test/config/env-behavior.test.ts",
+        "test/agent/checkpoint-policy.test.ts",
+        "test/agent/run-metadata.test.ts"
+      ],
+      "invariants": [
+        "Shell environment wins over saved env.",
+        "Generic authoring cannot own Claims sidecars or run metadata.",
+        "Chat uses persistent checkpoints; init/update use memory."
+      ],
+      "failureModes": [
+        "Checkpoint pruning and some permission hardening are nonfatal maintenance."
+      ],
+      "changeSignals": [
+        "New environment keys require managed registry, secrecy, persistence, diagnostics, and setup decisions."
+      ],
+      "relationships": [
+        "identity.auth-credentials",
+        "run.persisted-lifecycle",
+        "platform.security-portability"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/config test/agent/checkpoint-policy.test.ts test/agent/run-metadata.test.ts"
+      ]
+    },
+    {
+      "id": "operations.scheduling",
+      "status": "current",
+      "title": "Personal launchd and repository CI schedules",
+      "summary": "One global personal ingestion schedule is stored everywhere but installed only on macOS when cron maps to launchd; repository updates use CI workflows.",
+      "keywords": [
+        "cron",
+        "schedule",
+        "launchd",
+        "LaunchAgent",
+        "launchctl",
+        "pmset",
+        "pause",
+        "resume",
+        "GitHub Actions"
+      ],
+      "pages": ["operations/scheduling.md", "data/ingestion.md"],
+      "implementation": [
+        "src/scheduling/schedules.ts",
+        "src/ingestion/code-mode.ts",
+        ".github/workflows/openwiki-update.yml"
+      ],
+      "tests": [
+        "test/scheduling",
+        "test/ingestion/code-mode.test.ts",
+        "test/cli/schedule-format.test.ts"
+      ],
+      "invariants": [
+        "Unsupported OS or complex cron saves with a warning instead of claiming installation.",
+        "Existing repository workflow is preserved."
+      ],
+      "failureModes": [
+        "Live launchd/pmset behavior is mostly mocked and remains an operational validation gap."
+      ],
+      "changeSignals": [
+        "Personal scheduling and repository CI are separate ownership paths."
+      ],
+      "relationships": [
+        "data.personal-ingestion",
+        "data.code-ingestion",
+        "config.state-ownership"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/scheduling test/ingestion/code-mode.test.ts test/cli/schedule-format.test.ts"
+      ]
+    },
+    {
+      "id": "telemetry.run-boundary",
+      "status": "current",
+      "title": "Exactly-once anonymous run telemetry",
+      "summary": "Init/update setup, connectors, and agent execution sit inside one best-effort telemetry wrapper with closed payloads, opt-outs, anonymous identity, and normalized failures.",
+      "keywords": [
+        "telemetry",
+        "PostHog",
+        "OPENWIKI_TELEMETRY_DISABLED",
+        "DO_NOT_TRACK",
+        "openwiki_run",
+        "taxonomy",
+        "telemetry-file",
+        "anonymized"
+      ],
+      "pages": ["operations/telemetry.md", "system/security-and-failures.md"],
+      "implementation": [
+        "src/telemetry/with-run-telemetry.ts",
+        "src/telemetry/record-run-safe.ts",
+        "src/telemetry/senders.ts",
+        "src/telemetry/taxonomy.ts",
+        "src/telemetry/install-id.ts"
+      ],
+      "tests": ["test/telemetry", "test/cli/telemetry-cli.test.ts"],
+      "invariants": [
+        "Telemetry never replaces the original run result or error.",
+        "Payloads exclude raw errors, prompts, paths, repository facts, and secret values."
+      ],
+      "failureModes": [
+        "Unknown operation details are dropped by allowlists; connector errors swallowed upstream are blind spots."
+      ],
+      "changeSignals": [
+        "New lifecycle errors need throw-site ownership, taxonomy allowlist, payload tests, and disclosure review."
+      ],
+      "relationships": [
+        "run.persisted-lifecycle",
+        "cli.runtime",
+        "platform.security-portability"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/telemetry test/cli/telemetry-cli.test.ts"
+      ]
+    },
+    {
+      "id": "operations.visualization",
+      "status": "current",
+      "title": "Visualizer and Mermaid degradation",
+      "summary": "A no-symlink wiki graph feeds a loopback-only live server or static export, while finalization validates Mermaid and degrades invalid diagrams without losing content.",
+      "keywords": [
+        "visualize",
+        "graph",
+        "SSE",
+        "127.0.0.1",
+        "CSP",
+        "static export",
+        "Mermaid",
+        "jsdom",
+        "degrade",
+        "CDN"
+      ],
+      "pages": ["operations/visualization.md", "knowledge/okf.md"],
+      "implementation": [
+        "src/visualize/graph.ts",
+        "src/visualize/server.ts",
+        "src/visualize/static-export.ts",
+        "src/visualize/client.ts",
+        "src/mermaid/validate.ts",
+        "src/mermaid/wiki.ts"
+      ],
+      "tests": [
+        "test/visualize",
+        "test/mermaid",
+        "test/copy-visualize-assets.test.ts"
+      ],
+      "invariants": [
+        "The live server binds loopback only.",
+        "Graph traversal and page reads do not follow symlinks.",
+        "Invalid Mermaid content survives in a text fence."
+      ],
+      "failureModes": [
+        "Static export still requires pinned CDN assets and is not offline."
+      ],
+      "changeSignals": [
+        "Browser asset changes require both TypeScript builds, copy/package tests, and server/export parity."
+      ],
+      "relationships": [
+        "knowledge.okf-finalization",
+        "development.build-release",
+        "platform.security-portability"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/visualize test/mermaid test/copy-visualize-assets.test.ts"
+      ]
+    },
+    {
+      "id": "platform.security-portability",
+      "status": "current",
+      "title": "Platform, containment, redaction, and portability",
+      "summary": "Node/ESM and cross-platform helpers centralize path normalization, filesystem race classification, language, diagnostics, and best-effort Windows ACL hardening.",
+      "keywords": [
+        "Node 22",
+        "ESM",
+        "NodeNext",
+        "Windows",
+        "ACL",
+        "icacls",
+        "redaction",
+        "sanitizeDiagnosticText",
+        "path containment",
+        "language"
+      ],
+      "pages": [
+        "platform/runtime-and-portability.md",
+        "system/security-and-failures.md"
+      ],
+      "implementation": [
+        "src/platform/diagnostics.ts",
+        "src/platform/fs-errors.ts",
+        "src/platform/language.ts",
+        "src/platform/utils.ts",
+        "src/platform/windows-acl.ts",
+        "tsconfig.json",
+        "tsconfig.client.json"
+      ],
+      "tests": [
+        "test/platform",
+        "test/config/openwiki-home.test.ts",
+        "test/agent/redaction.test.ts"
+      ],
+      "invariants": [
+        "Security boundaries normalize and physically resolve paths.",
+        "Node and browser TypeScript surfaces remain separate."
+      ],
+      "failureModes": [
+        "Windows ACL failure is nonfatal; evidence/store/installer containment failure is fatal.",
+        "Exact-value redaction covers known managed secrets and must not be treated as complete leak prevention."
+      ],
+      "changeSignals": [
+        "New secret shapes belong in the shared key/value redaction boundary and negative tests."
+      ],
+      "relationships": [
+        "agent.graph-and-confinement",
+        "claims.evidence-sidecars",
+        "identity.auth-credentials",
+        "operations.visualization"
+      ],
+      "validation": [
+        "pnpm exec vitest run test/platform test/config/openwiki-home.test.ts test/agent/redaction.test.ts",
+        "pnpm run typecheck"
+      ]
+    },
+    {
+      "id": "development.build-release",
+      "status": "current",
+      "title": "Build, package, and release integrity",
+      "summary": "Node and browser compilers, explicit asset copying, package allowlists, build-channel stamping, CI matrices, Changesets, and OIDC publishing define shipped bytes.",
+      "keywords": [
+        "build",
+        "package",
+        "release",
+        "dist",
+        "npm pack",
+        "Changesets",
+        "OIDC",
+        "provenance",
+        "build channel",
+        "browser assets"
+      ],
+      "pages": ["development/build-release-and-packaging.md"],
+      "implementation": [
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "scripts/copy-visualize-assets.cjs",
+        "scripts/stamp-build-channel.cjs",
+        ".github/workflows/checks.yml",
+        ".github/workflows/release.yml"
+      ],
+      "tests": [
+        "test/copy-visualize-assets.test.ts",
+        "test/stamp-build-channel.test.ts",
+        "test/integrations/package-contents.test.ts",
+        "test/version.test.ts"
+      ],
+      "invariants": [
+        "Published files are allowlisted.",
+        "Ordinary builds remain community channel.",
+        "Canonical integration skill content is packaged without local state."
+      ],
+      "failureModes": [
+        "Adding a source or asset without copy/package coverage can pass typecheck but ship incomplete output."
+      ],
+      "changeSignals": [
+        "Runtime entrypoint, browser asset, package file, or release changes require build/package proof."
+      ],
+      "relationships": [
+        "integration.installation",
+        "operations.visualization",
+        "quality.testing-strategy"
+      ],
+      "validation": [
+        "pnpm run typecheck",
+        "pnpm run build",
+        "pnpm exec vitest run test/copy-visualize-assets.test.ts test/stamp-build-channel.test.ts test/integrations/package-contents.test.ts"
+      ]
+    },
+    {
+      "id": "quality.testing-strategy",
+      "status": "current",
+      "title": "Contract-oriented testing strategy",
+      "summary": "Vitest suites mirror ownership, cross-system lifecycle tests prove durable ordering, and validation widens from focused tests through typecheck/build/lint to the full suite.",
+      "keywords": [
+        "test",
+        "Vitest",
+        "typecheck",
+        "lint",
+        "build",
+        "coverage",
+        "fixture",
+        "mock",
+        "validation"
+      ],
+      "pages": ["quality/testing.md", "playbooks/change-recipes.md"],
+      "implementation": [
+        "package.json",
+        "test",
+        ".github/workflows/checks.yml"
+      ],
+      "tests": ["test"],
+      "invariants": [
+        "Failure tests assert durable state when rollback, retry, or metadata are contractual.",
+        "Live/evaluation tests are not routine correctness gates."
+      ],
+      "failureModes": [
+        "A narrow unit test can miss caller, persistence, packaging, or duplicated-orchestration contracts."
+      ],
+      "changeSignals": [
+        "Select tests by changed contract and direct consumers, not filename alone."
+      ],
+      "relationships": [
+        "development.build-release",
+        "quality.grounding-eval",
+        "quality.agent-utility-eval"
+      ],
+      "validation": ["pnpm run typecheck", "pnpm run lint:check", "pnpm test"]
+    },
+    {
+      "id": "quality.grounding-eval",
+      "status": "current",
+      "title": "LEDGER longitudinal grounding evaluation",
+      "summary": "LEDGER replays Git checkpoints, runs init then updates, extracts every current factual claim, resolves source, and scores supported, stale, invented, and unverified states.",
+      "keywords": [
+        "LEDGER",
+        "evaluation",
+        "supported",
+        "stale",
+        "invented",
+        "unverified",
+        "checkpoint",
+        "evidence map",
+        "reevaluate"
+      ],
+      "pages": ["quality/evals.md"],
+      "implementation": [
+        "evals/ledger/run/runner.ts",
+        "evals/ledger/metrics/claims.ts",
+        "evals/ledger/metrics/score.ts",
+        "evals/ledger/evaluator/evidence-map.ts",
+        "evals/ledger/reevaluate.ts"
+      ],
+      "tests": ["evals/ledger"],
+      "invariants": [
+        "Each checkpoint recomputes the partition over the current wiki.",
+        "Evidence maps route but do not encode answers."
+      ],
+      "failureModes": [
+        "Evaluator failure degrades completeness and remains auditable rather than becoming a favorable label."
+      ],
+      "changeSignals": [
+        "Metric changes require partition, denominator, persistence, report, and meta-evaluator review."
+      ],
+      "relationships": [
+        "claims.evidence-sidecars",
+        "quality.testing-strategy",
+        "quality.agent-utility-eval"
+      ],
+      "validation": [
+        "pnpm run eval:ledger:typecheck",
+        "pnpm exec vitest run evals/ledger"
+      ]
+    },
+    {
+      "id": "quality.agent-utility-eval",
+      "status": "current",
+      "title": "DeepSWE paired coding-agent evaluation",
+      "summary": "The DeepSWE harness compares identical baseline and OpenWiki-treated Codex tasks while isolating wiki generation, held-out verification, credentials, networking, patches, and caches.",
+      "keywords": [
+        "DeepSWE",
+        "Codex",
+        "paired experiment",
+        "baseline",
+        "treatment",
+        "Harbor",
+        "LangSmith",
+        "offline verifier",
+        "cache"
+      ],
+      "pages": ["quality/evals.md"],
+      "implementation": [
+        "evals/deepswe/openwiki_codex.py",
+        "evals/deepswe/run.py",
+        "evals/deepswe/analyze_openwiki_usage.py",
+        "evals/deepswe/deepswe_langsmith.py"
+      ],
+      "tests": ["evals/deepswe/tests"],
+      "invariants": [
+        "Both conditions receive the same task/model/seed/attempts.",
+        "Treatment artifacts are excluded from the submitted patch.",
+        "Held-out tests remain offline."
+      ],
+      "failureModes": [
+        "Live trials require credentials, network, pinned external tools, and explicit cost authorization."
+      ],
+      "changeSignals": [
+        "Treatment changes need contamination, cache-key, network, credential, and patch-exclusion review."
+      ],
+      "relationships": [
+        "quality.testing-strategy",
+        "quality.grounding-eval",
+        "context.proposed-v2"
+      ],
+      "validation": ["uvx --from pytest pytest evals/deepswe/tests"]
+    }
+  ]
+}

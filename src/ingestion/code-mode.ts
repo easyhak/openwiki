@@ -394,6 +394,7 @@ function createCodeModeAgentsSnippet(): string {
 
 This repository has a generated \`openwiki/\` evidence index. It is optional just-in-time context, not required startup reading.
 
+- When the OpenWiki MCP integration and a context catalog are available, call \`openwiki_context\` with the exact task before broad repository exploration for non-trivial or cross-cutting coding work. Call it again with a focused question or changed paths when entering an unfamiliar subsystem or when current evidence is insufficient. Use its grounded routing to guide source reads; skip it for small, already-localized changes.
 - Treat source code and tests as authoritative. A brief's unknowns and review items are verification gaps, not automatic requirements.
 - Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
 

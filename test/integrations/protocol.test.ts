@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   BeginInput,
+  ContextInput,
   InspectClaimsInput,
   ResolveClaimsInput,
   RunInput,
@@ -41,6 +42,32 @@ afterEach(async () => {
 
 describe("host lifecycle protocol", () => {
   test("validates strict lifecycle and Claims inputs", () => {
+    expect(
+      ContextInput.parse({
+        root: "/tmp/repository",
+        task: " change Claims finalization ",
+      }),
+    ).toEqual({
+      root: "/tmp/repository",
+      task: "change Claims finalization",
+      maxContracts: 8,
+      maxChars: 12_000,
+      includeRelationships: true,
+    });
+    expect(() =>
+      ContextInput.parse({
+        root: "/tmp/repository",
+        task: "change Claims finalization",
+        changedPaths: ["../secret"],
+      }),
+    ).toThrow();
+    expect(() =>
+      ContextInput.parse({
+        root: "/tmp/repository",
+        task: "change Claims finalization",
+        extra: true,
+      }),
+    ).toThrow();
     expect(
       BeginInput.parse({
         root: "/tmp/repository",
@@ -89,16 +116,18 @@ describe("host lifecycle protocol", () => {
     const tools = manager.tools();
 
     expect(tools.map((tool) => tool.name)).toEqual([
+      "openwiki_context",
       "openwiki_begin",
       "openwiki_inspect_claims",
       "openwiki_resolve_claims",
       "openwiki_finish",
     ]);
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(5);
     expect(
       tools.some((tool) => /read|write|edit|delete/u.test(tool.name)),
     ).toBe(false);
 
+    const context = tools.find((tool) => tool.name === "openwiki_context");
     const begin = tools.find((tool) => tool.name === "openwiki_begin");
     const inspect = tools.find(
       (tool) => tool.name === "openwiki_inspect_claims",
@@ -107,6 +136,7 @@ describe("host lifecycle protocol", () => {
       (tool) => tool.name === "openwiki_resolve_claims",
     );
     const finish = tools.find((tool) => tool.name === "openwiki_finish");
+    expect(context).toBeDefined();
     expect(begin).toBeDefined();
     expect(inspect).toBeDefined();
     expect(resolve).toBeDefined();

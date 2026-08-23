@@ -46,6 +46,41 @@ async function createRepository(): Promise<string> {
 }
 
 /**
+ * Writes the smallest valid task-context catalog for transport tests.
+ *
+ * @param root - Temporary repository root.
+ */
+async function writeContextCatalog(root: string): Promise<void> {
+  const directory = path.join(root, "openwiki/knowledge");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, "catalog.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      authority: "Verify against source and tests.",
+      contracts: [
+        {
+          id: "claims.finalization",
+          status: "current",
+          title: "Claims finalization",
+          summary: "Claims finalization is best effort.",
+          keywords: ["Claims finalization", "strict"],
+          pages: ["claims.md"],
+          implementation: ["src/claims/runtime.ts"],
+          tests: ["test/claims/runtime.test.ts"],
+          invariants: ["Security errors remain fatal."],
+          failureModes: ["Recoverable page errors warn."],
+          changeSignals: ["Review native and host completion."],
+          relationships: [],
+          validation: ["pnpm test claims"],
+        },
+      ],
+    }),
+    "utf8",
+  );
+}
+
+/**
  * Creates a transport-neutral tool provider from explicit test tools.
  *
  * @param tools - Tools returned to the MCP adapter.
@@ -101,12 +136,19 @@ afterEach(async () => {
 
 describe("OpenWiki MCP adapter", () => {
   test("advertises lifecycle, Claims, and native-host authoring guidance", async () => {
+    const context = vi.fn(() => Promise.resolve({ confidence: "none" }));
     const begin = vi.fn(() => Promise.resolve({ runId: "run-1" }));
     const inspect = vi.fn(() => Promise.resolve({ pages: [] }));
     const resolve = vi.fn(() => Promise.resolve({ pages: [] }));
     const finish = vi.fn(() => Promise.resolve({ status: "complete" }));
     const fixture = await connect(
       provider(
+        {
+          name: "openwiki_context",
+          description: "Context.",
+          schema: z.object({ root: z.string(), task: z.string() }).strict(),
+          handle: context,
+        },
         {
           name: "openwiki_begin",
           description: "Begin.",
@@ -138,6 +180,7 @@ describe("OpenWiki MCP adapter", () => {
       const listed = await fixture.client.listTools();
 
       expect(listed.tools.map((tool) => tool.name)).toEqual([
+        "openwiki_context",
         "openwiki_begin",
         "openwiki_inspect_claims",
         "openwiki_resolve_claims",
@@ -147,6 +190,9 @@ describe("OpenWiki MCP adapter", () => {
         expect.arrayContaining(["read_file", "write_file", "edit_file"]),
       );
       const instructions = fixture.client.getInstructions();
+      expect(instructions).toContain("call\nopenwiki_context");
+      expect(instructions).toContain("does not require a lifecycle run");
+      expect(instructions).toContain("verify it against source code and tests");
       expect(instructions).toContain("Use the host's native repository tools");
       expect(instructions).toContain("Resolve the absolute Git top-level");
       expect(instructions).toContain("openwiki_inspect_claims");
@@ -286,6 +332,7 @@ describe("OpenWiki MCP adapter", () => {
 describe("OpenWiki MCP lifecycle transport", () => {
   test("initializes, begins, and finishes through a real linked transport", async () => {
     const root = await createRepository();
+    await writeContextCatalog(root);
     const wikiRoot = path.join(root, "openwiki");
     await writeFile(path.join(root, "README.md"), "# Repository\n", "utf8");
     const manager = HostSessionManager.create({ host: "codex" });
@@ -294,11 +341,24 @@ describe("OpenWiki MCP lifecycle transport", () => {
     try {
       const listed = await fixture.client.listTools();
       expect(listed.tools.map((tool) => tool.name)).toEqual([
+        "openwiki_context",
         "openwiki_begin",
         "openwiki_inspect_claims",
         "openwiki_resolve_claims",
         "openwiki_finish",
       ]);
+
+      const context = await fixture.client.callTool({
+        name: "openwiki_context",
+        arguments: { root, task: "add strict Claims finalization" },
+      });
+      expect(context).toMatchObject({
+        structuredContent: {
+          schemaVersion: 2,
+          confidence: "high",
+          contracts: [{ id: "claims.finalization" }],
+        },
+      });
 
       const begin = await fixture.client.callTool({
         name: "openwiki_begin",

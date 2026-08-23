@@ -7,9 +7,13 @@ import type { ProtocolTool } from "../core/protocol.js";
 /**
  * Host guidance advertised during MCP initialization.
  */
-const INSTRUCTIONS = `OpenWiki exposes deterministic lifecycle and Grounded Claims tools.
-Resolve the absolute Git top-level, then call openwiki_begin with that root
-before investigating or authoring. Pass its runId to every later OpenWiki tool.
+const INSTRUCTIONS = `OpenWiki exposes read-only coding context plus deterministic lifecycle and Grounded Claims tools.
+Resolve the absolute Git top-level. For non-trivial coding work, call
+openwiki_context with that root and the exact task before broad repository
+exploration. It does not require a lifecycle run; treat returned context as
+orientation and verify it against source code and tests.
+For wiki init or update, call openwiki_begin with the root before authoring.
+Pass its runId to Claims tools and openwiki_finish.
 Before materially editing an existing factual page, inspect its Claims with
 openwiki_inspect_claims. Establish or reconcile material repository-supported
 propositions with openwiki_resolve_claims. Use the host's native repository tools
@@ -22,11 +26,11 @@ The host may author the temporary openwiki/_plan.md and openwiki/_skeleton.md
 required by its installed workflow; finalization removes those files.`;
 
 /**
- * Minimal lifecycle capability required by the MCP transport adapter.
+ * Minimal integration capability required by the MCP transport adapter.
  */
 export interface HostToolProvider {
   /**
-   * Returns the complete transport-neutral lifecycle tool set.
+   * Returns the complete transport-neutral integration tool set.
    *
    * @returns Tools to register with the MCP server.
    */
@@ -36,7 +40,7 @@ export interface HostToolProvider {
 /**
  * Creates the thin MCP adapter over a transport-neutral lifecycle provider.
  *
- * @param provider - Rootless lifecycle tool provider.
+ * @param provider - Rootless integration tool provider.
  * @returns Unconnected MCP server exposing the provider's tools.
  */
 export function createOpenWikiMcpServer(provider: HostToolProvider): McpServer {
@@ -60,9 +64,9 @@ export function createOpenWikiMcpServer(provider: HostToolProvider): McpServer {
 }
 
 /**
- * Executes one validated lifecycle tool and bounds transport-visible errors.
+ * Executes one validated integration tool and bounds transport-visible errors.
  *
- * @param tool - Registered transport-neutral lifecycle tool.
+ * @param tool - Registered transport-neutral integration tool.
  * @param input - Input validated by the MCP SDK against the tool schema.
  * @returns MCP-compatible success or error content.
  */
