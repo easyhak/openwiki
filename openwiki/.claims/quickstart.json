@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:f7aec45e477af5d45b6340aea7869c7dfb765dd336fde5443f2fcbe5d726b932",
+  "pageVersion": "sha256:0494d0117b9689a38b34a68cb99efbb4317354bae5de8d8f6bbbd59a9cb0b532",
   "claims": [
     {
       "id": "claim_5836585e22d244e79875961ea0a09258",
@@ -60,7 +60,7 @@
     },
     {
       "id": "claim_c531273cb8074d9eb83baf7dbe5e1d33",
-      "statement": "The developer build produced by `pnpm run build` compiles both the server and client TypeScript projects and copies visualizer assets, and `pnpm test` gates changes by typechecking, building, and running the Vitest suite with coverage.",
+      "statement": "The developer build produced by `pnpm run build` compiles both the server and client TypeScript project and copies visualizer assets, and `pnpm test` gates changes by typechecking, building, and running the Vitest suite with coverage.",
       "evidence": [
         {
           "resource": "repo://package.json#L37-L59",
@@ -135,10 +135,46 @@
           "version": "repo-lines-v1:sha256:7a8ab221c5c17f59b02aa3e79426dfb44bc44200c8567042d6151f8d346626fe:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0ODM2ZWQ3ZTAwNTM3NzVhMGE5NjZjZTg2MTM0YjIzNDdkODUxYTdiMDJmNDgxMmJlYjJjNTlkMWM2OGQ1MjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU5YjQ4YzFjOTNhZjYzMmQwZDU0ZjM3NWYzNGJlNjNiZmUwODRkYTIxZGJmOThkODlmMmM1MTc0ZjRmNTY2ZWEifQ"
         }
       ]
+    },
+    {
+      "id": "claim_1a5e0f6309ac4f698949ee5bbe5eebae",
+      "statement": "When a repository page worker throws before submitting or exits without submitting, the runner restores the page snapshot, calls `skipRepositoryPage` to mark the pending job `skipped` without advancing the checkpoint, emits a deferred warning that the page will be reconsidered on the next update, and continues the run so the rest of the plan completes instead of aborting.",
+      "evidence": [
+        {
+          "resource": "repo://src/agent/repository-runner.ts#L485-L509",
+          "version": "repo-lines-v1:sha256:d54ae43beef4d790581052daf313c58f94efc7c8e0e7a9f9324addb6501781a0:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2NTk1ZjRlZTVmZjYzZDUwOTUwNDE5ZGMzNDQxNDUxMzg1MWRjOTczNmZkMTdhNGY3YmZhOTMwYjI2MWI2ZjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY2YmQ4ZmMzMTVhYWY2MGRlODgzYmY5MTY1OTFiOTE4NjU5ZDMzNjAyZjI0NDc5NTk3MWYxOGNlZjE0MDVhMTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA1NzQ5NjM0OGM5ZDUyYWM4ZmI2ODhjNDNkYThiZjgyZjkyYjZjNWU1NzFmNDkwZmY1YmI3ZTJiZTc3YjUzYWIifQ"
+        },
+        {
+          "resource": "repo://src/generation/repository-run.ts#L769-L821",
+          "version": "repo-lines-v1:sha256:ae76c5b4d3494385612bf57866b00804f73a2a81b72483253d68b7d7955cf75a:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhjNDMyM2RkMGViOTFhNjc1ZDFhNzM2NzM4OTc2ODUyMGUyYTk3YzdhZGIzMjRkNWY0ODI1ZmVlMTU0ZWNkZTcifQ"
+        },
+        {
+          "resource": "repo://test/agent/repository-runner.test.ts#L613-L631",
+          "version": "repo-lines-v1:sha256:8d4e359f105a484cf57149dca583a92495d984a0e36d5340ff9615356ab33067:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzYTMxODA1YjQ0YTQ2YWUyZWE3YmUzODJlM2I4NGJiMWQxYjA1NDI3NDVhMWFlMDdmNjA0YjVhZWFiZDk0YjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEzMGE4ZjMwYzkxNjQ0MDQxYWViNmI1ZmRmZjMxZTRlMTc0Mzg2NGFmN2RkOTljY2I5YTczMmM3OWM4ZjYxM2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZjN2UwZTY0NDliZDJkNjljMTcwM2EyMTk3NjkzYTJjYzU2NThiMDI4OGYwMGU2YzI0OTkyM2Y3NzlkMzIxMDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6536090034d3493287e0514d1902af1b",
+      "statement": "The visualizer anchors the graph hint/legend overlay inside the `#graph` panel (`position: relative`) so it cannot cover the page index or reader, and registers no `onBackgroundClick` handler so blank-canvas background clicks are a no-op that no longer clears the selected page or reader (issue #670).",
+      "evidence": [
+        {
+          "resource": "repo://src/visualize/client.ts#L501-L531",
+          "version": "repo-lines-v1:sha256:c8d31c4231b9fe930d48181b9aa3f8c38fb29c8f8a1bfeb72182cec68942aabb:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiOTMyNzA2NDJmOWIzNWVkMDAxZWNlNWY5OWNhMTEzOTM3NDVkYjQxNTk2MjNjOGQwNzg1NmJmYzg0NTU4MWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhMDFlMmUyNmRjM2Q3ZWU0Njc5MTljMWVlYTAyYWZjZjkxMGI1MDYyNWYxMDZiNzY1MmNkNjk1MThiMThjZmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNjOWUwNDJiOWE1OTA0NGI1NWFjMDMwOTY5YjRjNTliNjIzZGEwNDU5N2U2MGI4MzkyYzkzZmUxZjg2MmE1ZWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNjOTU1MGNkNTFiNWY0NmZiZGY4NDVmZmZlZTM1NjZkMzIyNDE5ZDIwMzRlNWU0OGI5YzljZmJhMDI1NWI0MDMifQ"
+        },
+        {
+          "resource": "repo://src/visualize/page.ts#L74-L83",
+          "version": "repo-lines-v1:sha256:39c226f40b9a35c70f9a89c626ff8f906feeaa6b1cf27f283fc76fe23b5c6f67:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzZTNhMGQxOTA0YzI5YTNhYWM0YzlhMTM4MDY4OWMyNmZiNDI1NTZhZmU4NTAzNzQ4YTRkZDA5MDc0MDFmZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiNDE2MzY3NmY2OWViOTE4NTRlNTgyODEyZTE5YTQ3MTE2ZTExNTgyNjBjNjI0YzFmNjJkNzQ0ZDAzOTg1M2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRhY2RjYzZkMzBlNjJiNjgyYWExYTYyOTdiZTZkZTk0NjRlZDljOWFiZTc0NDczYmE4ZDg5ZWUyMGUxZjM2YzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY5NzNhMDFlZDExZDgwYjNjMDJlNmFmNmNjNTQ3OWExNjIyNTlmYTEzOTNmNjQ1NDkyM2UwM2EyMTM1MThkNzkifQ"
+        },
+        {
+          "resource": "repo://test/visualize/client-interaction.test.ts#L173-L190",
+          "version": "repo-lines-v1:sha256:a2630875b35b8cfecb7fd67f126b0b6432af3e7545b5ef2365f2f4329c2cc65f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNiOGU0Zjg1YzJiMmVmMDI5ODczYzExMDFiMzVmZTdkOTY5OTkwYWIzZTJjOTAwZGQ5NWFhNzQxMWE2ODVlNTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMyMzM2YTE5Y2E1MDlhMjI4ZGRkMGQyNmRhYTAwMmZlMjdiYTA5OWNlY2FjZTdhYjE5M2IyMWJhZGUxZWE0MDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgzNjE5MGNiMTFiMGYyMWUzZjY2NDJjNmQzYzc4MDI3MDJjYjFiMWE5N2VjNWQzYTc3MGJhZDBmMTZiNTljNDEifQ"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.4.0",
-    "at": "2026-08-26T20:17:27.397Z"
+    "at": "2026-08-26T21:08:39.375Z"
   }
 }

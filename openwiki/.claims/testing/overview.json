@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:ab3b2e89c6dbd1393f5528b01287167211e5642982679258e789d0b4dd1f8140",
+  "pageVersion": "sha256:20a707605f18db61ed546f7d38346a6dd773087d6e3f4876bcf56cd098766dcf",
   "claims": [
     {
       "id": "claim_fe4e1fc83ccd4d9290e42536a6e48032",
@@ -135,8 +135,8 @@
       "statement": "Tests import source modules directly by relative path (e.g. ../../src/...), so a source module can be unit-tested through Vitest's transform without first building dist/.",
       "evidence": [
         {
-          "resource": "repo://test/generation/repository-run.test.ts#L57-L73",
-          "version": "repo-lines-v1:sha256:2a8f98f8d601cb84fbce4c9cc066385c98d9a88a3057a241d98024f406c24861:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZTgzOTc3Y2E0MDRhYmMyNzA2ZmEwZGNiMTM2YTQ2ZGNkYzIyZmVkOWFjY2MwNTExODY3NDIwZjcwNWE0MWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE1MTg4MjRkZGMzNmNjMGQ1NjY3YTA0YjRlMDQ3N2M0M2ZlMTdhZGE0ZTMyZjZkNjJjNTZiNjI5ZjJmMjAyMTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlkMjI1ZDY0NjQ4ZmQ3ZmJlNWQwZGExZjRmN2NmODAwZDE1Y2JhOWMyNzBkOTJiOTZiMWE4YWVmOWY1MzU4YTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUxZjZjODFiZDc3MzE0NWQzNTdkOWUzYjM4YjVkZDFkMWZlMzFjNzVmZGVhMDE3YzBkNTBlNjViOGViMzEyMjEifQ"
+          "resource": "repo://test/generation/repository-run.test.ts#L57-L79",
+          "version": "repo-lines-v1:sha256:e9404b10c07e96b7c0822b61d1a24e1a96be126a7373ea5feea9536c0eac239c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZTgzOTc3Y2E0MDRhYmMyNzA2ZmEwZGNiMTM2YTQ2ZGNkYzIyZmVkOWFjY2MwNTExODY3NDIwZjcwNWE0MWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkYTdlZWE0OWRlZDZmNmE4ZjhiNDk0NDdiNTg1MDlkM2ZiNzk3NzVkOTAyNGI4N2FkYmZiYmE0NzZmNjIzYzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlkMjI1ZDY0NjQ4ZmQ3ZmJlNWQwZGExZjRmN2NmODAwZDE1Y2JhOWMyNzBkOTJiOTZiMWE4YWVmOWY1MzU4YTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJhYjM2OTA1NGU2MGRjYTFiOGM0YWY5MmE4NjQ1OWIzYTFjODllNDFmYWVkMTkzODE4NGQxZDNiMWNlYjY5YmMifQ"
         },
         {
           "resource": "repo://test/openwiki-home.test.ts#L5-L9",
@@ -268,21 +268,83 @@
     },
     {
       "id": "claim_eba7cb76264f4d279e90756b4e4405aa",
-      "statement": "test/generation/repository-run.test.ts is the end-to-end integration test for the repository generation workflow: it imports parseFrontmatterFields and validateOkfFrontmatter from src/okf/frontmatter.ts and the beginRepositoryRun/submitRepositoryPlan/nextRepositoryPage/submitRepositoryPage/finishRepositoryRun lifecycle from src/generation/repository-run.ts, and drives the full begin→submit_plan→next_page→submit_page→finish lifecycle against a temporary committed Git repository, arming the failure harness in beforeEach and removing temp directories in afterEach.",
+      "statement": "test/generation/repository-run.test.ts is the end-to-end integration test for the repository generation workflow: it imports parseFrontmatterFields and validateOkfFrontmatter from src/okf/frontmatter.ts and the beginRepositoryRun/submitRepositoryPlan/nextRepositoryPage/submitRepositoryPage/finishRepositoryRun lifecycle (plus captureRepositoryPageSnapshot and skipRepositoryPage) from src/generation/repository-run.ts, and drives the full begin→submit_plan→next_page→submit_page→finish lifecycle against a temporary committed Git repository, arming the failure harness in beforeEach and removing temp directories in afterEach.",
       "evidence": [
         {
-          "resource": "repo://test/generation/repository-run.test.ts#L57-L73",
-          "version": "repo-lines-v1:sha256:2a8f98f8d601cb84fbce4c9cc066385c98d9a88a3057a241d98024f406c24861:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZTgzOTc3Y2E0MDRhYmMyNzA2ZmEwZGNiMTM2YTQ2ZGNkYzIyZmVkOWFjY2MwNTExODY3NDIwZjcwNWE0MWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE1MTg4MjRkZGMzNmNjMGQ1NjY3YTA0YjRlMDQ3N2M0M2ZlMTdhZGE0ZTMyZjZkNjJjNTZiNjI5ZjJmMjAyMTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlkMjI1ZDY0NjQ4ZmQ3ZmJlNWQwZGExZjRmN2NmODAwZDE1Y2JhOWMyNzBkOTJiOTZiMWE4YWVmOWY1MzU4YTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUxZjZjODFiZDc3MzE0NWQzNTdkOWUzYjM4YjVkZDFkMWZlMzFjNzVmZGVhMDE3YzBkNTBlNjViOGViMzEyMjEifQ"
+          "resource": "repo://test/generation/repository-run.test.ts#L240-L321",
+          "version": "repo-lines-v1:sha256:73a96db355593eb29e185e2e0ce2319e4a3481685984879a03bf302a3df32c57:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiZjhlODlkNGIyNjdjZmU5ZTBmMTU1ZDRjMzhjZmFmMmU2YTYwYjM4N2UxNDI0M2ZkYzQ0OWFmYmE2YjgwM2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkMGYyZDNhM2FhZGEyNzU4NjQ1NzhkMGE0MzkxNTYzOGQ1NDNmZWNhMmM5NDg1OGRiOTQxMjExZTg2Y2VmMmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzN2NjMmU5ZjM1MmQwMzJlNjczMzg1ZGI5ZTM5MmZmMTE5OGQ1N2I5ZTU0NTZhY2ZjMTE3NTM5MTc1Y2QwYzUifQ"
         },
         {
-          "resource": "repo://test/generation/repository-run.test.ts#L599-L625",
-          "version": "repo-lines-v1:sha256:5144f16fc362c601d4a6627fb65469f04d48a0fb461e033dd52b4d90a5bee5cd:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4MGY2YjlkMWExMDY0MzcyYTU5NzAxOWM5MWMxMDIzYmI3ZTVjMmFhYjU1MzM1MDRkMjFhYWJlZDczOWU5MzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2ZWEzYThkZWI0ZGQ5ZmU1NWM3MzU1ZTJmMWQ1YjlmMzA0MWVkOWM3MjQxNzdkOGQyOGQwYjAwNmI2NTllYzAifQ"
+          "resource": "repo://test/generation/repository-run.test.ts#L57-L79",
+          "version": "repo-lines-v1:sha256:e9404b10c07e96b7c0822b61d1a24e1a96be126a7373ea5feea9536c0eac239c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZTgzOTc3Y2E0MDRhYmMyNzA2ZmEwZGNiMTM2YTQ2ZGNkYzIyZmVkOWFjY2MwNTExODY3NDIwZjcwNWE0MWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkYTdlZWE0OWRlZDZmNmE4ZjhiNDk0NDdiNTg1MDlkM2ZiNzk3NzVkOTAyNGI4N2FkYmZiYmE0NzZmNjIzYzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlkMjI1ZDY0NjQ4ZmQ3ZmJlNWQwZGExZjRmN2NmODAwZDE1Y2JhOWMyNzBkOTJiOTZiMWE4YWVmOWY1MzU4YTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJhYjM2OTA1NGU2MGRjYTFiOGM0YWY5MmE4NjQ1OWIzYTFjODllNDFmYWVkMTkzODE4NGQxZDNiMWNlYjY5YmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_76c6de97656b4d8aa55a6c8f42899f3c",
+      "statement": "test/agent/repository-runner.test.ts is the harness for the native repository worker: it mocks deepagents to capture the agent options and tool surfaces passed to createDeepAgent/createFilesystemMiddleware and to drive a scripted event stream, and separately mocks src/generation/repository-run.js with an in-memory run-state harness, so it verifies the runner's worker model (read-only planner surface, fresh per-page worker with write tools, no execute/task, no-delegation model middleware, completion-tool rejection as ToolMessage errors) without building a real agent or touching disk.",
+      "evidence": [
+        {
+          "resource": "repo://test/agent/repository-runner.test.ts#L375-L460",
+          "version": "repo-lines-v1:sha256:a6c9a44450b8977430219c21780d48f3a9a420a4969cb8eab80c1f7a1ed4a4ed:eyJzZWxlY3RlZExpbmVDb3VudCI6ODYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4MjAwOTY0YTk3ODYzNTUyMmIyYWIwOTBjNjUwNjVkOGVmOGU4NWM0NzMwYmIyZWIwNDYwZDM0YzY3N2RkYmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM4ZDUzMmY3NDgyM2M0NTcyYWQ3OWI3ZTg1YjFhODAyOTYyN2E2ZTBjOTYzMTBjZGQ2MGZiMzk4MDczMzUxZmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlZGU5NzM3NzRkOTY1ZDkxYzk3YzkwZmEyODlhNjU3M2QyODUzM2ExMjZlZDBkOWJjMDI2NWQ4MjBiZDA3YjAifQ"
+        },
+        {
+          "resource": "repo://test/agent/repository-runner.test.ts#L64-L228",
+          "version": "repo-lines-v1:sha256:1f8273db527a91572e62eb17773d634e316b3d23e4eaca5e324a139d365a0932:eyJzZWxlY3RlZExpbmVDb3VudCI6MTY1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmMTc4ZmIyMDFiZWRmZGI0YzU0Njk2ODgyYmM2MmZlNTk4ZWQ4M2M0MWEwYTE3ZDc5YzYwMTdlZTNmN2M4OTMzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjMGY3YjE1NWYxOWM1ZGEwNjgxMzVjNzQ2ZDNkMzE2OTdkYmI5NjMzNzk0YTU5YzZlZmQ1M2EzMzM5OWFkNDY5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIxZmRhZGU4MjhiMmM1M2E1YzQ1NmUyNjdkYmM0NGNjMDA5NzRiZTdhNjczOTFmMGU3NDFjZDU3MTYzMGQ5NjI5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_07c56c2aee4e4ca28f8c2db350faad19",
+      "statement": "The repository-runner harness simulates a worker that exits without submitting (workerExitsWithoutSubmit) and verifies the runner calls skipRepositoryPage exactly once, leaves that page's status as 'skipped', lets subsequent pages continue to 'complete', still reaches finish exactly once, and emits a text event noting the page will be reconsidered on the next update.",
+      "evidence": [
+        {
+          "resource": "repo://test/agent/repository-runner.test.ts#L613-L631",
+          "version": "repo-lines-v1:sha256:8d4e359f105a484cf57149dca583a92495d984a0e36d5340ff9615356ab33067:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzYTMxODA1YjQ0YTQ2YWUyZWE3YmUzODJlM2I4NGJiMWQxYjA1NDI3NDVhMWFlMDdmNjA0YjVhZWFiZDk0YjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEzMGE4ZjMwYzkxNjQ0MDQxYWViNmI1ZmRmZjMxZTRlMTc0Mzg2NGFmN2RkOTljY2I5YTczMmM3OWM4ZjYxM2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZjN2UwZTY0NDliZDJkNjljMTcwM2EyMTk3NjkzYTJjYzU2NThiMDI4OGYwMGU2YzI0OTkyM2Y3NzlkMzIxMDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3cdc74275bb34003abb596cee69c1f9b",
+      "statement": "The repository-runner harness verifies source-drift replanning: when finishRepositoryRun throws a conflict (source changed during the run), the runner re-begins and replans, so begin and finish are each called twice, four agents are constructed across the two cycles, and the event stream carries a replanning stage.",
+      "evidence": [
+        {
+          "resource": "repo://test/agent/repository-runner.test.ts#L583-L611",
+          "version": "repo-lines-v1:sha256:397ea0b387f15ee40203d08195b808b861cbecc05b506b74befdaaa34e121a26:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZiMjYxZjJkN2QxODU2ZGNjOTAyNTczNzg5MzQ5NWE1MjY2YzJhZWNkODUyZjllMGQwYzA2NWU1NzE1Y2Q3NmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ZDM5MjQzNjdhMzUxYjU5OGU5NmJiZTZkOGE5NDljYzE2NGZkNmU3NDFiOGI4NDkzZTkzY2EwOWJiZGU5OGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA4NjNhZjUzNDJmODdiYzhmOGZkY2IzZDVkNWJkN2I5MTExZDJiYzhkOTU2NDc3YWY4ZTk5OTYxNzU3ZmRlNzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_48201546492a468685b62e093b5d4105",
+      "statement": "test/visualize/client-interaction.test.ts runs under the jsdom environment (via a // @vitest-environment jsdom pragma) and imports the browser-only src/visualize/client.ts with the CDN globals (ForceGraph, marked, DOMPurify, mermaid, ResizeObserver, fetch) replaced by recording stubs, so it can assert on the handlers the client registers; specifically it verifies the issue #670 regression that background clicks are not wired to any handler (onBackgroundClick is never called) and that a selected page therefore stays open in the reader.",
+      "evidence": [
+        {
+          "resource": "repo://test/visualize/client-interaction.test.ts#L1-L13",
+          "version": "repo-lines-v1:sha256:30d0535520c5432946ba2b15519075141a8d3f04671caec6b624e2fcb939b019:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlNTE3MjMxODg0ZjVhZWU3NWRkM2IwNTA5ZjEwYjMxOGM4N2QxOWY3ZjNkNDlhNDUyZjg2ZWM1ODNiMzgxY2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3MmE0MjkzODJiMmUxNDcxOGUwZTM3YjA1NzBhOGExNzAyOTkxZmNkODQ5OGNkODQwNjBhOGJmNGYwNTAxN2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmODQ2YjU1MTExN2U3OTM2MTVjOGNkZjhiZTMwYjZhNWI4M2FkZWNjODU0ZTBmNTZlZmZlNDZlZDk1ZTNiNGMifQ"
+        },
+        {
+          "resource": "repo://test/visualize/client-interaction.test.ts#L176-L190",
+          "version": "repo-lines-v1:sha256:b13138f3f5bd73d42c1d82e8f4edb69a604633d72c4f8c763675c4110d27ca62:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjYjA4NTlmYjkwZGU1Y2IwYTNmM2MzNDAzYzBmNDhlNTExMGQ2MDM3ZTcxYmZiZTdlZTFlYTIzYzU4M2IzZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmNWNkN2M1M2YyOGRhMGFiMjQ0MmIyZDMyMTk4NDY2MTI1OTA2YmZiZDNkZjY2MTVhMTdiOGMzODFkYTAyMDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgzNjE5MGNiMTFiMGYyMWUzZjY2NDJjNmQzYzc4MDI3MDJjYjFiMWE5N2VjNWQzYTc3MGJhZDBmMTZiNTljNDEifQ"
+        },
+        {
+          "resource": "repo://test/visualize/client-interaction.test.ts#L78-L151",
+          "version": "repo-lines-v1:sha256:8ccd749f59ab98638bc3f0b5f2f17eb1287efc74c2db10d21fa9336642c8d5bb:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkOWMwNjA0MWZjNWY4MGNlZmQ5ODlmZDNhN2EzNjllNzhmMzMzYTg1YTFhMzkzNmM3ZWI1MjRmMTYzMmY3OWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYxNzIyMWNlY2E4YTJlNjBjYmQ0MmI1OTkyZjg0ZmEyOWQ4NzRlYzFlY2JjMDI1Y2Q2NDMwYzI4N2JmYWJjZmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE3YWI5MzEzMTVjOTFmYjIyZTA3ZmQ3YjU4ZjkwZGVjZjMwYmMxNDBiNTEzYWRlYzg2NzRiMzA5MTYyY2ZhYjQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4c7aba2f8a844330b7ec4176b384e92a",
+      "statement": "test/visualize/page.test.ts verifies the hint/legend overlay is anchored inside #graph (inside #graph-overlay) rather than as a direct child of .main, and that the stylesheet caps .graph-overlay with a max-height and keeps .legend scrollable with overflow-y: auto (no longer position: absolute), guarding the issue #670 regression where a many-type legend grew into a full-width bar covering the sidebar and reader.",
+      "evidence": [
+        {
+          "resource": "repo://test/visualize/page.test.ts#L71-L117",
+          "version": "repo-lines-v1:sha256:8793d737f9a955020a2f85f2542c82b35af055f143aa5a1f499b67a3dbd8e6bf:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwMjA3MDE2Y2ZmMWI1M2U4NTU5ZDVhNTM2MmY1NGY5MTZlOGVkZDZmYjQ1ZDI3ZDUzNDU0Mzk5MmQ5NmRhZjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMxMjU3N2VmNzRiMTBjN2E5MDhjNzM4OTdmNTE1NTY4ZDA3ZTU2YWJjMzUwYmM1Nzc4ZWM0OGNjZmNhMmE5ZjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
         }
       ]
     }
   ],
   "verification": {
     "by": "openwiki/0.4.0",
-    "at": "2026-08-26T20:17:27.397Z"
+    "at": "2026-08-26T21:08:39.375Z"
   }
 }

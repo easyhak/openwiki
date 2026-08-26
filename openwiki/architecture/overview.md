@@ -15,8 +15,8 @@ tags:
     visualizer,
   ]
 verified:
-  - by: openwiki/0.3.3
-    at: 2026-08-25T02:14:25.283Z
+  - by: openwiki/0.4.0
+    at: 2026-08-26T21:08:39.375Z
 sources:
   - id: openwiki-source-23775c3de52f3ab95a13cb8b
     resource: repo://README.md
@@ -40,7 +40,11 @@ sources:
     resource: repo://src/integrations/core/protocol.ts
   - id: openwiki-source-58835b77ce38a0dd1fed8d09
     resource: repo://src/integrations/core/session-manager.ts
-generated: { by: "openwiki/0.3.3", at: "2026-08-25T02:14:25.283Z" }
+  - id: openwiki-source-610ff51ff8da46ab065496a5
+    resource: repo://src/visualize/client.ts
+  - id: openwiki-source-b0d5ccee7e5f7532bd8ed3f5
+    resource: repo://src/visualize/page.ts
+generated: { by: "openwiki/0.4.0", at: "2026-08-26T21:08:39.375Z" }
 ---
 
 # Architecture Overview
@@ -138,12 +142,29 @@ non-delegating DeepAgent: the planner gets read-only filesystem tools plus
 `submit_page`, and the general-purpose `task` delegation tool is stripped so
 workers cannot spawn subagents.
 
+The page loop is skip-tolerant rather than fail-fast. `runPendingPageAgents`
+advances through the ordered queue one job at a time; if a page worker exits
+without ever calling `submit_page` — whether it crashed, hit an unrelated
+error, or simply failed to submit — the worker is **skipped** for this
+update. Its original page content snapshot is captured, the page job is marked
+skipped, a deferred warning is emitted, and the runner continues to the next
+pending job instead of aborting the whole update. Only a fatal, non-correctable
+`submit_page` failure (an error other than `invalid_input`) propagates and
+aborts the run.
+
+The collected skipped-page snapshots are passed straight through to
+`finishRepositoryRun`, which validates that every skipped job has its original
+snapshot, restores each skipped page's Markdown, and excludes skipped pages
+from Claim finalization. When any page was skipped the run still completes
+normally, but it records `interrupted` (rather than `complete`) update
+metadata so the next update knows pages were left for reconsideration; with no
+skipped pages it records `complete`. The end-to-end flow is documented in
+[Repository generation workflow](../workflows/repository-generation.md).
+
 The lifecycle is resumable and self-correcting. If finalization detects that
 repository source drifted underneath the plan, the run replans and repeats.
 Correctable submission rejections are returned to the worker as error-status
-tool messages so it can fix and resubmit rather than aborting the run. The
-end-to-end flow is documented in
-[Repository generation workflow](../workflows/repository-generation.md).
+tool messages so it can fix and resubmit rather than aborting the run.
 
 ## Host-driven (coding-agent) generation
 
@@ -193,10 +214,16 @@ sources or one target at a time.
 ## Visualization
 
 `openwiki visualize` turns any wiki into an interactive node graph beside a live
-Markdown reader. Without `--export` it serves the wiki directory on a local
-loopback address with live reload; with `--export` it writes a self-contained
-static site (`index.html`, `client.js`, `client-lib.js`, `styles.css`,
-`graph.json`) suitable for GitHub Pages or any static host.
+Markdown reader. The single-page app renders a side panel with the page index,
+a force-directed graph, and a Markdown reader; a hint-and-legend overlay sits
+inside the graph panel (scoped to the graph's own box so it can never cover the
+index or reader) and is hidden when the graph is collapsed to fullscreen docs.
+Without `--export` it serves the wiki directory on a local loopback address
+with live reload; with `--export` it writes a self-contained static site
+(`index.html`, `client.js`, `client-lib.js`, `styles.css`, `graph.json`)
+suitable for GitHub Pages or any static host. The graph, Markdown, and diagram
+libraries load from a pinned CDN with SRI hashes, and Markdown bodies are
+protected by a strict CSP plus DOMPurify.
 
 ## Where to go next
 

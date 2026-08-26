@@ -34,10 +34,10 @@ sources:
     resource: repo://src/generation/repository-run.ts
   - id: openwiki-source-cfc15a67b4c02c45974332dc
     resource: repo://test/generation/page-jobs.test.ts
-generated: { by: "openwiki/0.3.3", at: "2026-08-25T02:14:25.283Z" }
+generated: { by: "openwiki/0.4.0", at: "2026-08-26T21:08:39.375Z" }
 verified:
   - by: openwiki/0.4.0
-    at: 2026-08-26T20:17:27.397Z
+    at: 2026-08-26T21:08:39.375Z
 ---
 
 # Claims Reconciliation on Update
@@ -234,13 +234,39 @@ Lifecycle of a page Claim across one reconciliation pass.
 
 After reconciliation, the run finalizes Claims for the page before recording job
 completion, and asserts the page's Claims are durable before advancing the queue.
-Finalization persists only pages whose Claim state actually changed (`dirty`),
-refuses to persist a page that still carries unresolved evidence debt, and
-rechecks every dirty page's evidence against current source and re-hashes its
-Markdown before writing the sidecar. Orphan and deleted-page sidecars are removed
-in the same pass. This is the point at which refreshed evidence versions become
-durable, so a subsequent update's preflight sees current tokens and can correctly
-report the page as no longer stale.
+
+`ClaimSession.finalize` processes dirty pages in insertion order: for each page
+not in the `excludedPages` set it first awaits any pending mutation, then skips
+pages that are deleted or not dirty. A dirty page that still carries unresolved
+evidence issues is rejected with an "Unresolved evidence debt" error rather than
+persisted. For each remaining dirty page it asserts the evidence is still
+current via the cached resolver (`assertEvidenceStillCurrent`), re-resolving
+every evidence resource against its recorded version and rejecting if the
+resource disappeared or its version token changed, then hashes the page's
+Markdown (`store.hashPage`) and stages it for writing. Recoverable failures —
+a page whose Markdown disappeared, an orphan sidecar, or a deleted page — are
+captured as warnings rather than aborting the whole pass, while non-recoverable
+errors propagate.
+
+Once the dirty set is verified, `finalize` writes the staged "ready" pages,
+embedding a `verification` event on pages that still own claims, removes orphan
+sidecars, missing-page sidecars, and deleted-page sidecars, and returns a
+per-page `verificationByPage` map plus the accumulated `warnings`. A page is
+eligible for a verification stamp only when it is persisted, not dirty, owns at
+least one Claim, has no unresolved issues, and already has a verification event.
+
+The runtime `finalize` facade wraps `session.finalize` with verification
+projection: after the session returns, it calls `finalizeVerificationProjection`,
+which projects the per-page verification events into page front matter via
+`synchronizeClaimsVerification` and then calls `session.refreshPageVersions` to
+refresh persisted page hashes after the OKF projection changes Markdown bytes.
+Pages whose stamp cannot be synchronized are rolled back. If any warnings
+remain after projection, the facade throws a `ClaimsPersistenceError` so a
+partially durable finalization fails the run rather than silently completing.
+
+This is the point at which refreshed evidence versions become durable, so a
+subsequent update's preflight sees current tokens and can correctly report the
+page as no longer stale.
 
 ## Related pages
 

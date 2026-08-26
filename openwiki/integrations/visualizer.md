@@ -1,11 +1,8 @@
 ---
 type: integration
 title: Interactive Visualizer
-description: How the `openwiki visualize` command builds a link graph from wiki Markdown and OKF frontmatter, serves a live single-page reader over loopback HTTP, and exports a self-contained static site for hosting.
+description: How the `openwiki visualize` command builds a link graph from wiki Markdown and OKF frontmatter, serves a live single-page reader over loopback HTTP, and exports a self-contained static site for hosting; including the issue #670 overlay-anchoring and background-click fixes.
 tags: [visualizer, graph, static-export, cli, server, markdown-reader]
-verified:
-  - by: openwiki/0.3.3
-    at: 2026-08-25T02:14:25.283Z
 sources:
   - id: openwiki-source-5b54a58d1b51cd490b0e7162
     resource: repo://package.json
@@ -27,6 +24,12 @@ sources:
     resource: repo://src/visualize/server.ts
   - id: openwiki-source-3603986778b0b5f63cbdb37d
     resource: repo://src/visualize/static-export.ts
+  - id: openwiki-source-6f421b25bc36977e02cf94f2
+    resource: repo://src/visualize/styles.css
+  - id: openwiki-source-e3be493bc871948f42420690
+    resource: repo://test/visualize/client-interaction.test.ts
+  - id: openwiki-source-1904eaebd82125a3a3881dac
+    resource: repo://test/visualize/page.test.ts
   - id: openwiki-source-6b177c090fb1c7574a23496e
     resource: repo://test/visualize/server.test.ts
   - id: openwiki-source-2e48ab40ab957bcc05e92de0
@@ -35,7 +38,10 @@ sources:
     resource: repo://test/visualize/visualize-client-lib.test.ts
   - id: openwiki-source-42403648c3f500ce06398039
     resource: repo://tsconfig.client.json
-generated: { by: "openwiki/0.3.3", at: "2026-08-25T02:14:25.283Z" }
+generated: { by: "openwiki/0.4.0", at: "2026-08-26T21:08:39.375Z" }
+verified:
+  - by: openwiki/0.4.0
+    at: 2026-08-26T21:08:39.375Z
 ---
 
 # Interactive Visualizer
@@ -154,6 +160,31 @@ sidebar index of every page grouped by type. Clicking a node — on the canvas, 
 the sidebar, via a backlink chip, or through an in-page wiki link — opens that page
 in the reader without moving the camera, so reading never yanks the graph out from
 under you.
+
+### Overlay anchoring (issue #670)
+
+The controls hint and the type legend are rendered as a single
+`.graph-overlay` stack **nested inside the `#graph` panel**, not as direct
+children of `.main`. Because `#graph` is `position: relative`, the overlay is
+anchored to the graph panel's own box (`position: absolute; left: 20px;
+bottom: 18px`) and can only ever cover the graph canvas — never the sidebar page
+index or the reader. The stack is also height-capped with
+`max-height: calc(100% - 36px)` and `min-height: 0`, and the `.legend` it contains
+is `overflow-y: auto`, so a wiki with many page types wraps and **scrolls within
+that cap** instead of growing into a full-width bar that used to spill over the
+neighbouring panels. `page.test.ts` asserts both that the overlay lives inside
+`#graph` and that the stylesheet keeps it height-capped with a scrolling legend.
+
+### Background clicks no longer clear the reader (issue #670)
+
+`initGraph` deliberately registers **no `onBackgroundClick` handler** on the
+force-graph instance. Previously a click on empty graph space was wired to clear
+the selection, which made the page the user was actively reading vanish on a
+stray click; background clicks are now a complete no-op with respect to page
+state. `client-interaction.test.ts` imports the client under jsdom with the
+third-party globals stubbed and asserts that `backgroundClickHandler` is
+`undefined`, and that after selecting a node the reader content stays open and
+the `#detail .empty` placeholder never reappears.
 
 The reader renders the page body as Markdown. Because `marked` passes raw HTML
 through, the output is sanitized with DOMPurify before assignment to `innerHTML`,

@@ -30,10 +30,10 @@ sources:
     resource: repo://src/okf/claim-sources.ts
   - id: openwiki-source-95484b6dcd037757691dcbb2
     resource: repo://src/okf/claims-verification.ts
-generated: { by: "openwiki/0.4.0", at: "2026-08-26T20:17:27.397Z" }
+generated: { by: "openwiki/0.4.0", at: "2026-08-26T21:08:39.375Z" }
 verified:
   - by: openwiki/0.4.0
-    at: 2026-08-26T20:17:27.397Z
+    at: 2026-08-26T21:08:39.375Z
 ---
 
 # Grounded Claims
@@ -182,12 +182,18 @@ pass two gates before its sidecar is written:
    time; if any resource disappeared or changed version since the mutation was
    accepted, the page is not persisted.
 
-Finalization also removes orphaned sidecars (whose pages no longer exist),
-deletes sidecars for pages whose Markdown vanished, and removes sidecars for
-pages recorded as deleted. Each page's Markdown is hashed before its sidecar is
-written so the persisted `pageVersion` describes the exact bytes on disk. A page
-finalized with a non-empty Claim set receives a durable `verification` event; a
-page whose Claims were fully retracted is persisted without one.
+Finalization iterates dirty pages, checks for unresolved evidence debt, asserts
+evidence is still current, hashes pages before writing, and handles three cleanup
+streams: orphaned sidecars whose pages no longer exist are removed, sidecars for
+pages whose Markdown vanished during the run are deleted, and sidecars for pages
+recorded as deleted are removed. Ready pages are written with verification.
+`finalize` returns a `verificationByPage` eligibility map plus a `warnings`
+list rather than throwing on recoverable per-page failures.
+
+Each page's Markdown is hashed before its sidecar is written so the persisted
+`pageVersion` describes the exact bytes on disk. A page finalized with a
+non-empty Claim set receives a durable `verification` event; a page whose Claims
+were fully retracted is persisted without one.
 
 Finalization is best-effort per page: recoverable per-page failures are isolated
 as warnings rather than aborting the run, but the runtime treats any warning as a
@@ -223,11 +229,21 @@ rolled back so a stamp never outlives an accurate `pageVersion`.
 ## Preparation, resolver caching, and configuration
 
 `prepareClaimsRuntime` is active only for `repository` output outside `chat`
-mode. A fresh `init` starts from empty Claim state while still discovering
-existing sidecars as orphan candidates; updates and resumed inits run full
-preflight first. The repository evidence resolver is constructed with the
-repository root and the shared `.openwikiignore` read-boundary rules, so evidence
-resolution honors the same exclusions as the agent's file reads.
+mode; it returns `undefined` otherwise. A fresh `init` starts from empty Claim
+state while still discovering existing sidecars as orphan candidates; updates and
+resumed inits run full preflight first and build the session from persisted
+state. The repository evidence resolver is constructed with the repository root
+and the shared `.openwikiignore` read-boundary rules, so evidence resolution
+honors the same exclusions as the agent's file reads.
+
+The prepared session is bound into a runtime by `buildClaimsRuntime`, which
+threads the session, preflight issues, store, and an `onWarning` sink into the
+`finalize` facade. That facade runs in two stages: it calls `session.finalize` to
+persist Claims and compute `verificationByPage` eligibility, then
+`finalizeVerificationProjection` to project OKF verification and refresh page
+hashes (rolling back unsafe stamps). Warnings from both stages are accumulated
+and reported through `onWarning` before strict rejection, so any non-durable
+outcome fails the run.
 
 Every processing phase — preflight, one mutation batch, and one finalization
 pass — wraps the resolver with a fresh `cacheEvidenceResolver` so each

@@ -3,6 +3,9 @@ type: workflow
 title: Wiki Finalization and Link Integrity
 description: How OpenWiki deterministically finalizes a run — persisting Claims, projecting them into OKF sources, synchronizing indexes and generated provenance, validating internal wiki links, and re-proving the whole run before deleting .run.json.
 tags: [finalization, wiki, okf, link-validation, provenance, claims]
+verified:
+  - by: openwiki/0.4.0
+    at: 2026-08-26T21:08:39.375Z
 sources:
   - id: openwiki-source-adcadc660c1888613ec50f9a
     resource: repo://src/agent/wiki-finalizer.ts
@@ -16,10 +19,7 @@ sources:
     resource: repo://src/okf/generated-provenance.ts
   - id: openwiki-source-5835357b69a5869be210533b
     resource: repo://src/okf/index-sync.ts
-generated: { by: "openwiki/0.4.0", at: "2026-08-26T20:17:27.397Z" }
-verified:
-  - by: openwiki/0.4.0
-    at: 2026-08-26T20:17:27.397Z
+generated: { by: "openwiki/0.4.0", at: "2026-08-26T21:08:39.375Z" }
 ---
 
 # Wiki Finalization and Link Integrity
@@ -154,29 +154,66 @@ Reserved control files (`index.md`, `log.md`, `INSTRUCTIONS.md`) and dotfiles
 are excluded from scanning. A `WikiLinkReport` records files scanned, links
 checked, issues found, and which files were stamped.
 
+## Per-page durability proof on submit
+
+Each `submitRepositoryPage` persists and proves one page's Claims before that
+page's job is marked complete. `replacePageClaims` updates the in-memory
+session, `claimsRuntime.finalize` persists the Claim sidecar, then
+`assertPageClaimsDurable` re-loads the sidecar and confirms four things hold
+together: the sidecar was durably persisted; its recorded `pageVersion` equals
+the current Markdown byte hash (`store.hashPage`); a `verification` event was
+projected into the page's front matter whose `by`/`at` match the persisted
+verification record; and every expected Claim from the session is present in the
+durable set with the same statement and an equal evidence-resource set (compared
+order-independently). A mismatch on any of these throws `invalid_state` and the
+job is not advanced, so the queue never records a page complete until its Claims
+are provably durable.
+
+This per-page proof is distinct from the strict whole-run proof, which runs only
+once every page job is complete.
+
 ## The whole-run proof before .run.json is removed
 
 Finalization is invoked from `finishRepositoryRun`
-(`src/generation/repository-run.ts`), which wraps it in a strict durability
-proof. Each `submit_page` already persists and proves that one page's Claims
-match its Markdown bytes (`assertPageClaimsDurable`), but the strict whole-run
-proof deliberately waits until every page job is complete.
+(`src/generation/repository-run.ts`), which refuses to finish while any page job
+is still `pending`. It then executes a fixed finalization sequence:
 
-At finish, the sequence is: verify the repository source fingerprint is
-unchanged, apply abandoned/planned page deletions and reconcile deleted Claim
-pages, run `finalizeWikiArtifacts`, finalize the Claims runtime, then
-`assertRepositoryClaimsDurable` — which confirms no orphaned Claims sidecars
-remain and that every non-empty Claim set matches a durable sidecar and the
-final Markdown bytes exactly. Crucially, the **source fingerprint is checked
-again after finalization** to close the check/use race: source must stay
-unchanged across the entire deterministic finish window, not only at its start.
-If it drifted, the plan is invalidated and the run must re-plan.
+1. **Source fingerprint.** `requireStableSourceFingerprint` confirms the
+   repository source fingerprint is unchanged at the start of finish.
+2. **Skipped-page snapshots.** Every `skipped` job must be accompanied by the
+   exact pre-authoring snapshot it was rolled back to; finish rejects a run whose
+   skipped snapshots do not line up one-to-one with the skipped jobs by id and
+   path.
+3. **Deletions and Claims reconciliation.** `applyAbandonedGeneratedPageDeletions`
+   removes pages the current plan abandoned, `applyPlannedDeletions` removes
+   explicitly planned `deletePages`, and `reconcileDeletedClaimPages` records a
+   deletion for every sidecar whose Markdown page no longer exists.
+4. **Finalize wiki artifacts.** `finalizeWikiArtifacts` runs the mermaid, index,
+   link-validation, claims-sources, and generated-provenance steps against the
+   rehydrated `prepared` baseline.
+5. **Restore skipped pages.** `restoreRepositoryPageMarkdown` rewrites each
+   skipped page back to its snapshot bytes (deleting it if the snapshot was
+   empty), so finalization validates against the restored bytes rather than any
+   partial output a failed worker left behind.
+6. **Finalize Claims runtime.** `claimsRuntime.finalize` is called with the
+   skipped-page set, persisting the authoritative session state.
+7. **Whole-run durability proof.** `assertRepositoryClaimsDurable` confirms no
+   orphaned Claims sidecars remain (every sidecar page still exists on disk) and
+   that every non-empty Claim set matches a durable sidecar and the final
+   Markdown bytes exactly; skipped pages are excluded.
+8. **Source fingerprint again.** `requireStableSourceFingerprint` is re-run to
+   close the check/use race — source must stay unchanged across the entire
+   deterministic finish window, not only at its start. If it drifted, the plan is
+   invalidated (state reset to `planning`, plan deleted) and the run must
+   re-plan.
+9. **Completion metadata.** When skipped pages exist the run is recorded as
+   `interrupted`; otherwise `persistRunMetadataIfChanged` records `complete`.
+10. **Remove checkpoint last.** `.run.json` is deleted only after all the gates
+    above pass, so any earlier failure leaves run state on disk and `begin()` can
+    reconstruct and retry.
 
-Only after all of these gates pass does `finishRepositoryRun` persist run
-metadata and delete `.run.json` **last**. Any earlier failure leaves the run
-state on disk, so `begin()` can reconstruct and retry. This ordering is what
-makes finalization crash-safe: the run is never marked complete until the
-finalized wiki has been re-proven durable.
+This ordering is what makes finalization crash-safe: the run is never marked
+complete until the finalized wiki has been re-proven durable.
 
 ## Related
 

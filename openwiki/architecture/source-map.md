@@ -50,10 +50,10 @@ sources:
     resource: repo://src/visualize/graph.ts
   - id: openwiki-source-4d856d692c32be213c8c46b4
     resource: repo://src/visualize/server.ts
-generated: { by: "openwiki/0.4.0", at: "2026-08-26T20:17:27.397Z" }
+generated: { by: "openwiki/0.4.0", at: "2026-08-26T21:08:39.375Z" }
 verified:
   - by: openwiki/0.4.0
-    at: 2026-08-26T20:17:27.397Z
+    at: 2026-08-26T21:08:39.375Z
 ---
 
 # Source Map
@@ -88,10 +88,16 @@ before anything else.
   Nearly every subsystem imports its identifiers from here.
 - **`src/generation/repository-run.ts`** owns the repository-generation
   lifecycle. It drives the plan-then-page workflow with `beginRepositoryRun`,
-  `submitRepositoryPlan`, `nextRepositoryPage`, `submitRepositoryPage`, and
-  `finishRepositoryRun`, wiring together the run state, claims runtime, wiki
-  finalizer, and OKF frontmatter validation — including deterministic
-  frontmatter repair (`repairPersistedFile`) before a page job is accepted.
+  `submitRepositoryPlan`, `nextRepositoryPage`, `submitRepositoryPage`,
+  `skipRepositoryPage`, `captureRepositoryPageSnapshot`, and
+  `finishRepositoryRun`. It imports `prepareClaimsRuntime` and the
+  `ClaimsRuntime` type from `claims/brains/code/runtime.js` to assemble the
+  strict per-run claims runtime held on each `ActiveRepositoryRun`, and wires
+  together run state (`run-state.js`), the claims store, the wiki finalizer,
+  and OKF frontmatter validation — importing `parseFrontmatterFields` and
+  `repairPersistedFile` from `okf/frontmatter.js` and index-label resolution
+  from `okf/index-labels.js` to repair and validate each page before it is
+  accepted.
 
 ## Subsystems
 
@@ -99,21 +105,29 @@ before anything else.
 
 Owns model/provider wiring, the agent tool loop, and the machinery that turns a
 run into wiki pages. Principal entry: `src/agent/index.ts`. Supporting owners
-include `src/agent/repository-runner.ts` (the native plan/page tool loop that
-calls into `generation/repository-run.ts`), `src/agent/docs-only-backend.ts`
-(the sandboxed shell/filesystem backend), the OKF and translation middleware
-(`okf-middleware.ts`, `translation-middleware.ts`), the prompt builders
-(`prompt.ts`, `repository-prompts.ts`), read-boundary enforcement
-(`openwiki-ignore.ts`), wiki post-processing (`wiki-finalizer.ts`,
-`wiki-link-validator.ts`, `wiki-replacement.ts`), and the ChatGPT/Vertex auth
-surfaces (`openai-chatgpt-oauth.ts`, `vertex-surface.ts`).
+include `src/agent/repository-runner.ts` — the native plan/page tool loop that
+drives the shared generation lifecycle by importing
+`beginRepositoryRun`, `captureRepositoryPageSnapshot`, `finishRepositoryRun`,
+`nextRepositoryPage`, `skipRepositoryPage`, `submitRepositoryPage`, and
+`submitRepositoryPlan` from `generation/repository-run.js`, plus the
+`RepositoryRunMode` type from `generation/run-state.js` — and
+`src/agent/docs-only-backend.ts` (the sandboxed shell/filesystem backend), the
+OKF and translation middleware (`okf-middleware.ts`,
+`translation-middleware.ts`), the prompt builders (`prompt.ts`,
+`repository-prompts.ts`), read-boundary enforcement (`openwiki-ignore.ts`),
+wiki post-processing (`wiki-finalizer.ts`, `wiki-link-validator.ts`,
+`wiki-replacement.ts`), and the ChatGPT/Vertex auth surfaces
+(`openai-chatgpt-oauth.ts`, `vertex-surface.ts`).
 
 ### generation — repository run lifecycle and page jobs
 
 Orchestrates a full repository wiki build. Principal entry:
 `src/generation/repository-run.ts`. `src/generation/run-state.ts` owns the
-durable on-disk checkpoint (`.run.json`, schema-versioned, with `planning`/
-`generating` phases and `pending`/`complete` page-job statuses) so runs resume
+durable on-disk checkpoint (`.run.json`, `REPOSITORY_RUN_STATE_BASENAME`, with
+`REPOSITORY_RUN_STATE_SCHEMA_VERSION`) and the persisted lifecycle types:
+`RepositoryRunMode` (`init`/`update`), `RepositoryRunPhase`
+(`planning`/`generating`), `PageJobStatus` (`pending`/`skipped`/`complete`),
+`RepositoryRunActor`, `PageJob`, and `RepositoryRunPlan` — so runs resume
 after interruption. `src/generation/page-jobs.ts` builds the plan
 (`createRepositoryPlan`) and replaces per-page claims (`replacePageClaims`).
 `src/generation/errors.ts` defines `RepositoryRunError`.
@@ -121,14 +135,21 @@ after interruption. `src/generation/page-jobs.ts` builds the plan
 ### claims — grounded-claim persistence and evidence resolution
 
 Owns the grounded-claims model: strict per-page claim sidecars and the evidence
-that backs them. `src/claims/brains/code/runtime.ts` (`prepareClaimsRuntime`)
-assembles process-local claims state used by a repository run;
-`src/claims/brains/code/store.ts` (`ClaimsStore`) validates and persists claim
-sidecars with a schema version; `session.ts` inspects and replaces page claims;
-`preflight.ts` computes stable grounding issues. `src/claims/core/` holds
-mutations, error types, and the resolver cache. `src/claims/evidence/repository/`
-resolves and relocates `repo://` evidence resources (`resolver.ts`,
-`resource.ts`), including opaque line-range relocation metadata.
+that backs them. `src/claims/brains/code/runtime.ts` is the principal entry for
+run-local claims state: `prepareClaimsRuntime` (with
+`PrepareClaimsRuntimeOptions`, e.g. `resumeInit`) builds a `ClaimsRuntime`
+for a repository init/update by constructing a `ClaimsStore` and
+`RepositoryEvidenceResolver`, running `runClaimsPreflight` (or starting from
+empty state on a fresh init), and returning the `ClaimsRuntime` facade assembled
+by `buildClaimsRuntime` — exposing the `ClaimSession`, stable preflight
+`issues`, `issueCount`, and a `finalize` step that persists claims and
+synchronizes verification. `src/claims/brains/code/store.ts` (`ClaimsStore`)
+validates and persists claim sidecars with a schema version; `session.ts`
+inspects and replaces page claims; `preflight.ts` computes stable grounding
+issues. `src/claims/core/` holds mutations, error types, and the resolver
+cache. `src/claims/evidence/repository/` resolves and relocates `repo://`
+evidence resources (`resolver.ts`, `resource.ts`), including opaque line-range
+relocation metadata.
 
 ### okf — Open Knowledge Format frontmatter, indexing, and verification
 
