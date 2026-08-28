@@ -40,6 +40,7 @@ import {
 } from "../okf/index-labels.js";
 import {
   getPrimaryLanguageSubtag,
+  requireResolvedLanguage,
   resolveLanguage,
 } from "../platform/language.js";
 import { isFileNotFoundError } from "../platform/fs-errors.js";
@@ -319,6 +320,17 @@ export async function beginRepositoryRun(
   input: BeginRepositoryRunInput,
 ): Promise<BeginRepositoryRunResult> {
   const now = input.now ?? (() => new Date());
+  // Reject an unrecognized language before touching the repository. Falling
+  // back to English here would persist the wrong language in run state, and
+  // resume refuses to change a started run's language, so the caller could not
+  // correct the typo without deleting OpenWiki's own state files.
+  const resolvedRequest = resolveLanguage(input.language);
+  if (resolvedRequest.kind === "unrecognized") {
+    throw new RepositoryRunError("invalid_input", resolvedRequest.message);
+  }
+  const requestedLanguage =
+    resolvedRequest.kind === "resolved" ? resolvedRequest.language : undefined;
+
   await ensureCodeModeRepoSetup(input.root, {
     createWorkflow: input.mode === "init",
   });
@@ -334,7 +346,6 @@ export async function beginRepositoryRun(
     input.language,
   );
   const language = context.language ?? "en";
-  const requestedLanguage = resolveLanguage(input.language).language;
   const languageChanged =
     requestedLanguage !== undefined &&
     getPrimaryLanguageSubtag(requestedLanguage) !==
@@ -551,7 +562,7 @@ async function resumeRepositoryRun(
     );
   }
 
-  const requestedLanguage = resolveLanguage(input.language).language;
+  const requestedLanguage = requireResolvedLanguage(input.language);
   if (requestedLanguage && requestedLanguage !== state.language) {
     throw new RepositoryRunError(
       "conflict",
